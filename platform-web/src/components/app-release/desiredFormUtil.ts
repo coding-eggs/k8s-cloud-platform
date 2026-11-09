@@ -7,6 +7,7 @@
  */
 import { FILE_REF_FIELDS } from './dependencyUtil'
 import type { AppConfigFile as ConfigFile, AppServiceDesired } from '@/types'
+import type { VolumeDef } from '@/types/workload'
 
 const PATH_SEGMENT = /^[A-Za-z0-9._@+=,-]+$/
 const FILE_REF = /\$\{([^.${}]+)\.([^${}]+)\}/g
@@ -68,4 +69,152 @@ export function cleanCommandLists(d: AppServiceDesired, base: AppServiceDesired 
     let allowed = Array.isArray(orig) ? orig.filter((x) => x === '').length : 0
     d[k] = list.filter((x) => x !== '' || allowed-- > 0)
   }
+}
+
+// ---------------------------------------------------------------------------
+// 调度与挂载（nodeSelector / tolerations / affinity / volumes + volumeMounts）
+// 形状与工作负载页一致（types/workload.ts）；软校验，权威校验在后端 AppServiceDesired
+// ---------------------------------------------------------------------------
+
+const DNS_LABEL = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
+const DNS_SUBDOMAIN = /^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$/
+export const TOLERATION_EFFECTS = ['', 'NoSchedule', 'PreferNoSchedule', 'NoExecute']
+export const HOST_PATH_TYPES = ['', 'Directory', 'DirectoryOrCreate', 'File', 'FileOrCreate', 'Socket', 'CharDevice', 'BlockDevice']
+const VOLUME_TYPES = ['emptyDir', 'configMap', 'secret', 'persistentVolumeClaim', 'hostPath', 'projected', 'downwardAPI', 'csi', 'nfs']
+
+function overlaps(a: string, b: string): boolean {
+  return a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
+}
+
+/** 节点选择的每行问题（空串 = 没问题） */
+export function nodeSelectorProblems(d: AppServiceDesired): string[] {
+  return Object.keys(d.nodeSelector ?? {}).map((k) => {
+    if (!k.trim()) return '标签名不能为空'
+    if (/\s/.test(k)) return `标签名不能含空白：${k}`
+    return ''
+  })
+}
+
+/** 容忍的每行问题（空串 = 没问题），下标与列表对齐 */
+export function tolerationProblems(d: AppServiceDesired): string[] {
+  return (d.tolerations ?? []).map((t) => {
+    const operator = t.operator ?? 'Equal'
+    if (operator === 'Equal' && !(t.key ?? '').trim()) return 'operator=Equal 时必须填 key'
+    if (operator === 'Exists' && (t.value ?? '').trim()) return 'operator=Exists 时不能填 value'
+    if (!TOLERATION_EFFECTS.includes(t.effect ?? '')) return 'effect 只能是 NoSchedule / PreferNoSchedule / NoExecute'
+    if (t.tolerationSeconds != null && (t.effect ?? '') !== 'NoExecute') return '容忍时间只能用于 NoExecute'
+    return ''
+  })
+}
+
+function itemsProblem(items?: { key?: string | null; path?: string | null }[] | null): string {
+  for (const it of items ?? []) {
+    if (!(it.key ?? '').trim() || !(it.path ?? '').trim()) return 'items 需要同时填 key 与 path'
+  }
+  return ''
+}
+
+function volumeProblem(v: VolumeDef, i: number, list: VolumeDef[], isAdmin: boolean): string {
+  const name = (v.name ?? '').trim()
+  if (!name) return '请填写卷名'
+  if (!DNS_LABEL.test(name) || name.length > 63) return '卷名需为小写字母 / 数字 / 连字符（至多 63 位）'
+  if (list.some((o, j) => j !== i && (o.name ?? '').trim() === name)) return '卷名重复'
+  if (!VOLUME_TYPES.includes(v.type)) return '请选择卷类型'
+  if (v.type === 'hostPath' && !isAdmin) return 'hostPath 只允许平台管理员使用'
+  switch (v.type) {
+    case 'emptyDir': {
+      const size = v.emptyDir?.sizeLimit
+      return size != null && size < 0 ? '大小上限不能为负' : ''
+    }
+    case 'configMap':
+    case 'secret': {
+      const n = ((v.type === 'configMap' ? v.configMap?.name : v.secret?.secretName) ?? '').trim()
+      if (!n) return `请填写 ${v.type === 'configMap' ? 'ConfigMap' : 'Secret'} 名称`
+      if (!DNS_SUBDOMAIN.test(n)) return '名称不合法（小写字母、数字、. -）'
+      return itemsProblem(v.type === 'configMap' ? v.configMap?.items : v.secret?.items)
+    }
+    case 'persistentVolumeClaim': {
+      const c = (v.persistentVolumeClaim?.claimName ?? '').trim()
+      if (!c) return '请填写 PVC 名称'
+      return DNS_SUBDOMAIN.test(c) ? '' : 'PVC 名称不合法（小写字母、数字、. -）'
+    }
+    case 'hostPath': {
+      const p = (v.hostPath?.path ?? '').trim()
+      if (!p.startsWith('/')) return '节点路径必须是绝对路径'
+      return HOST_PATH_TYPES.includes(v.hostPath?.type ?? '') ? '' : 'hostPath 类型不支持'
+    }
+    case 'projected':
+      return (v.projected?.sources ?? []).length ? '' : 'projected 至少需要一个投影来源'
+    case 'downwardAPI':
+      return (v.downwardAPI?.items ?? []).length ? '' : 'downwardAPI 至少需要一个文件项'
+    case 'csi':
+      return (v.csi?.driver ?? '').trim() ? '' : '请填写 CSI 驱动名'
+    case 'nfs':
+      return (v.nfs?.server ?? '').trim() && (v.nfs?.path ?? '').trim() ? '' : 'NFS 服务器与共享路径都不能为空'
+    default:
+      return ''
+  }
+}
+
+/** 卷定义的每行问题（空串 = 没问题），下标与列表对齐 */
+export function volumeProblems(d: AppServiceDesired, isAdmin: boolean): string[] {
+  const list = d.volumes ?? []
+  return list.map((v, i) => volumeProblem(v, i, list, isAdmin))
+}
+
+/** 挂载点的每行问题（空串 = 没问题）：引用的卷必须存在，路径不能互相覆盖或遮住持久化卷 / 配置文件 */
+export function mountProblems(d: AppServiceDesired): string[] {
+  const mounts = d.volumeMounts ?? []
+  const names = (d.volumes ?? []).map((v) => (v.name ?? '').trim())
+  const mount = dataMountOf(d)
+  const files = (d.configFiles ?? []).map((f) => (f.path ?? '').trim()).filter(Boolean)
+  const paths: string[] = []
+  return mounts.map((m) => {
+    const name = (m.name ?? '').trim()
+    if (!name || !names.includes(name)) return '挂载点引用了不存在的卷'
+    const path = (m.mountPath ?? '').trim()
+    if (!path) return '请填写挂载路径'
+    if (!path.startsWith('/') || path.length > 255) return '挂载路径必须是绝对路径'
+    if (path.split('/').slice(1).some((seg) => seg === '' || seg === '.' || seg === '..' || !PATH_SEGMENT.test(seg))) {
+      return '挂载路径只能包含字母、数字和 . _ - @ + = ,'
+    }
+    if (paths.some((o) => overlaps(path, o))) return '挂载路径互相覆盖'
+    paths.push(path)
+    if (mount && overlaps(path, mount)) return `与持久化挂载路径 ${mount} 冲突`
+    const file = files.find((f) => overlaps(path, f))
+    if (file) return `与配置文件 ${file} 冲突`
+    const subPath = (m.subPath ?? '').trim()
+    if (subPath && (subPath.startsWith('/') || subPath.split('/').some((s) => s === '' || s === '.' || s === '..'))) {
+      return 'subPath 必须是相对卷根的路径'
+    }
+    return ''
+  })
+}
+
+/** 提交用：去掉空行与空白；空对象 / 空列表不提交（否则会变成待发布改动） */
+export function cleanScheduling(d: AppServiceDesired): void {
+  const nodeSelector: Record<string, string> = {}
+  for (const [k, v] of Object.entries(d.nodeSelector ?? {})) {
+    if (k.trim()) nodeSelector[k.trim()] = String(v ?? '').trim()
+  }
+  if (Object.keys(nodeSelector).length) d.nodeSelector = nodeSelector
+  else delete d.nodeSelector
+
+  // 空 key + operator=Exists 是合法且有意义的一行（容忍所有污点），不能当空行丢掉 ——
+  // 丢了会让「把 Equal 改成 Exists」这种改动既不脏也发不出去（保存按钮一直灰）。
+  const tolerations = (d.tolerations ?? []).filter((t) => (t.key ?? '').trim() || (t.value ?? '').trim()
+    || (t.effect ?? '') || t.tolerationSeconds != null || (t.operator ?? 'Equal') === 'Exists')
+  if (tolerations.length) d.tolerations = tolerations
+  else delete d.tolerations
+
+  const volumes = (d.volumes ?? []).filter((v) => (v.name ?? '').trim())
+  if (volumes.length) d.volumes = volumes
+  else delete d.volumes
+
+  const mounts = (d.volumeMounts ?? []).filter((m) => (m.name ?? '').trim() || (m.mountPath ?? '').trim())
+  if (mounts.length) d.volumeMounts = mounts
+  else delete d.volumeMounts
+
+  const affinity = d.affinity
+  if (!affinity || (!affinity.nodeAffinity && !affinity.podAffinity && !affinity.podAntiAffinity)) delete d.affinity
 }

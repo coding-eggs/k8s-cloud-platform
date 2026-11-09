@@ -246,6 +246,32 @@ live_release_no 只在执行成功时切换，所以失败的操作不改变「�
   先确认执行行还能写（0 行 = 已被取消 / 取代，整笔不写），崩溃则回滚后下一拍重跑。
 - 权限：`tenant:application:write`（谁能发布谁能取消，迁移 `V2026_11_09_3` 从「创建发布」的绑定复制）。
 
+### 1.10 调度与挂载（nodeSelector / tolerations / affinity / volumes）
+
+服务页拆成两个页签：**「调度」**（nodeSelector / 亲和 / 容忍）与**「挂载」**（卷 + 挂载点），
+表单直接复用工作负载编辑器的同一批组件（`NodeLabelEditor` / `AffinityEditor` / `TolerationEditor` /
+`VolumeEditor` / `VolumeMountEditor`），形状也与工作负载页一致；渲染时 platform-api
+（`AppScheduling`）再翻成 K8s 原生字段交给 chart。
+
+写进 desired 的键（都进快照，随发布下发；空对象 / 空列表不存，否则「没有这个键」和「空」会被当成待发布改动）：
+
+| 字段 | 形状 | 规则 |
+|---|---|---|
+| `nodeSelector` | `{ "disktype": "ssd" }` | 标签名按 K8s qualified name 校验；值可为空 |
+| `tolerations` | 工作负载页的 `Toleration[]` | operator 缺省 `Equal`；`Equal` 必须有 key；`Exists` 不能带 value，key 为空 = 容忍所有污点；effect ∈ `NoSchedule / PreferNoSchedule / NoExecute`；`tolerationSeconds` 只用于 `NoExecute` |
+| `affinity` | 工作负载页的紧凑结构（`nodeAffinity.required/preferred`、`podAffinity`、`podAntiAffinity`） | 发布时翻成 K8s 的 `requiredDuringSchedulingIgnoredDuringExecution` 等字段；没有内容的 term 丢掉（空 term 会废掉整条 required）；Pod 亲和的 `matchLabels` 进 `labelSelector`；没有 `topologyKey` 的 Pod 亲和 term 丢掉 |
+| `volumes` | 工作负载页的 `VolumeDef[]` | 类型与工作负载页相同：`emptyDir / configMap / secret / persistentVolumeClaim / hostPath / projected / downwardAPI / csi / nfs`；卷名 DNS 标签（≤63）且唯一；`configMap`、`secret` 的 items 必须同时填 key 与 path；`projected` 至少一个来源，`downwardAPI` 至少一个文件项；`emptyDir.sizeLimit` 在 desired 里按字节存，渲染成 `Gi / Mi` 数量 |
+| `volumeMounts` | 工作负载页的 `VolumeMount[]`（`name / mountPath / readOnly / subPath`） | `name` 必须引用本次定义的卷；`mountPath` 绝对路径、唯一，不能互相覆盖，也不能与持久化数据卷（默认 `/data`）、配置文件路径、日志目录重叠 |
+
+- **`hostPath` 只对平台管理员开放**（token 的 `platformRoles` 含 `admin`，与前端 `permission.isAdmin` 同源）：
+  保存（`AppServiceConfigService`）与灰度里改配置（`AppCanaryService`）都过 `AppHostPathGuard`，
+  租户提交带 hostPath 的配置直接报错；前端对非管理员不显示这个选项。
+- 候选下拉：节点标签来自 `nodeCatalog`（按应用所在集群）；ConfigMap / Secret / PVC 来自资源域上下文，
+  切到「挂载」页签时服务页会把命名空间对齐到应用所在命名空间（与「打开工作负载页」同一做法）。
+- 渲染：`AppScheduling` 产出 `podAffinity` / `podVolumes` / `podVolumeMounts`，chart 里与
+  `configFiles`、`platform-otel-logs`、StatefulSet 的持久化 `data` 卷并列。都在 Pod 模板里，
+  改了自然滚动；**不进 `configHash`**（那是给 subPath 配置文件的）。
+
 ## 2. 配置文件
 
 服务页「配置文件」页签：每条一个绝对路径 + 内容。
@@ -397,6 +423,17 @@ HPA / 可观测 / 服务网格（§1.7）：
 - [ ] 回滚到接入前的版本，注解 / 标签随之消失。
 - [ ] 卸载 OTel 后回滚到接入后的版本：确认框有警告，回滚照常完成。
 
+调度与挂载（§1.10）：
+
+- [ ] nodeSelector 指向带该标签的节点并发布：Pod 落在目标节点；标签改成不存在的值后发布，Pod 一直 Pending、
+      发布停在 HEALTH，诊断里能看到调度失败原因（旧 Pod 继续服务）。
+- [ ] tolerations：给节点打 `NoSchedule` 污点，加对应容忍后可调度；去掉容忍再发布变成 Pending。
+- [ ] affinity：在工作负载同款表单里配一条 podAntiAffinity 让副本分散；空 term 被丢掉（不会废掉整条 required）。
+- [ ] 挂载：emptyDir / ConfigMap / Secret / PVC 各挂一次，卷定义与挂载点分开填；挂载点引用不存在的卷、
+      路径与持久化 `/data` 或配置文件重叠时保存被拒；projected / downwardAPI / CSI / NFS 至少各在 helm 清单里渲染一次。
+- [ ] hostPath：租户账号看不到该选项、直接调接口保存被拒（"只允许平台管理员"）；管理员保存后 Pod 能读写节点路径。
+- [ ] 回滚到设置调度前的版本：nodeSelector / tolerations / affinity / volumes 随之消失。
+
 入口灰度（§1.8，设计 §10）：
 
 - [ ] 网关按权重分流，含 0 和 100 两个边界；HTTP 带 `x-canary: true` 的请求总进 canary（header 规则优先于权重）。
@@ -419,6 +456,9 @@ HPA / 可观测 / 服务网格（§1.7）：
 
 ## 6. 已知限制
 
+- **调度与挂载**：`nodeSelector` 只是标签匹配，租户能选到任何带该标签的节点（含控制面，只要标签对得上）；
+  affinity 用 JSON 编辑（平台没有 YAML 解析依赖）；hostPath 仅平台管理员；灰度版本若挂了 ReadWriteOnce 的 PVC，
+  两个副本可能抢不到同一块盘（与「有状态服务不能灰度」同源）。
 - **灰度**：集群内调用分流依赖应用为 L7 网格（非 L7 时 canary 只接网关进来的流量）；内部 header 直达要调用方透传请求头；
   TCPRoute 挂 Service 在 waypoint 上未核对（见 §5）；有状态服务不能灰度；
   灰度版本不自动扩缩；指标 label 名与 reporter 取值未在真集群核对（见 §5）；灰度配置弹窗开放镜像、环境变量、配置文件、资源与命令（开始时另有副本数），

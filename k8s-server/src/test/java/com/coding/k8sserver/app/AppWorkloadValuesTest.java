@@ -351,4 +351,65 @@ class AppWorkloadValuesTest {
         assertThat((Map<String, Object>) meshRoute(values(Map.of("image", "x", "port", 80, "meshRoute", tcp)))
                 .get("canary")).containsEntry("headerName", "");
     }
+
+    // ---------- 调度与挂载（2026-11-09） ----------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void schedulingParamsPassThrough() {
+        Map<String, Object> params = new java.util.LinkedHashMap<>();
+        params.put("image", "nginx");
+        params.put("nodeSelector", Map.of("disktype", "ssd"));
+        params.put("tolerations", List.of(Map.of("key", "dedicated", "operator", "Equal", "value", "app",
+                "effect", "NoSchedule", "tolerationSeconds", 60)));
+        params.put("podAffinity", Map.of("nodeAffinity",
+                Map.of("requiredDuringSchedulingIgnoredDuringExecution", Map.of())));
+        Map<String, Object> w = workload(AppWorkloadValues.build("app_1", "demo", 1, node(params)));
+
+        assertThat(w).containsEntry("nodeSelector", Map.of("disktype", "ssd"));
+        assertThat((List<Object>) w.get("tolerations")).containsExactly(Map.of("key", "dedicated",
+                "operator", "Equal", "value", "app", "effect", "NoSchedule", "tolerationSeconds", 60));
+        assertThat((Map<String, Object>) w.get("affinity")).containsKey("nodeAffinity");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void tolerationWithEmptyKeyOnlyForExists() {
+        List<Map<String, Object>> tolerations = List.of(
+                Map.of("key", "", "operator", "Exists", "effect", "NoSchedule"),
+                Map.of("key", "", "operator", "Equal"));
+        Map<String, Object> w = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "tolerations", tolerations))));
+
+        assertThat((List<Object>) w.get("tolerations")).containsExactly(
+                Map.of("key", "", "operator", "Exists", "effect", "NoSchedule"));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void bareWorkloadHasEmptySchedulingAndMounts() {
+        Map<String, Object> w = workload(AppWorkloadValues.build("app_1", "demo", 1, node(Map.of("image", "nginx"))));
+        assertThat(w).containsEntry("nodeSelector", Map.of()).containsEntry("tolerations", List.of())
+                .containsEntry("affinity", Map.of()).containsEntry("extraVolumes", List.of())
+                .containsEntry("extraVolumeMounts", List.of());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void podVolumesAndMountsPassThrough() {
+        List<Map<String, Object>> volumes = List.of(
+                Map.of("name", "cache", "emptyDir", Map.of()),
+                Map.of("name", "data", "persistentVolumeClaim", Map.of("claimName", "my-pvc")),
+                Map.of("name", "cfg", "configMap", Map.of("name", "my-cm")),
+                Map.of("name", "sec", "secret", Map.of("secretName", "my-secret")),
+                Map.of("name", "host", "hostPath", Map.of("path", "/var/log", "type", "Directory")));
+        List<Map<String, Object>> mounts = List.of(
+                Map.of("name", "cache", "mountPath", "/cache"),
+                Map.of("name", "data", "mountPath", "/mnt/data", "readOnly", true, "subPath", "a/b"));
+        Map<String, Object> w = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "podVolumes", volumes, "podVolumeMounts", mounts))));
+
+        assertThat((List<Object>) w.get("extraVolumes")).isEqualTo(volumes);
+        assertThat((List<Object>) w.get("extraVolumeMounts")).isEqualTo(mounts);
+    }
 }

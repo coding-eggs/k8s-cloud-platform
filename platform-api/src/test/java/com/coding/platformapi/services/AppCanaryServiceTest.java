@@ -74,7 +74,8 @@ class AppCanaryServiceTest {
                         mock(GatewayService.class)),
                 mock(IngressPortService.class));
         metrics = mock(com.coding.platformapi.metrics.MetricsService.class);
-        canary = new AppCanaryService(apps, services, releaseService, pipeline, metrics);
+        canary = new AppCanaryService(apps, services, releaseService, pipeline, metrics,
+                mock(AppHostPathGuard.class));
 
         app = new PlatformApplication();
         app.setId("app1");

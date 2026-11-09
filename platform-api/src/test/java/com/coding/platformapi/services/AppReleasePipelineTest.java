@@ -312,6 +312,37 @@ class AppReleasePipelineTest {
     }
 
     @Test
+    @SuppressWarnings("unchecked")
+    void canaryNodeInheritsSchedulingAndVolumes() {
+        when(ports.portOf("app1", "api")).thenReturn(20003);
+        Map<String, Object> stable = svc("gateway-http");
+        stable.put("nodeSelector", Map.of("disk", "ssd"));
+        stable.put("tolerations", List.of(Map.of("key", "dedicated", "operator", "Exists", "effect", "NoSchedule")));
+        stable.put("volumes", List.of(Map.of("name", "cache", "type", "emptyDir", "emptyDir", Map.of())));
+        stable.put("volumeMounts", List.of(Map.of("name", "cache", "mountPath", "/cache", "readOnly", true)));
+        Map<String, Object> canaryDesired = new LinkedHashMap<>(stable);
+        canaryDesired.put("imageTag", "2");
+        Map<String, Object> api = com.coding.platformapi.app.AppCanary.with(stable,
+                new com.coding.platformapi.app.AppCanary.Spec(canaryDesired, 1, 20, null));
+
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 3, new AppSnapshot(Map.of("api", api), List.of()));
+
+        // 灰度版本与线上版本走同一条 node()：调度与额外卷两边都要带上，否则灰度 Pod 可能落到别的节点 / 挂不到卷
+        for (String key : List.of("api", "api-canary")) {
+            Map<String, Object> p = nodeOf(req, key).getParams();
+            assertThat(p).containsEntry("nodeSelector", Map.of("disk", "ssd"));
+            assertThat((List<Map<String, Object>>) p.get("tolerations"))
+                    .singleElement().satisfies(t -> assertThat(t)
+                            .containsEntry("key", "dedicated").containsEntry("operator", "Exists"));
+            assertThat((List<Map<String, Object>>) p.get("podVolumes"))
+                    .singleElement().satisfies(v -> assertThat(v).containsEntry("name", "cache").containsKey("emptyDir"));
+            assertThat((List<Map<String, Object>>) p.get("podVolumeMounts"))
+                    .singleElement().satisfies(m -> assertThat(m)
+                            .containsEntry("mountPath", "/cache").containsEntry("readOnly", true));
+        }
+    }
+
+    @Test
     void serviceWithoutCanaryRendersExactlyAsBefore() {
         when(ports.portOf("app1", "api")).thenReturn(20003);
 

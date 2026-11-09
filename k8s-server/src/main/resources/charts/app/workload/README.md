@@ -34,6 +34,9 @@ charts/app/workload/
 | `workload.podAnnotations` / `podLabels` | 合并进 Pod 模板注解 / 标签（OTel 注入、`istio.io/dataplane-mode`）；不进 `configHash` |
 | `workload.serviceLabels` | 合并进 Service 标签（`istio.io/use-waypoint`） |
 | `workload.extraEnv[]` | `{name, value}` 直接写进容器 env，排在 `inlineEnv` 之后（OTel 服务名 / 采样） |
+| `workload.nodeSelector` / `tolerations` | 调度（2026-11-09）：desired 的 `nodeSelector` / `tolerations` 原样透传进 Pod spec；空 Map / 空列表不渲染 |
+| `workload.affinity` | K8s 原生 affinity（platform-api 的 `AppScheduling` 已把工作负载页的紧凑结构翻好）；空对象不渲染 |
+| `workload.extraVolumes[]` / `extraVolumeMounts[]` | 额外挂载（2026-11-09）：**已经是 K8s 原生形状**（`{name, emptyDir\|configMap\|secret\|persistentVolumeClaim\|hostPath\|projected\|downwardAPI\|csi\|nfs}` 与 `{name, mountPath, readOnly?, subPath?}`），模板直接 toYaml；与 `configFiles` / `platform-otel-logs` / StatefulSet 的 `data` 卷并列。`hostPath` 只来自平台管理员的保存 |
 | `workload.logVolume` | `{enabled, mountDir}`：emptyDir 卷 `platform-otel-logs` 挂到 `mountDir`（OTel 读文件日志） |
 | `workload.route` | `{enabled, kind, parentName, sectionName, port}`：网关端口池暴露（2026-11-08）。`kind=http` → HTTPRoute，`tcp` → TCPRoute（都是 `gateway.networking.k8s.io/v1`）；`parentRefs` 指向命名空间 ListenerSet（`kind: ListenerSet`）的 listener `sectionName`；`port` = 服务端口。Service 保持 ClusterIP（`expose.type=none`）；worker 不生成 |
 | `workload.meshRoute` | `{enabled, kind, port, canary}`：网格路由（内部灰度，2026-11-09）。HTTPRoute / TCPRoute `<name>-mesh`，`parentRefs` 指向本服务 Service（`group: ""`、`kind: Service`，GAMMA），规则与 `route` 的灰度规则同形；platform-api 只在灰度中且应用为 L7 网格时给 |

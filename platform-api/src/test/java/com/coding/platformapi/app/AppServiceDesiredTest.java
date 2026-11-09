@@ -361,4 +361,146 @@ class AppServiceDesiredTest {
         assertThat(AppServiceDesired.serviceProtocol(Map.of("port", 8080))).isEqualTo("HTTP");
         assertThat(AppServiceDesired.serviceProtocol(null)).isEqualTo("HTTP");
     }
+
+    // ---------- 调度与挂载（2026-11-09） ----------
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void schedulingBlocksAreKeptAndEmptyOnesDropped() {
+        Map<String, Object> d = base();
+        d.put("nodeSelector", Map.of("disktype", "ssd"));
+        d.put("tolerations", List.of(Map.of("key", "dedicated", "operator", "Exists", "effect", "NoSchedule")));
+        d.put("affinity", Map.of("nodeAffinity", Map.of()));
+        Map<String, Object> out = AppServiceDesired.normalize(d);
+
+        assertThat(out.get("nodeSelector")).isEqualTo(Map.of("disktype", "ssd"));
+        assertThat((List<Object>) out.get("tolerations")).containsExactly(
+                Map.of("key", "dedicated", "operator", "Exists", "effect", "NoSchedule"));
+        assertThat((Map<String, Object>) out.get("affinity")).containsKey("nodeAffinity");
+
+        // 空对象 / 空列表不存：否则「没有这个键」和「空」会变成待发布改动
+        Map<String, Object> empty = base();
+        empty.put("nodeSelector", Map.of());
+        empty.put("tolerations", List.of());
+        empty.put("affinity", Map.of());
+        empty.put("volumes", List.of());
+        assertThat(AppServiceDesired.normalize(empty))
+                .doesNotContainKeys("nodeSelector", "tolerations", "affinity", "volumes");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void tolerateAllRowIsAccepted() {
+        // 前端「加一行容忍、把 operator 改成 Exists」发出的就是这一行：空 key / 空 value / 空 effect
+        Map<String, Object> d = base();
+        d.put("tolerations", List.of(Map.of("key", "", "operator", "Exists", "value", "", "effect", "")));
+        Map<String, Object> out = AppServiceDesired.normalize(d);
+
+        assertThat((List<Object>) out.get("tolerations")).containsExactly(Map.of("key", "", "operator", "Exists"));
+    }
+
+    @Test
+    void badSchedulingEntriesAreRejected() {
+        Map<String, Object> badKey = base();
+        badKey.put("nodeSelector", Map.of("bad key", "x"));
+        rejects(badKey).hasMessageContaining("标签名不合法");
+
+        Map<String, Object> noKey = base();
+        noKey.put("tolerations", List.of(Map.of("operator", "Equal", "value", "x")));
+        rejects(noKey).hasMessageContaining("必须填 key");
+
+        Map<String, Object> existsValue = base();
+        existsValue.put("tolerations", List.of(Map.of("key", "k", "operator", "Exists", "value", "x")));
+        rejects(existsValue).hasMessageContaining("不能填 value");
+
+        Map<String, Object> seconds = base();
+        seconds.put("tolerations", List.of(Map.of("key", "k", "tolerationSeconds", 30)));
+        rejects(seconds).hasMessageContaining("NoExecute");
+
+        Map<String, Object> affinity = base();
+        affinity.put("affinity", Map.of("podSpec", Map.of()));
+        rejects(affinity).hasMessageContaining("亲和性只允许");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void volumesNormalizeWithDefaults() {
+        Map<String, Object> d = base();
+        d.put("volumes", List.of(
+                Map.of("name", "cache", "type", "emptyDir",
+                        "emptyDir", Map.of("medium", "Memory", "sizeLimit", 1073741824L)),
+                Map.of("name", "cfg", "type", "configMap", "configMap", Map.of("name", "my-cm")),
+                Map.of("name", "host", "type", "hostPath",
+                        "hostPath", Map.of("path", "/var/log", "type", "Directory"))));
+        d.put("volumeMounts", List.of(
+                Map.of("name", "cache", "mountPath", "/cache"),
+                Map.of("name", "cfg", "mountPath", "/etc/extra", "readOnly", true, "subPath", "a/b"),
+                Map.of("name", "host", "mountPath", "/hostlog")));
+        Map<String, Object> out = AppServiceDesired.normalize(d);
+
+        List<Map<String, Object>> volumes = (List<Map<String, Object>>) out.get("volumes");
+        assertThat(volumes).hasSize(3);
+        assertThat((Map<String, Object>) volumes.get(0).get("emptyDir"))
+                .containsEntry("medium", "Memory").containsEntry("sizeLimit", 1073741824L);
+        assertThat((Map<String, Object>) volumes.get(1).get("configMap")).containsEntry("name", "my-cm");
+        assertThat((Map<String, Object>) volumes.get(2).get("hostPath"))
+                .containsEntry("path", "/var/log").containsEntry("type", "Directory");
+
+        List<Map<String, Object>> mounts = (List<Map<String, Object>>) out.get("volumeMounts");
+        assertThat(mounts).hasSize(3);
+        assertThat(mounts.get(0)).containsEntry("readOnly", false).doesNotContainKey("subPath");
+        assertThat(mounts.get(1)).containsEntry("readOnly", true).containsEntry("subPath", "a/b");
+        assertThat(AppServiceDesired.usesHostPath(out)).isTrue();
+        assertThat(AppServiceDesired.usesHostPath(base())).isFalse();
+    }
+
+    @Test
+    void badVolumesAreRejected() {
+        Map<String, Object> badName = base();
+        badName.put("volumes", List.of(Map.of("name", "Bad_Name", "type", "emptyDir")));
+        rejects(badName).hasMessageContaining("卷名");
+
+        Map<String, Object> badType = base();
+        badType.put("volumes", List.of(Map.of("name", "v", "type", "tmpfs")));
+        rejects(badType).hasMessageContaining("不支持的卷类型");
+
+        Map<String, Object> noConfigMapName = base();
+        noConfigMapName.put("volumes", List.of(Map.of("name", "v", "type", "configMap",
+                "configMap", Map.of())));
+        rejects(noConfigMapName).hasMessageContaining("name 不合法");
+
+        Map<String, Object> relativeHostPath = base();
+        relativeHostPath.put("volumes", List.of(Map.of("name", "v", "type", "hostPath",
+                "hostPath", Map.of("path", "var/log"))));
+        rejects(relativeHostPath).hasMessageContaining("绝对路径");
+
+        Map<String, Object> unknownMount = base();
+        unknownMount.put("volumes", List.of(Map.of("name", "v", "type", "emptyDir", "emptyDir", Map.of())));
+        unknownMount.put("volumeMounts", List.of(Map.of("name", "other", "mountPath", "/x")));
+        rejects(unknownMount).hasMessageContaining("不存在的卷");
+
+        Map<String, Object> duplicateMount = base();
+        duplicateMount.put("volumes", List.of(
+                Map.of("name", "a", "type", "emptyDir", "emptyDir", Map.of()),
+                Map.of("name", "b", "type", "emptyDir", "emptyDir", Map.of())));
+        duplicateMount.put("volumeMounts", List.of(
+                Map.of("name", "a", "mountPath", "/x"),
+                Map.of("name", "b", "mountPath", "/x")));
+        rejects(duplicateMount).hasMessageContaining("互相覆盖");
+
+        Map<String, Object> dataClash = base();
+        dataClash.put("persistenceEnabled", true);
+        dataClash.put("mountPath", "/data");
+        dataClash.put("volumes", List.of(Map.of("name", "v", "type", "emptyDir", "emptyDir", Map.of())));
+        dataClash.put("volumeMounts", List.of(Map.of("name", "v", "mountPath", "/data/x")));
+        rejects(dataClash).hasMessageContaining("持久化数据卷");
+    }
+
+    @Test
+    void configFileInsideAMountedVolumeIsRejected() {
+        Map<String, Object> d = withFiles(file("/etc/app/app.yaml", "a: 1"));
+        d.put("volumes", List.of(Map.of("name", "v", "type", "emptyDir", "emptyDir", Map.of())));
+        d.put("volumeMounts", List.of(Map.of("name", "v", "mountPath", "/etc/app")));
+        rejects(d).hasMessageContaining("配置文件");
+    }
 }

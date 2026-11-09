@@ -74,6 +74,8 @@ const FIELD_LABEL: Record<string, string> = {
   autoscalingEnabled: '自动扩缩', minReplicas: '最小副本', maxReplicas: '最大副本', targetCpu: '目标 CPU',
   probeEnabled: '健康探针', probePath: '探针路径', metricsEnabled: '指标采集', metricsPath: '指标路径', expose: '对外暴露', nodePort: 'NodePort 端口',
   targetMemory: '目标内存', otel: '可观测',
+  // 调度与挂载（2026-11-09）
+  nodeSelector: '节点选择', tolerations: '容忍', affinity: '亲和性', volumes: '卷', volumeMounts: '挂载点',
   // 应用设置的字段
   tracing: '链路追踪', sampling: '采样率', mesh: '服务网格',
 }

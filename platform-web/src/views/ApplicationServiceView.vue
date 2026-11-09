@@ -31,7 +31,12 @@ import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import AppQuantityInput from '@/components/app-release/AppQuantityInput.vue'
 import AppConfigFilesEditor from '@/components/app-release/AppConfigFilesEditor.vue'
 import AppResourcesForm from '@/components/app-release/AppResourcesForm.vue'
-import { cleanCommandLists, cleanConfigFiles, configFileProblems, dataMountOf } from '@/components/app-release/desiredFormUtil'
+import AppSchedulingForm from '@/components/app-release/AppSchedulingForm.vue'
+import AppVolumesForm from '@/components/app-release/AppVolumesForm.vue'
+import {
+  cleanCommandLists, cleanConfigFiles, cleanScheduling, configFileProblems, dataMountOf,
+  mountProblems, nodeSelectorProblems, tolerationProblems, volumeProblems,
+} from '@/components/app-release/desiredFormUtil'
 import AppServiceOtelForm from '@/components/app-release/AppServiceOtelForm.vue'
 import AppServiceRuntimeRows from '@/components/app-release/AppServiceRuntimeRows.vue'
 import { useClusterComponents } from '@/composables/useClusterComponents'
@@ -125,6 +130,8 @@ function buildDesired(): AppServiceDesired {
   d.imageRepo = (d.imageRepo ?? '').trim()
   d.imageTag = (d.imageTag ?? '').trim()
   cleanCommandLists(d, original)
+  // 调度与挂载：空行 / 空对象不提交，否则会变成待发布改动
+  cleanScheduling(d)
   for (const k of Object.keys(d)) {
     const v = d[k]
     if (v === '' || v == null || (Array.isArray(v) && v.length === 0 && k !== 'env')) delete d[k]
@@ -195,6 +202,40 @@ const nodePortModel = computed<number | undefined>({
 // ---------- 配置文件（编辑与校验在 AppConfigFilesEditor / desiredFormUtil） ----------
 const dataMount = computed(() => dataMountOf(form.value))
 const filesInvalid = computed(() => configFileProblems(form.value.configFiles, dataMount.value).some(Boolean))
+/** 调度 / 挂载的软校验（权威校验在后端）：这里带上行号，保存按钮旁边直接写出来 */
+const schedulingMessages = computed(() => [
+  ...nodeSelectorProblems(form.value).map((m) => m && `节点选择：${m}`),
+  ...tolerationProblems(form.value).map((m, i) => m && `容忍第 ${i + 1} 行：${m}`),
+].filter((m): m is string => !!m))
+const volumeMessages = computed(() => [
+  ...volumeProblems(form.value, !!perm.isAdmin).map((m, i) => m && `卷 ${form.value.volumes?.[i]?.name?.trim() || `#${i + 1}`}：${m}`),
+  ...mountProblems(form.value).map((m, i) => m && `挂载点第 ${i + 1} 行：${m}`),
+].filter((m): m is string => !!m))
+const schedulingInvalid = computed(() => schedulingMessages.value.length > 0)
+const volumesInvalid = computed(() => volumeMessages.value.length > 0)
+/**
+ * 保存被拦下的原因。以前只写在按钮的 title 里，悬停才看得到，
+ * 用户会把「某个页签有半填的行」误当成「改了这边也保存不了」。第一条问题直接显示在按钮旁边。
+ */
+const saveBlockedReason = computed(() => {
+  if (readonly.value) return '当前只读（灰度中 / 待删除 / 无写权限），配置不能保存'
+  if (filesInvalid.value) return '配置文件有问题，见「配置文件」页签'
+  if (schedulingMessages.value.length) return `调度：${schedulingMessages.value[0]}`
+  if (volumeMessages.value.length) return `挂载：${volumeMessages.value[0]}`
+  return ''
+})
+/** 被拦下是哪个页签的问题（红字可点击跳过去）；只读 / 没有改动时为空 */
+const saveBlockedTab = computed<'files' | 'scheduling' | 'volumes' | null>(() => {
+  if (readonly.value) return null
+  if (filesInvalid.value) return 'files'
+  if (schedulingInvalid.value) return 'scheduling'
+  if (volumesInvalid.value) return 'volumes'
+  return null
+})
+function jumpToBlockedTab(): void {
+  const t = saveBlockedTab.value
+  if (t) cfgTab.value = t
+}
 
 async function load(opts: { keepForm?: boolean } = {}): Promise<void> {
   if (!appId.value || !key.value) return
@@ -306,6 +347,10 @@ async function remove(): Promise<void> {
 // ---------- Pod 与日志 / 监控 ----------
 const tab = ref('overview')
 const cfgTab = ref('basic')
+// 挂载页签的候选下拉（ConfigMap / Secret / PVC）按资源域上下文取数：切过去先把命名空间对齐到应用
+watch(cfgTab, (v) => {
+  if (v === 'volumes' && app.value) setNamespace(app.value.namespace)
+})
 const wl = ref<WorkloadDetail | null>(null)
 const pods = ref<K8sPod[]>([])
 const podLoading = ref(false)
@@ -530,7 +575,8 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
             <AppEnvEditor v-model="form.env" :dependencies="deps" :service-keys="selfRefs" :ctx="ctx" :disabled="readonly" />
           </el-tab-pane>
 
-          <el-tab-pane label="配置文件" name="files">
+          <el-tab-pane name="files">
+            <template #label>配置文件<i v-if="filesInvalid" class="app-svc__tab-dot" title="这个页签有没填完的内容">•</i></template>
             <AppConfigFilesEditor v-model="form.configFiles" :data-mount="dataMount" :dependencies="deps" :service-keys="selfRefs" :disabled="readonly" />
           </el-tab-pane>
 
@@ -538,6 +584,16 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
             <el-form label-width="110px" :disabled="readonly" @submit.prevent>
               <AppResourcesForm :form="form" :disabled="readonly" />
             </el-form>
+          </el-tab-pane>
+
+          <el-tab-pane name="scheduling">
+            <template #label>调度<i v-if="schedulingInvalid" class="app-svc__tab-dot" title="这个页签有没填完的内容">•</i></template>
+            <AppSchedulingForm :form="form" :disabled="readonly" :cluster-id="app?.clusterId" />
+          </el-tab-pane>
+
+          <el-tab-pane name="volumes">
+            <template #label>挂载<i v-if="volumesInvalid" class="app-svc__tab-dot" title="这个页签有没填完的内容">•</i></template>
+            <AppVolumesForm :form="form" :disabled="readonly" />
           </el-tab-pane>
 
           <el-tab-pane label="高级" name="advanced">
@@ -593,9 +649,13 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
         </el-tabs>
 
         <div class="app-svc__save">
-          <el-button type="primary" :loading="saving" :disabled="readonly || !dirty || filesInvalid" :title="filesInvalid ? '配置文件有问题，见「配置文件」页签' : ''" @click="save">保存</el-button>
+          <el-button type="primary" :loading="saving" :disabled="readonly || !dirty || filesInvalid || schedulingInvalid || volumesInvalid"
+                     :title="saveBlockedReason" @click="save">保存</el-button>
           <el-button :disabled="readonly || !dirty" @click="resetForm">还原</el-button>
-          <span class="muted">保存只改期望配置，发布后才会生效到集群。</span>
+          <span v-if="saveBlockedReason" class="app-svc__save-why" :class="{ 'is-jump': !!saveBlockedTab }"
+                :title="saveBlockedTab ? '点击跳到出问题的页签' : ''" @click="jumpToBlockedTab">{{ saveBlockedReason }}</span>
+          <span v-else-if="!dirty" class="muted">没有改动（表单内容与已保存的一致）</span>
+          <span v-else class="muted">保存只改期望配置，发布后才会生效到集群。</span>
         </div>
       </el-tab-pane>
 
@@ -666,6 +726,10 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 .app-svc__radio-wrap .el-radio { margin-right: 30px; }
 .app-svc__tip.warn { color: var(--el-color-warning); }
 .app-svc__save { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); }
+.app-svc__save-why { font-size: 12.5px; color: var(--el-color-danger); }
+.app-svc__save-why.is-jump { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+.app-svc__save-why.is-jump:hover { text-decoration: underline; }
+.app-svc__tab-dot { margin-left: 3px; font-style: normal; color: var(--el-color-danger); }
 .app-svc__bar { display: flex; gap: 8px; margin-bottom: 10px; }
 .app-svc__newtag { width: 100%; font-size: 12px; color: var(--el-color-warning); margin-top: 4px; }
 </style>

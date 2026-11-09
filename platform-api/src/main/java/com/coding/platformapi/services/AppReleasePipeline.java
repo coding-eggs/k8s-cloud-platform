@@ -18,6 +18,7 @@ import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformIngressPort;
 import com.coding.platformapi.app.AppCanary;
+import com.coding.platformapi.app.AppScheduling;
 import com.coding.platformapi.app.AppEnvResolver;
 import com.coding.platformapi.app.AppEnvResolver.ServiceAddr;
 import com.coding.platformapi.app.AppObjectNames;
@@ -45,7 +46,7 @@ import java.util.stream.Collectors;
 public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRenderer {
 
     private static final Set<String> NODE_EXCLUDED = Set.of("imageRepo", "imageTag", "env", "configFiles", "otel", "mesh",
-            AppCanary.KEY);
+            "affinity", "volumes", "volumeMounts", AppCanary.KEY);
 
     private final PlatformApplicationMapper apps;
     private final PlatformAppReleaseMapper releases;
@@ -279,6 +280,19 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
             }
         });
         params.put("image", AppServiceDesired.image(desired));
+        // 调度与挂载：desired 存的是工作负载页的紧凑形状，这里翻成 K8s 原生字段给 chart（affinity / 卷 / 挂载点）
+        Map<String, Object> affinity = AppScheduling.k8sAffinity(scheduling(desired, "affinity"));
+        if (affinity != null) {
+            params.put("podAffinity", affinity);
+        }
+        List<Map<String, Object>> volumes = AppScheduling.k8sVolumes(schedulingList(desired, "volumes"));
+        if (!volumes.isEmpty()) {
+            params.put("podVolumes", volumes);
+        }
+        List<Map<String, Object>> mounts = AppScheduling.k8sVolumeMounts(schedulingList(desired, "volumeMounts"));
+        if (!mounts.isEmpty()) {
+            params.put("podVolumeMounts", mounts);
+        }
         if (AppServiceDesired.port(desired) != null && "TCP".equals(AppServiceDesired.serviceProtocol(desired))) {
             params.put("protocol", "tcp");   // Service 端口名用 tcp（Istio 按端口名判协议）；HTTP 不带此键，参数不变
         }
@@ -298,8 +312,17 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         return node;
     }
 
-    /** stable 路由上的 canary 后端：{@code {service, weight, header: {name, value} | null}} */
-    private static Map<String, Object> canaryBackend(PlatformApplication app, String key, AppCanary.Spec canary) {
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> scheduling(Map<String, Object> desired, String key) {
+        return desired.get(key) instanceof Map<?, ?> m ? (Map<String, Object>) m : null;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> schedulingList(Map<String, Object> desired, String key) {
+        return desired.get(key) instanceof List<?> list ? (List<Map<String, Object>>) list : List.of();
+    }
+
+    /** stable 路由上的 canary 后端：{@code {service, weight, header: {name, value} | null}} */    private static Map<String, Object> canaryBackend(PlatformApplication app, String key, AppCanary.Spec canary) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("service", AppObjectNames.objectName(app.getSlug(), AppCanary.nodeKey(key)));
         out.put("weight", canary.weight());

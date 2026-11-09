@@ -30,6 +30,28 @@ public final class AppServiceDesired {
             "autoscalingEnabled", "minReplicas", "maxReplicas", "targetCpu", "targetMemory",
             "probeEnabled", "probePath", "metricsEnabled", "metricsPath");
 
+    /** 调度与挂载：结构比普通参数复杂，单独校验后写进 desired */
+    private static final Set<String> SCHEDULING = Set.of("nodeSelector", "tolerations", "affinity",
+            "volumes", "volumeMounts");
+
+    /** 挂载来源。hostPath 触及节点文件系统，只给平台管理员（AppServiceConfigService / AppCanaryService 把关） */
+    public static final String VOLUME_HOST_PATH = "hostPath";
+    /** 卷类型与工作负载页一致（types/workload.ts VolumeDef.type） */
+    private static final Set<String> VOLUME_TYPES = Set.of("emptyDir", "configMap", "secret",
+            "persistentVolumeClaim", VOLUME_HOST_PATH, "projected", "downwardAPI", "csi", "nfs");
+    private static final Set<String> HOST_PATH_TYPES = Set.of(
+            "Directory", "DirectoryOrCreate", "File", "FileOrCreate", "Socket", "CharDevice", "BlockDevice");
+    private static final int VOLUMES_MAX = 20;
+    private static final int MOUNTS_MAX = 40;
+    private static final int AFFINITY_MAX_CHARS = 64 * 1024;
+    private static final Set<String> AFFINITY_KINDS = Set.of("nodeAffinity", "podAffinity", "podAntiAffinity");
+    private static final Set<String> TOLERATION_EFFECTS = Set.of("NoSchedule", "PreferNoSchedule", "NoExecute");
+    private static final Pattern DNS_LABEL = Pattern.compile("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$");
+    private static final Pattern DNS_SUBDOMAIN = Pattern.compile("^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$");
+    /** 带可选前缀的 label key：{@code example.com/disktype} 或 {@code disktype} */
+    private static final Pattern LABEL_KEY = Pattern.compile(
+            "^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$");
+
     private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env", "configFiles",
             "expose", "nodePort", "otel", "probeType");
 
@@ -116,9 +138,10 @@ public final class AppServiceDesired {
         if (raw.containsKey("mesh")) {
             throw bad("服务网格是应用级设置，请在应用的「应用设置」里配置");
         }
+        normalizeScheduling(raw, out, files, otel);
         for (Map.Entry<String, Object> e : raw.entrySet()) {
             String k = e.getKey();
-            if (CORE.contains(k)) {
+            if (CORE.contains(k) || SCHEDULING.contains(k)) {
                 continue;
             }
             if (!PASSTHROUGH.contains(k)) {
@@ -524,6 +547,435 @@ public final class AppServiceDesired {
         Set<String> out = new LinkedHashSet<>(AppEnvResolver.references(envRows(desired)));
         configFiles(desired).forEach(f -> out.addAll(AppEnvResolver.referencesIn(f.get("content"))));
         return out;
+    }
+
+    /**
+     * 调度与挂载：nodeSelector / tolerations / affinity / volumes + volumeMounts。
+     *
+     * <p>空值不写进 desired —— 否则「没有这个键」和「空对象」会被当成待发布改动。
+     * 形状与工作负载页一致（types/workload.ts）：affinity 是紧凑结构（required / preferred），
+     * 卷是 {@code VolumeDef}（按 type 存对应的子对象），挂载点单独放 {@code volumeMounts}。
+     * 换成 K8s 原生形状在发布渲染时做（{@link AppScheduling}），desired 里保留用户填的样子。
+     */
+    private static void normalizeScheduling(Map<String, Object> raw, Map<String, Object> out,
+                                            List<Map<String, Object>> files, Map<String, Object> otel) {
+        Map<String, String> nodeSelector = normalizeNodeSelector(raw.get("nodeSelector"));
+        if (nodeSelector != null) {
+            out.put("nodeSelector", nodeSelector);
+        }
+        List<Map<String, Object>> tolerations = normalizeTolerations(raw.get("tolerations"));
+        if (!tolerations.isEmpty()) {
+            out.put("tolerations", tolerations);
+        }
+        Map<String, Object> affinity = normalizeAffinity(raw.get("affinity"));
+        if (affinity != null) {
+            out.put("affinity", affinity);
+        }
+        List<Map<String, Object>> volumes = normalizeVolumes(raw.get("volumes"));
+        if (!volumes.isEmpty()) {
+            out.put("volumes", volumes);
+        }
+        Set<String> names = new LinkedHashSet<>();
+        volumes.forEach(v -> names.add(text(v.get("name"))));
+        List<Map<String, Object>> mounts = normalizeVolumeMounts(raw.get("volumeMounts"), names,
+                dataMountPath(raw, integer(raw.get("port"), "端口")), files, logDir(otel));
+        if (!mounts.isEmpty()) {
+            out.put("volumeMounts", mounts);
+        }
+    }
+
+    /** desired 里是否用了 hostPath（只有平台管理员能保存）；纯函数，便于单测。 */
+    public static boolean usesHostPath(Map<String, Object> desired) {
+        if (desired == null || !(desired.get("volumes") instanceof List<?> list)) {
+            return false;
+        }
+        return list.stream().anyMatch(v -> v instanceof Map<?, ?> m
+                && VOLUME_HOST_PATH.equals(String.valueOf(m.get("type"))));
+    }
+
+    private static Map<String, String> normalizeNodeSelector(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (!(raw instanceof Map<?, ?> m)) {
+            throw bad("节点选择必须是键值对");
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : m.entrySet()) {
+            String k = text(e.getKey());
+            if (!LABEL_KEY.matcher(k).matches()) {
+                throw bad("节点选择标签名不合法：" + k);
+            }
+            out.put(k, text(e.getValue()));
+        }
+        return out.isEmpty() ? null : out;
+    }
+
+    private static List<Map<String, Object>> normalizeTolerations(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw bad("容忍必须是列表");
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                throw bad("容忍行格式错误");
+            }
+            String operator = text(m.get("operator"));
+            if (operator.isEmpty()) {
+                operator = "Equal";
+            }
+            if (!"Equal".equals(operator) && !"Exists".equals(operator)) {
+                throw bad("容忍的 operator 只能是 Equal / Exists");
+            }
+            String key = text(m.get("key"));
+            String value = text(m.get("value"));
+            String effect = text(m.get("effect"));
+            if (key.isEmpty() && !"Exists".equals(operator)) {
+                throw bad("容忍必须填 key（operator=Exists 且不填 key 表示容忍所有污点）");
+            }
+            if (!key.isEmpty() && !LABEL_KEY.matcher(key).matches()) {
+                throw bad("容忍的 key 不合法：" + key);
+            }
+            if ("Exists".equals(operator) && !value.isEmpty()) {
+                throw bad("operator=Exists 时不能填 value");
+            }
+            if (!effect.isEmpty() && !TOLERATION_EFFECTS.contains(effect)) {
+                throw bad("容忍的 effect 只能是 " + String.join(" / ", TOLERATION_EFFECTS));
+            }
+            Integer seconds = integer(m.get("tolerationSeconds"), "容忍时间");
+            if (seconds != null && (seconds < 0 || !"NoExecute".equals(effect))) {
+                throw bad("容忍时间只能是非负整数、且只用于 effect=NoExecute");
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("key", key);
+            row.put("operator", operator);
+            if (!value.isEmpty()) {
+                row.put("value", value);
+            }
+            if (!effect.isEmpty()) {
+                row.put("effect", effect);
+            }
+            if (seconds != null) {
+                row.put("tolerationSeconds", seconds);
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> normalizeAffinity(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (!(raw instanceof Map<?, ?> m)) {
+            throw bad("亲和性必须是对象");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> e : m.entrySet()) {
+            String k = String.valueOf(e.getKey());
+            if (!AFFINITY_KINDS.contains(k)) {
+                throw bad("亲和性只允许 " + String.join(" / ", AFFINITY_KINDS) + "：" + k);
+            }
+            if (!(e.getValue() instanceof Map)) {
+                throw bad("亲和性 " + k + " 必须是对象");
+            }
+            out.put(k, e.getValue());
+        }
+        if (out.isEmpty()) {
+            return null;
+        }
+        if (String.valueOf(out).length() > AFFINITY_MAX_CHARS) {
+            throw bad("亲和性配置过大（超过 64 KiB）");
+        }
+        return out;
+    }
+
+    /** 卷定义：{@code VolumeDef}（type 决定子对象），只校验与规整，不碰挂载点 */
+    private static List<Map<String, Object>> normalizeVolumes(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw bad("卷定义必须是列表");
+        }
+        if (list.size() > VOLUMES_MAX) {
+            throw bad("卷最多 " + VOLUMES_MAX + " 个");
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        Set<String> names = new LinkedHashSet<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                throw bad("卷定义格式错误");
+            }
+            String name = text(m.get("name"));
+            if (!DNS_LABEL.matcher(name).matches() || name.length() > 63) {
+                throw bad("卷名必须是 DNS 标签（小写字母、数字、连字符，至多 63 位）：" + name);
+            }
+            if (!names.add(name)) {
+                throw bad("卷名重复：" + name);
+            }
+            String type = text(m.get("type"));
+            if (!VOLUME_TYPES.contains(type)) {
+                throw bad("不支持的卷类型：" + type + "（可选 " + String.join(" / ", VOLUME_TYPES) + "）");
+            }
+            Map<String, Object> sub = m.get(type) instanceof Map<?, ?> sm
+                    ? new LinkedHashMap<>((Map<String, Object>) sm) : null;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("name", name);
+            row.put("type", type);
+            row.put(type, normalizeVolumeSource(name, type, sub));
+            out.add(row);
+        }
+        return out;
+    }
+
+    /** 按类型校验并规整卷来源（与工作负载页的 VolumeDef 同形，空键不存） */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> normalizeVolumeSource(String name, String type, Map<String, Object> sub) {
+        switch (type) {
+            case "emptyDir" -> {
+                Map<String, Object> out = new LinkedHashMap<>();
+                String medium = text(sub == null ? null : sub.get("medium"));
+                if (!medium.isEmpty() && !"Memory".equals(medium)) {
+                    throw bad("卷 " + name + " 的介质只能是空或 Memory");
+                }
+                if (!medium.isEmpty()) {
+                    out.put("medium", medium);
+                }
+                Object size = sub == null ? null : sub.get("sizeLimit");
+                if (size != null) {
+                    if (!(size instanceof Number n) || n.doubleValue() < 0) {
+                        throw bad("卷 " + name + " 的大小上限必须是非负数（字节）");
+                    }
+                    out.put("sizeLimit", ((Number) size).longValue());
+                }
+                return out;
+            }
+            case "configMap", "secret" -> {
+                String field = "configMap".equals(type) ? "name" : "secretName";
+                String source = text(sub == null ? null : sub.get(field));
+                if (!DNS_SUBDOMAIN.matcher(source).matches() || source.length() > 253) {
+                    throw bad("卷 " + name + " 引用的 " + field + " 不合法：" + source);
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put(field, source);
+                List<Map<String, Object>> items = normalizeItems(sub.get("items"), name);
+                if (!items.isEmpty()) {
+                    out.put("items", items);
+                }
+                return out;
+            }
+            case "persistentVolumeClaim" -> {
+                String claim = text(sub == null ? null : sub.get("claimName"));
+                if (!DNS_SUBDOMAIN.matcher(claim).matches() || claim.length() > 253) {
+                    throw bad("卷 " + name + " 引用的 PVC 名称不合法：" + claim);
+                }
+                return Map.of("claimName", claim);
+            }
+            case VOLUME_HOST_PATH -> {
+                String path = text(sub == null ? null : sub.get("path"));
+                assertHostPath(path);
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("path", path);
+                String pathType = sub == null ? "" : text(sub.get("type"));
+                if (!pathType.isEmpty() && !HOST_PATH_TYPES.contains(pathType)) {
+                    throw bad("hostPath 类型不支持：" + pathType);
+                }
+                if (!pathType.isEmpty()) {
+                    out.put("type", pathType);
+                }
+                return out;
+            }
+            case "projected" -> {
+                if (sub == null || !(sub.get("sources") instanceof List<?> sources) || sources.isEmpty()) {
+                    throw bad("卷 " + name + " 的 projected 至少需要一个投影来源");
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                if (sub.get("defaultMode") instanceof Number mode) {
+                    out.put("defaultMode", mode.intValue());
+                }
+                out.put("sources", sources);
+                return out;
+            }
+            case "downwardAPI" -> {
+                if (sub == null || !(sub.get("items") instanceof List<?> items) || items.isEmpty()) {
+                    throw bad("卷 " + name + " 的 downwardAPI 至少需要一个文件项");
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                if (sub.get("defaultMode") instanceof Number mode) {
+                    out.put("defaultMode", mode.intValue());
+                }
+                out.put("items", items);
+                return out;
+            }
+            case "csi" -> {
+                String driver = text(sub == null ? null : sub.get("driver"));
+                if (driver.isEmpty()) {
+                    throw bad("卷 " + name + " 的 CSI 驱动名不能为空");
+                }
+                Map<String, Object> out = new LinkedHashMap<>(sub);
+                if (out.get("nodePublishSecretRef") instanceof Map<?, ?> ref) {
+                    String secretName = text(ref.get("name"));
+                    if (secretName.isEmpty()) {
+                        out.remove("nodePublishSecretRef");
+                    } else {
+                        out.put("nodePublishSecretRef", Map.of("name", secretName));
+                    }
+                }
+                return out;
+            }
+            case "nfs" -> {
+                String server = text(sub == null ? null : sub.get("server"));
+                String path = text(sub == null ? null : sub.get("path"));
+                if (server.isEmpty() || path.isEmpty()) {
+                    throw bad("卷 " + name + " 的 NFS 服务器与共享路径都不能为空");
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("server", server);
+                out.put("path", path);
+                if (Boolean.TRUE.equals(sub.get("readOnly"))) {
+                    out.put("readOnly", true);
+                }
+                return out;
+            }
+            default -> throw bad("不支持的卷类型：" + type);
+        }
+    }
+
+    private static List<Map<String, Object>> normalizeItems(Object raw, String name) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw bad("卷 " + name + " 的 items 必须是列表");
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                throw bad("卷 " + name + " 的 items 行格式错误");
+            }
+            String key = text(m.get("key"));
+            String path = text(m.get("path"));
+            if (key.isEmpty() || path.isEmpty()) {
+                throw bad("卷 " + name + " 的 items 需要同时填 key 与 path");
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("key", key);
+            row.put("path", path);
+            if (m.get("mode") instanceof Number mode) {
+                row.put("mode", mode.intValue());
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    /** 挂载点：名字必须引用本次定义的卷；路径不能互相覆盖，也不能遮住持久化卷 / 配置文件 / 日志目录 */
+    private static List<Map<String, Object>> normalizeVolumeMounts(Object raw, Set<String> volumeNames,
+                                                                   String dataMount,
+                                                                   List<Map<String, Object>> files, String logDir) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (!(raw instanceof List<?> list)) {
+            throw bad("挂载点必须是列表");
+        }
+        if (list.size() > MOUNTS_MAX) {
+            throw bad("挂载点最多 " + MOUNTS_MAX + " 个");
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<String> paths = new ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                throw bad("挂载点格式错误");
+            }
+            String name = text(m.get("name"));
+            if (!volumeNames.contains(name)) {
+                throw bad("挂载点引用了不存在的卷：" + name);
+            }
+            String mountPath = text(m.get("mountPath"));
+            assertMountPath(mountPath);
+            for (String other : paths) {
+                if (overlaps(mountPath, other)) {
+                    throw bad("挂载路径 " + mountPath + " 与 " + other + " 互相覆盖");
+                }
+            }
+            assertMountClear(mountPath, "持久化数据卷", dataMount);
+            for (Map<String, Object> f : files) {
+                assertMountClear(mountPath, "配置文件", text(f.get("path")));
+            }
+            assertMountClear(mountPath, "日志目录", logDir);
+            paths.add(mountPath);
+
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("name", name);
+            row.put("mountPath", mountPath);
+            row.put("readOnly", Boolean.TRUE.equals(m.get("readOnly")));
+            String subPath = text(m.get("subPath"));
+            if (!subPath.isEmpty()) {
+                assertSubPath(subPath);
+                row.put("subPath", subPath);
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    private static void assertMountPath(String path) {
+        if (!path.startsWith("/") || path.length() > 255) {
+            throw bad("挂载路径必须是绝对路径：" + path);
+        }
+        for (String seg : path.substring(1).split("/", -1)) {
+            if (seg.isEmpty() || seg.equals(".") || seg.equals("..") || !PATH_SEGMENT.matcher(seg).matches()) {
+                throw bad("挂载路径不合法（只允许字母、数字和 . _ - @ + = ,，不能有空段 / . / ..）：" + path);
+            }
+        }
+    }
+
+    private static void assertHostPath(String path) {
+        if (!path.startsWith("/") || path.length() > 255) {
+            throw bad("hostPath 必须是节点上的绝对路径：" + path);
+        }
+        for (String seg : path.substring(1).split("/", -1)) {
+            if (seg.equals("..") || seg.equals(".")) {
+                throw bad("hostPath 不能包含 . 或 ..：" + path);
+            }
+        }
+    }
+
+    private static void assertSubPath(String subPath) {
+        if (subPath.startsWith("/") || subPath.length() > 255) {
+            throw bad("subPath 必须是相对于卷根的路径：" + subPath);
+        }
+        for (String seg : subPath.split("/", -1)) {
+            if (seg.isEmpty() || seg.equals("..") || seg.equals(".") || !PATH_SEGMENT.matcher(seg).matches()) {
+                throw bad("subPath 不合法：" + subPath);
+            }
+        }
+    }
+
+    /** 挂载路径与某个「已存在的挂载点」重叠（相同 / 一个在另一个下面）都算冲突：会互相遮住 */
+    private static void assertMountClear(String mountPath, String what, String other) {
+        if (other != null && !other.isEmpty() && overlaps(mountPath, other)) {
+            throw bad("挂载路径 " + mountPath + " 与" + what + " " + other + " 冲突");
+        }
+    }
+
+    private static boolean overlaps(String a, String b) {
+        return a.equals(b) || a.startsWith(b + "/") || b.startsWith(a + "/");
+    }
+
+    /** 文件日志目录（otel.logFile 的父目录）：挂载不能把它遮住 */
+    private static String logDir(Map<String, Object> otel) {
+        if (otel == null || otel.get("logFile") == null) {
+            return null;
+        }
+        String file = String.valueOf(otel.get("logFile"));
+        int slash = file.lastIndexOf('/');
+        return slash > 0 ? file.substring(0, slash) : null;
     }
 
     private static Integer integer(Object o, String label) {

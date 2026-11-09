@@ -40,7 +40,19 @@ spec:
         - name: {{ . | quote }}
         {{- end }}
       {{- end }}
-      {{- if or .Values.workload.configFiles .Values.workload.logVolume.enabled }}
+      {{- with .Values.workload.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workload.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.workload.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or .Values.workload.configFiles .Values.workload.logVolume.enabled .Values.workload.extraVolumes }}
       volumes:
         {{- if .Values.workload.configFiles }}
         - name: config-files
@@ -50,6 +62,9 @@ spec:
         {{- if .Values.workload.logVolume.enabled }}
         - name: platform-otel-logs
           emptyDir: {}
+        {{- end }}
+        {{- with .Values.workload.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- end }}
       containers:
@@ -92,7 +107,7 @@ spec:
               value: {{ .value | quote }}
             {{- end }}
           {{- end }}
-          {{- if or .Values.workload.configFiles .Values.workload.logVolume.enabled }}
+          {{- if or .Values.workload.configFiles .Values.workload.logVolume.enabled .Values.workload.extraVolumeMounts }}
           volumeMounts:
           {{- range .Values.workload.configFiles }}
             - name: config-files
@@ -103,6 +118,9 @@ spec:
             {{- if .Values.workload.logVolume.enabled }}
             - name: platform-otel-logs
               mountPath: {{ .Values.workload.logVolume.mountDir | quote }}
+            {{- end }}
+            {{- with .Values.workload.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
             {{- end }}
           {{- end }}
           resources:

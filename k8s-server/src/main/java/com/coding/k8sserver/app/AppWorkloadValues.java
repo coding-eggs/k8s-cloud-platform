@@ -77,6 +77,12 @@ public final class AppWorkloadValues {
         workload.put("podLabels", stringMap(params.get("podLabels")));
         workload.put("serviceLabels", stringMap(params.get("serviceLabels")));
         workload.put("extraEnv", nameValues(params.get("extraEnv")));
+        // 调度：nodeSelector / tolerations 原样透传；affinity 与卷由 platform-api 翻成 K8s 原生结构后再给
+        workload.put("nodeSelector", stringMap(params.get("nodeSelector")));
+        workload.put("tolerations", tolerations(params));
+        workload.put("affinity", params.get("podAffinity") instanceof Map<?, ?> a ? a : Map.of());
+        workload.put("extraVolumes", maps(params.get("podVolumes")));
+        workload.put("extraVolumeMounts", maps(params.get("podVolumeMounts")));
         String logMountDir = str(params.get("logMountDir"));
         workload.put("logVolume", Map.of("enabled", !logMountDir.isBlank(), "mountDir", logMountDir));
         String exposeType = worker ? "none" : strOrDefault(params.get("expose"), "none").toLowerCase();
@@ -296,6 +302,53 @@ public final class AppWorkloadValues {
                     out.add(Map.of("name", String.valueOf(m.get("name")),
                             "value", m.get("value") == null ? "" : String.valueOf(m.get("value"))));
                 }
+            }
+        }
+        return out;
+    }
+
+    /** 容忍：[{key, operator, value, effect, tolerationSeconds}] → chart 直接 toYaml（空 key 只允许 Exists） */
+    static List<Map<String, Object>> tolerations(Map<String, Object> params) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (!(params.get("tolerations") instanceof List<?> list)) {
+            return out;
+        }
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                continue;
+            }
+            String operator = strOrDefault(m.get("operator"), "Equal");
+            String key = str(m.get("key"));
+            if (key.isBlank() && !"Exists".equals(operator)) {
+                continue;   // platform-api 已拦；渲染器不造非法容忍
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("key", key);
+            row.put("operator", operator);
+            if (!str(m.get("value")).isBlank()) {
+                row.put("value", str(m.get("value")));
+            }
+            if (!str(m.get("effect")).isBlank()) {
+                row.put("effect", str(m.get("effect")));
+            }
+            if (m.get("tolerationSeconds") instanceof Number n) {
+                row.put("tolerationSeconds", n.intValue());
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    /** 已经是 K8s 原生的对象列表（卷定义 / 挂载点）：原样交给模板 toYaml */
+    @SuppressWarnings("unchecked")
+    static List<Map<String, Object>> maps(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : list) {
+            if (o instanceof Map<?, ?> m) {
+                out.add((Map<String, Object>) m);
             }
         }
         return out;

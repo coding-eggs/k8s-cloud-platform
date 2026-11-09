@@ -48,6 +48,7 @@ class AppServiceConfigServiceTest {
     private IngressPortService ports;
     private IngressListenerSync listeners;
     private AppNodePortAllocator nodePorts;
+    private AppHostPathGuard guard;
     private static final IngressPortService.PortRange POOL = new IngressPortService.PortRange(20000, 20999);
 
     @BeforeEach
@@ -63,8 +64,9 @@ class AppServiceConfigServiceTest {
         listeners = mock(IngressListenerSync.class);
         nodePorts = mock(AppNodePortAllocator.class);
         when(nodePorts.assign(any(), any(), any())).thenAnswer(inv -> inv.getArgument(2));
+        guard = mock(AppHostPathGuard.class);
         service = new AppServiceConfigService(apps, services, deps, releases, executions, harbor, gate,
-                ports, listeners, nodePorts);
+                ports, listeners, nodePorts, guard);
         app = new PlatformApplication();
         app.setId("app1");
         app.setTenantId("t1");

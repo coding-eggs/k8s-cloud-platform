@@ -8,6 +8,7 @@ export interface PolicyRule {
 
 // 复用工作负载编辑器的容器子结构（与后端 ContainerDTO 同构）
 import type {
+  Affinity,
   ContainerPort,
   EnvFrom,
   EnvVar,
@@ -16,6 +17,8 @@ import type {
   OwnerRef,
   Probe,
   Resources,
+  Toleration,
+  VolumeDef,
   VolumeMount,
 } from './types/workload'
 import type { MetricSeriesResponse } from './types/metrics'
@@ -3096,6 +3099,16 @@ export interface AppServiceDesired {
   targetCpu?: number
   /** 内存目标利用率 %；不填 = 只按 CPU */
   targetMemory?: number
+  /** 节点选择：label 键值对；不填 = 没有这个键 */
+  nodeSelector?: Record<string, string>
+  /** 容忍（taint toleration）；与工作负载页同一个编辑器 */
+  tolerations?: Toleration[]
+  /** 亲和性：工作负载页的紧凑结构（required / preferred），发布时翻成 K8s 原生字段 */
+  affinity?: Affinity | null
+  /** 额外卷（工作负载页的 VolumeDef）；挂载点在 volumeMounts */
+  volumes?: VolumeDef[]
+  /** 额外挂载点：name 引用 volumes 里的卷 */
+  volumeMounts?: VolumeMount[]
   /** 可观测接入（OTel）；不接入 = 没有这个键 */
   otel?: AppServiceOtel
   probeEnabled?: boolean

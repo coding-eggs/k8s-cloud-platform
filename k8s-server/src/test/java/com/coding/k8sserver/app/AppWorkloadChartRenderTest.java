@@ -522,4 +522,73 @@ class AppWorkloadChartRenderTest {
         assertThat(sm).isNotNull();
         assertThat(((List<Map<String, Object>>) at(sm, "spec").get("endpoints")).get(0)).containsEntry("port", "tcp");
     }
+
+    // ---------- 调度与挂载（2026-11-09） ----------
+
+    private static Map<String, Object> schedulingParams() {
+        Map<String, Object> p = new java.util.LinkedHashMap<>();
+        p.put("image", "nginx");
+        p.put("port", 80);
+        p.put("nodeSelector", Map.of("disktype", "ssd"));
+        p.put("tolerations", List.of(Map.of("key", "dedicated", "operator", "Equal", "value", "app",
+                "effect", "NoSchedule")));
+        p.put("podAffinity", Map.of("podAntiAffinity",
+                Map.of("requiredDuringSchedulingIgnoredDuringExecution", List.of())));
+        p.put("podVolumes", List.of(
+                Map.of("name", "cache", "emptyDir", Map.of()),
+                Map.of("name", "cfg", "configMap", Map.of("name", "my-cm"))));
+        p.put("podVolumeMounts", List.of(
+                Map.of("name", "cache", "mountPath", "/cache"),
+                Map.of("name", "cfg", "mountPath", "/etc/extra", "readOnly", true)));
+        return p;
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void schedulingAndExtraVolumesAreRendered() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> podSpec = at(find(render(schedulingParams()), "Deployment", "shop-api"),
+                "spec", "template", "spec");
+
+        assertThat(at(podSpec, "nodeSelector")).containsEntry("disktype", "ssd");
+        assertThat(((List<Map<String, Object>>) podSpec.get("tolerations")).get(0))
+                .containsEntry("key", "dedicated").containsEntry("operator", "Equal")
+                .containsEntry("effect", "NoSchedule");
+        assertThat(podSpec.get("affinity")).isInstanceOf(Map.class);
+        assertThat((List<Map<String, Object>>) podSpec.get("volumes")).anySatisfy(v -> {
+            assertThat(v.get("name")).isEqualTo("cache");
+            assertThat(v).containsKey("emptyDir");
+        }).anySatisfy(v -> {
+            assertThat(v.get("name")).isEqualTo("cfg");
+            assertThat(at(v, "configMap").get("name")).isEqualTo("my-cm");
+        });
+        Map<String, Object> container = ((List<Map<String, Object>>) podSpec.get("containers")).get(0);
+        assertThat((List<Map<String, Object>>) container.get("volumeMounts")).anySatisfy(m -> {
+            assertThat(m.get("name")).isEqualTo("cache");
+            assertThat(m).containsEntry("mountPath", "/cache");
+        }).anySatisfy(m -> {
+            assertThat(m.get("name")).isEqualTo("cfg");
+            assertThat(m).containsEntry("mountPath", "/etc/extra").containsEntry("readOnly", true);
+        });
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void statefulSetKeepsDataVolumeAndAddsExtraOnes() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> params = new java.util.LinkedHashMap<>(schedulingParams());
+        params.put("persistenceEnabled", true);
+        Map<String, Object> podSpec = at(find(render(params), "StatefulSet", "shop-api"),
+                "spec", "template", "spec");
+
+        assertThat(at(podSpec, "nodeSelector")).containsEntry("disktype", "ssd");
+        assertThat((List<Map<String, Object>>) podSpec.get("volumes")).anySatisfy(v -> {
+            assertThat(v.get("name")).isEqualTo("cache");
+            assertThat(v).containsKey("emptyDir");
+        });
+        Map<String, Object> container = ((List<Map<String, Object>>) podSpec.get("containers")).get(0);
+        assertThat((List<Map<String, Object>>) container.get("volumeMounts"))
+                .anySatisfy(m -> assertThat(m.get("name")).isEqualTo("data"))
+                .anySatisfy(m -> assertThat(m.get("name")).isEqualTo("cache"));
+    }
 }

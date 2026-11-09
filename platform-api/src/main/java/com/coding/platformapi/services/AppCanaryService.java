@@ -53,14 +53,17 @@ public class AppCanaryService {
     private final AppReleaseService releases;
     private final AppReleasePipeline pipeline;
     private final MetricsService metrics;
+    private final AppHostPathGuard hostPathGuard;
 
     public AppCanaryService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
-                            AppReleaseService releases, AppReleasePipeline pipeline, MetricsService metrics) {
+                            AppReleaseService releases, AppReleasePipeline pipeline, MetricsService metrics,
+                            AppHostPathGuard hostPathGuard) {
         this.apps = apps;
         this.services = services;
         this.releases = releases;
         this.pipeline = pipeline;
         this.metrics = metrics;
+        this.hostPathGuard = hostPathGuard;
     }
 
     /** 当前线上状态 + 凭据：四个操作的公共前置 */
@@ -96,6 +99,9 @@ public class AppCanaryService {
         requireEligible(c.key, stable, l7);
         Map<String, Object> desired = req.getDesired() == null ? new LinkedHashMap<>(stable)
                 : AppServiceDesired.normalize(req.getDesired());
+        if (req.getDesired() != null) {
+            hostPathGuard.assertAllowed(desired);   // 灰度里也能改配置：hostPath 的口径与保存一致
+        }
         boolean http = "HTTP".equals(AppServiceDesired.serviceProtocol(stable));
         AppCanary.Header header = null;
         boolean headerOn = req.getHeaderEnabled() == null ? http : req.getHeaderEnabled();
@@ -121,6 +127,9 @@ public class AppCanaryService {
         Map<String, Object> stable = AppCanary.without(c.liveService);
         Map<String, Object> desired = req.getDesired() == null ? cur.desired()
                 : AppServiceDesired.normalize(req.getDesired());
+        if (req.getDesired() != null) {
+            hostPathGuard.assertAllowed(desired);
+        }
         AppCanary.Header header = cur.header();
         if (Boolean.FALSE.equals(req.getHeaderEnabled())) {
             header = null;
