@@ -110,7 +110,7 @@ function onStarted(): void {
     v-if="mode === 'manage'"
     v-model="visible"
     :title="row ? `灰度 · ${row.key}` : '灰度'"
-    size="760px"
+    size="960px"
     class="app-cny-drw"
     destroy-on-close
   >
