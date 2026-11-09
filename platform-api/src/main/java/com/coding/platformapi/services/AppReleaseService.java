@@ -21,6 +21,7 @@ import com.coding.data.models.system.PlatformAppExecution;
 import com.coding.data.models.system.PlatformAppRelease;
 import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
+import com.coding.platformapi.app.AppCanary;
 import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppPending;
 import com.coding.platformapi.app.AppServiceDesired;
@@ -308,7 +309,9 @@ public class AppReleaseService {
             throw error("发布 " + sourceReleaseNo + " 已经是线上版本");
         }
         requireNoRunningExecution(app.getId());
-        AppSnapshot target = AppSnapshot.parse(source.getSnapshotJson());
+        requireNoCanary(liveSnapshot(app));
+        // 回滚只还原 stable：灰度是一段进行中的操作，不随历史版本复活
+        AppSnapshot target = AppCanary.strip(AppSnapshot.parse(source.getSnapshotJson()));
         if (target.services().isEmpty()) {
             throw error("发布 " + sourceReleaseNo + " 不含任何服务，无法回滚");
         }
@@ -373,6 +376,7 @@ public class AppReleaseService {
         if (live.services().isEmpty()) {
             throw error("应用已下线");
         }
+        requireNoCanary(live);
         // 应用设置照留：重新上线时它不该显示成待发布改动
         String snapshot = new AppSnapshot(new LinkedHashMap<>(), live.dependencies(), live.app()).toJson();
         return launch(app, authorization, plannedLive, snapshot, AppReleaseExecutor.OFFLINE_TYPE, null, note, operator,
@@ -380,6 +384,13 @@ public class AppReleaseService {
     }
 
     /** PENDING / RUNNING 正在推进，拒绝；INTERRUPTED 在等用户点继续，新发布会取代它。 */
+    private static void requireNoCanary(AppSnapshot live) {
+        List<String> keys = AppCanary.activeKeys(live);
+        if (!keys.isEmpty()) {
+            throw error("有服务正在灰度（" + String.join("、", keys) + "），先全量或回退");
+        }
+    }
+
     void requireNoRunningExecution(String appId) {
         PlatformAppExecution running = executions.selectActiveByApp(appId);
         if (running != null && !"INTERRUPTED".equals(running.getStatus())) {
@@ -745,8 +756,11 @@ public class AppReleaseService {
         // 应用设置（链路追踪 / 网格）：期望值 vs 线上快照的 app 字段；勾选「@app」才带上新值，否则沿用线上
         Map<String, Object> settings = AppSnapshot.parseMap(app.getSettingsJson());
         List<String> appFields = AppPending.changedFields(live.app(), settings);
+        List<String> inCanary = AppCanary.activeKeys(live);
         for (String key : selected) {
-            if (AppSettings.KEY.equals(key)) {
+            if (inCanary.contains(key)) {
+                errors.add("服务 " + key + " 灰度中，先全量或回退");
+            } else if (AppSettings.KEY.equals(key)) {
                 if (appFields.isEmpty()) {
                     errors.add("应用设置没有待发布的改动");
                 }

@@ -322,4 +322,19 @@ class AppReleasePipelineTest {
         assertThat(req.getSpec().getNodes().get(0).getParams().get("route")).isEqualTo(Map.of(
                 "kind", "http", "parentName", "platform-ingress", "sectionName", "p20003"));
     }
+
+    @Test
+    void ingressReconcileIgnoresCanaryNodes() {
+        Map<String, Object> stable = svc("gateway-http");
+        Map<String, Object> api = com.coding.platformapi.app.AppCanary.with(stable,
+                new com.coding.platformapi.app.AppCanary.Spec(new LinkedHashMap<>(stable), 1, 10, null));
+        PlatformAppExecution e = execution(Map.of("api", api));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", stable)));
+        when(ports.portOf("app1", "api")).thenReturn(null);
+
+        pipeline.check(e);
+
+        verify(ports).allocate("c1", "demo", "app1", "api", "HTTP", POOL);
+        verify(ports, never()).allocate(any(), any(), any(), eq("api-canary"), any(), any());
+    }
 }

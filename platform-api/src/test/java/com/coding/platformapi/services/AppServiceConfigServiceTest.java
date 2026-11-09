@@ -619,4 +619,30 @@ class AppServiceConfigServiceTest {
         assertThatThrownBy(() -> service.create(req("api", d), "t1")).hasMessageContaining("已存在");
         verify(ports, never()).release(any(), any());
     }
+
+    @Test
+    void updateAndRemoveRejectServiceInCanary() {
+        app.setLiveReleaseNo(2);
+        Map<String, Object> stable = web("1");
+        stable.put("expose", "gateway-http");
+        Map<String, Object> inCanary = com.coding.platformapi.app.AppCanary.with(stable,
+                new com.coding.platformapi.app.AppCanary.Spec(web("2"), 1, 10, null));
+        PlatformAppRelease live = new PlatformAppRelease();
+        live.setSnapshotJson("{\"services\":{\"api\":" + JSON.writeValueAsString(inCanary)
+                + "},\"dependencies\":[]}");
+        when(releases.selectByNo("app1", 2)).thenReturn(live);
+        PlatformAppService r = row("api", stable, 4);
+        when(services.selectByKey("app1", "api")).thenReturn(r);
+        when(services.selectByApp("app1")).thenReturn(List.of(r));
+        when(services.updateWithVersion(any())).thenReturn(1);
+
+        AppServiceRequest up = req("api", web("3"));
+        up.setVersion(4);
+        assertThatThrownBy(() -> service.update(up, "t1")).hasMessageContaining("灰度中");
+        AppServiceRequest rm = req("api", null);
+        rm.setVersion(4);
+        assertThatThrownBy(() -> service.remove(rm, "t1")).hasMessageContaining("灰度中");
+        verify(services, never()).updateWithVersion(any());
+        verify(services, never()).deleteById(any());
+    }
 }

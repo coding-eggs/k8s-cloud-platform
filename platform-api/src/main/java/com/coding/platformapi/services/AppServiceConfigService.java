@@ -142,6 +142,7 @@ public class AppServiceConfigService {
     public AppServiceView update(AppServiceRequest req, String tenantId) {
         PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppService row = require(app, req.getServiceKey());
+        requireNotInCanary(app, row.getServiceKey());
         if (Boolean.TRUE.equals(row.getPendingDelete())) {
             throw error("服务 " + row.getServiceKey() + " 已标记删除，不能再改");
         }
@@ -205,6 +206,7 @@ public class AppServiceConfigService {
         PlatformApplication app = AppGuard.require(apps, req.getAppId(), tenantId);
         PlatformAppService row = require(app, req.getServiceKey());
         String key = row.getServiceKey();
+        requireNotInCanary(app, key);
         if (req.getVersion() == null || !req.getVersion().equals(row.getVersion())) {
             throw conflict();
         }
@@ -282,6 +284,21 @@ public class AppServiceConfigService {
         }
         PlatformAppExecution active = executions.selectActiveByApp(app.getId());
         return active != null && inRelease(app.getId(), active.getReleaseNo(), key);
+    }
+
+    /** 灰度中（线上或进行中的那次发布带 canary 块）的服务锁住：只能全量或回退，否则 stable 会在灰度期间被改走 */
+    private void requireNotInCanary(PlatformApplication app, String key) {
+        PlatformAppExecution active = executions.selectActiveByApp(app.getId());
+        for (Integer no : java.util.Arrays.asList(app.getLiveReleaseNo(), active == null ? null : active.getReleaseNo())) {
+            if (no == null || no <= 0) {
+                continue;
+            }
+            PlatformAppRelease release = releases.selectByNo(app.getId(), no);
+            if (release != null && com.coding.platformapi.app.AppCanary.of(
+                    AppSnapshot.parse(release.getSnapshotJson()).services().get(key)) != null) {
+                throw error("服务 " + key + " 灰度中，先全量或回退");
+            }
+        }
     }
 
     private boolean inRelease(String appId, Integer releaseNo, String key) {

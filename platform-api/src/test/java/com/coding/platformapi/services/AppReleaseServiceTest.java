@@ -1494,4 +1494,82 @@ class AppReleaseServiceTest {
                 .isInstanceOf(CloudPlatformException.class).hasMessageContaining("${db.password}");
         assertThat(pipeline.problems(app, snapshot)).anySatisfy(p -> assertThat(p).contains("api"));
     }
+
+    // ---------- 入口灰度的锁（2026-11-09） ----------
+
+    private static Map<String, Object> gw(String tag) {
+        Map<String, Object> m = svc(tag);
+        m.put("expose", "gateway-http");
+        return m;
+    }
+
+    private static Map<String, Object> canaryOf(Map<String, Object> stable, String tag) {
+        return com.coding.platformapi.app.AppCanary.with(stable, new com.coding.platformapi.app.AppCanary.Spec(
+                gw(tag), 1, 10, new com.coding.platformapi.app.AppCanary.Header("x-canary", "true")));
+    }
+
+    @Test
+    void createRejectsSelectingAServiceInCanary() {
+        live(3, Map.of("api", canaryOf(gw("1"), "2")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", gw("5"), false)));
+
+        assertThatThrownBy(() -> service.create("app1", List.of("api"), Map.of(), null, "bob", "t1"))
+                .hasMessageContaining("灰度中");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void releasingAnotherServiceKeepsTheCanaryBlock() {
+        Map<String, Object> api = canaryOf(gw("1"), "2");
+        live(3, Map.of("api", api, "web", svc("1")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", gw("1"), false), row("web", svc("2"), false)));
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+
+        service.create("app1", List.of("web"), Map.of(), null, "bob", "t1");
+
+        AppSnapshot next = AppSnapshot.parse(inserted().getSnapshotJson());
+        assertThat(JSON.writeValueAsString(next.services().get("api"))).isEqualTo(JSON.writeValueAsString(
+                JSON.convertValue(api, Map.class)));
+        assertThat(next.services().get("web")).containsEntry("imageTag", "2");
+    }
+
+    @Test
+    void rollbackAndOfflineRejectWhileAnyServiceIsInCanary() {
+        live(3, Map.of("api", canaryOf(gw("1"), "2")));
+        history(1, "DEPLOYED", Map.of("api", gw("0")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", gw("1"), false)));
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+
+        assertThatThrownBy(() -> service.rollback("app1", 1, null, "bob", "t1")).hasMessageContaining("灰度");
+        assertThatThrownBy(() -> service.offline("app1", null, "bob", "t1")).hasMessageContaining("灰度");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void rollbackToASnapshotWithCanaryStripsIt() {
+        live(3, Map.of("api", gw("3")));
+        history(1, "DEPLOYED", Map.of("api", canaryOf(gw("1"), "2")), List.of());
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", gw("3"), false)));
+        when(services.updateWithVersion(any())).thenReturn(1);
+        when(releases.selectMaxNo("app1")).thenReturn(3);
+
+        service.rollback("app1", 1, null, "bob", "t1");
+
+        AppSnapshot next = AppSnapshot.parse(inserted().getSnapshotJson());
+        assertThat(next.services().get("api")).doesNotContainKey(com.coding.platformapi.app.AppCanary.KEY)
+                .containsEntry("imageTag", "1");
+        ArgumentCaptor<PlatformAppService> w = ArgumentCaptor.forClass(PlatformAppService.class);
+        verify(services).updateWithVersion(w.capture());
+        assertThat(w.getValue().getDesiredJson()).doesNotContain("canary");
+    }
+
+    @Test
+    void overviewPendingIgnoresCanary() {
+        live(3, Map.of("api", canaryOf(gw("1"), "2")));
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", gw("1"), false)));
+
+        var s = service.overview("app1", "t1").services().get(0);
+        assertThat(s.pending()).isNull();
+    }
 }
