@@ -337,4 +337,75 @@ class AppReleasePipelineTest {
         verify(ports).allocate("c1", "demo", "app1", "api", "HTTP", POOL);
         verify(ports, never()).allocate(any(), any(), any(), eq("api-canary"), any(), any());
     }
+
+    // ---------- 内部灰度（2026-11-09） ----------
+
+    private static final Map<String, Object> L7 = Map.of("mesh", Map.of("mode", "l7", "waypoint", "wp"));
+
+    private static Map<String, Object> inCanary(Map<String, Object> stable, boolean external) {
+        Map<String, Object> canaryDesired = new LinkedHashMap<>(stable);
+        canaryDesired.put("imageTag", "2");
+        return com.coding.platformapi.app.AppCanary.with(stable, new com.coding.platformapi.app.AppCanary.Spec(
+                canaryDesired, 1, 20, new com.coding.platformapi.app.AppCanary.Header("x-canary", "true"), external));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void l7CanaryAddsMeshRouteOnStableNode() {
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 3,
+                new AppSnapshot(Map.of("api", inCanary(svc(null), false)), List.of(), L7));
+
+        Map<String, Object> s = nodeOf(req, "api").getParams();
+        assertThat(s).doesNotContainKey("route");
+        Map<String, Object> mr = (Map<String, Object>) s.get("meshRoute");
+        assertThat(mr).containsEntry("kind", "http");
+        assertThat((Map<String, Object>) mr.get("canary")).containsEntry("service", "shop-api-canary")
+                .containsEntry("weight", 20).containsEntry("header", Map.of("name", "x-canary", "value", "true"));
+        assertThat(nodeOf(req, "api-canary").getParams()).doesNotContainKey("meshRoute");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void nonL7CanaryHasNoMeshRoute() {
+        when(ports.portOf("app1", "api")).thenReturn(20003);
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 3,
+                new AppSnapshot(Map.of("api", inCanary(svc("gateway-http"), true)), List.of(), Map.of()));
+
+        Map<String, Object> s = nodeOf(req, "api").getParams();
+        assertThat(s).doesNotContainKey("meshRoute");
+        assertThat((Map<String, Object>) s.get("route")).containsKey("canary");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void externalFalseKeepsGatewayRoutePlain() {
+        when(ports.portOf("app1", "api")).thenReturn(20003);
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 3,
+                new AppSnapshot(Map.of("api", inCanary(svc("gateway-http"), false)), List.of(), L7));
+
+        Map<String, Object> s = nodeOf(req, "api").getParams();
+        assertThat(s.get("route")).isEqualTo(Map.of(
+                "kind", "http", "parentName", "platform-ingress", "sectionName", "p20003"));
+        assertThat(s).containsKey("meshRoute");
+    }
+
+    @Test
+    void tcpServicesCarryProtocolParamHttpDoNot() {
+        when(ports.portOf("app1", "a")).thenReturn(20004);
+        Map<String, Object> b = svc(null);
+        b.put("probeType", "tcp");
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 3, new AppSnapshot(
+                Map.of("a", svc("gateway-tcp"), "b", b, "c", svc(null)), List.of()));
+
+        assertThat(nodeOf(req, "a").getParams()).containsEntry("protocol", "tcp");
+        assertThat(nodeOf(req, "b").getParams()).containsEntry("protocol", "tcp");
+        assertThat(nodeOf(req, "c").getParams()).doesNotContainKey("protocol");
+    }
+
+    @Test
+    void noCanaryNoMeshRouteEvenWithL7() {
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 3,
+                new AppSnapshot(Map.of("api", svc(null)), List.of(), L7));
+        assertThat(req.getSpec().getNodes()).allSatisfy(n -> assertThat(n.getParams()).doesNotContainKey("meshRoute"));
+    }
 }

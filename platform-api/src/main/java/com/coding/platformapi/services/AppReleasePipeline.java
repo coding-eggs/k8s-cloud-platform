@@ -212,10 +212,19 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
                 route.put("kind", gateway.toLowerCase(java.util.Locale.ROOT));
                 route.put("parentName", IngressListenerSync.LISTENER_SET);
                 route.put("sectionName", sectionName(app, key, preview));
-                if (canary != null) {
+                if (canary != null && canary.external()) {
+                    // external=false：网关进来的固定进 stable，网关路由与没灰度时相同（内部灰度设计 §4.3）
                     route.put("canary", canaryBackend(app, key, canary));
                 }
                 params.put("route", route);
+            }
+            if (canary != null && AppSettings.isL7(snapshot.app())) {
+                // 内部灰度：挂在 stable Service 上的网格路由，经 waypoint 的集群内调用按同一权重分流（设计 §4.2）。
+                // 只在灰度中 + 线上应用设置为 L7 时给：没灰度的服务清单不变
+                Map<String, Object> mesh = new LinkedHashMap<>();
+                mesh.put("kind", AppServiceDesired.serviceProtocol(desired).toLowerCase(java.util.Locale.ROOT));
+                mesh.put("canary", canaryBackend(app, key, canary));
+                stable.getParams().put("meshRoute", mesh);
             }
             nodes.add(stable);
             if (canary != null) {
@@ -270,6 +279,9 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
             }
         });
         params.put("image", AppServiceDesired.image(desired));
+        if (AppServiceDesired.port(desired) != null && "TCP".equals(AppServiceDesired.serviceProtocol(desired))) {
+            params.put("protocol", "tcp");   // Service 端口名用 tcp（Istio 按端口名判协议）；HTTP 不带此键，参数不变
+        }
         // otel / mesh 翻译成通用注入参数（k8s-server 只透传）；没有这两块时什么都不加
         // 链路追踪 / 网格是应用级设置：先合并进该服务的生效配置
         params.putAll(AppServiceInjection.params(effective, AppObjectNames.objectName(app.getSlug(), nodeKey)));
