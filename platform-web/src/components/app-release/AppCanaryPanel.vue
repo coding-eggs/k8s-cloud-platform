@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 服务页「灰度」页签（spec §9）：未灰度时说明 + 开始；灰度中时权重 / header、指标对比、两个版本的 Pod、全量 / 回退。
+ * 灰度管理（应用页服务列表「管理灰度」抽屉，spec §9）：未灰度时说明 + 开始；灰度中时权重 / header、指标对比、两个版本的 Pod、全量 / 回退。
  * 平台只给指标，好不好由租户自己判断：canary 错误率比 stable 高 1 个百分点以上时数字标橙，不拦操作。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
@@ -286,7 +286,7 @@ function readyCount(p: K8sPod): string {
           </el-table-column>
           <el-table-column label="重启" width="70"><template #default="{ row: p }">{{ p.restarts ?? 0 }}</template></el-table-column>
         </el-table>
-        <div class="muted app-cny__tip">日志请到「Pod 与日志」页签或资源页查看。</div>
+        <div class="muted app-cny__tip">日志请到服务页「Pod 与日志」页签或资源页查看。</div>
       </section>
 
       <section class="panel app-cny__card app-cny__ops">

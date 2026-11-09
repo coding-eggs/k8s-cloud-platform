@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * 服务详情（设计 §8）：概览 / 配置 / 灰度 / Pod 与日志 / 监控。
- * 灰度中（线上快照带 canary 块）的服务配置锁定：只能在「灰度」页签全量或回退。
+ * 服务详情（设计 §8）：概览 / 配置 / Pod 与日志 / 监控。
+ * 灰度中（线上快照带 canary 块）的服务配置锁定：灰度在应用页服务列表「管理灰度」里全量或回退。
  *
  * 配置页签改的是「期望配置」，不碰线上；保存带读到的 version（乐观锁）。
  * 冲突时不丢用户输入：提示条给两条路 —— 载入最新（丢弃我的修改）/ 保留我的修改并取最新版本。
@@ -32,13 +32,11 @@ import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import AppQuantityInput from '@/components/app-release/AppQuantityInput.vue'
 import AppServiceOtelForm from '@/components/app-release/AppServiceOtelForm.vue'
 import AppServiceRuntimeRows from '@/components/app-release/AppServiceRuntimeRows.vue'
-import AppCanaryPanel from '@/components/app-release/AppCanaryPanel.vue'
-import AppExecutionPanel from '@/components/app-release/AppExecutionPanel.vue'
 import { useClusterComponents } from '@/composables/useClusterComponents'
 import { parseQuantity } from '@/utils/quantity'
 import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
 import { useResourceContext } from '@/stores/context'
-import type { AppDependencyRow, AppExecution, AppServiceDesired, AppServiceRow, AppServiceState, AppSettings, ApplicationView, K8sPod, K8sService } from '@/types'
+import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, AppSettings, ApplicationView, K8sPod, K8sService } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
 
 const route = useRoute()
@@ -58,8 +56,6 @@ const allRows = ref<AppServiceRow[]>([])
 /** 应用设置（期望值）：可观测页签据此说明本服务是否会被链路追踪 */
 const appSettings = ref<AppSettings>({})
 const deps = ref<AppDependencyRow[]>([])
-/** 应用进行中的执行（灰度页签显示进度、禁用操作） */
-const activeExecution = ref<AppExecution | null>(null)
 const loading = ref(false)
 const notFound = ref(false)
 
@@ -287,7 +283,6 @@ async function load(opts: { keepForm?: boolean } = {}): Promise<void> {
     allRows.value = o.services
     pendingKeys.value = o.pendingKeys
     deps.value = o.dependencies
-    activeExecution.value = o.activeExecution ?? null
     appSettings.value = o.settings?.settings ?? {}
     const r = o.services.find((s) => s.key === target) ?? null
     row.value = r
@@ -381,9 +376,7 @@ async function remove(): Promise<void> {
 }
 
 // ---------- Pod 与日志 / 监控 ----------
-/** 列表页「灰度」按钮带 ?tab=canary 直达灰度页签 */
-const initialTab = (): string => (route.query.tab === 'canary' ? 'canary' : 'overview')
-const tab = ref(initialTab())
+const tab = ref('overview')
 const cfgTab = ref('basic')
 const wl = ref<WorkloadDetail | null>(null)
 const pods = ref<K8sPod[]>([])
@@ -473,7 +466,7 @@ onMounted(async () => {
   await ensure()
   await load()
 })
-watch(key, () => { wl.value = null; pods.value = []; tab.value = initialTab(); void load() })
+watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; void load() })
 </script>
 
 <template>
@@ -543,7 +536,7 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = initialTab(); v
         <el-alert v-else-if="pendingDelete" class="app-svc__alert" type="warning" :closable="false" show-icon
                   title="该服务已标记待删除，配置只读；下次发布勾选后会从集群移除。" />
         <el-alert v-else-if="inCanary" class="app-svc__alert" type="warning" :closable="false" show-icon
-                  title="该服务灰度中，配置锁定：先在「灰度」页签全量或回退，再改配置。" />
+                  title="该服务灰度中，配置锁定：先在应用页服务列表「管理灰度」里全量或回退，再改配置。" />
         <el-alert v-else-if="!canWrite" class="app-svc__alert" type="info" :closable="false" show-icon
                   title="你没有应用写权限，配置只读。" />
         <el-alert v-if="conflict" class="app-svc__alert" type="error" :closable="false" show-icon
@@ -711,34 +704,6 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = initialTab(); v
           <el-button :disabled="readonly || !dirty" @click="resetForm">还原</el-button>
           <span class="muted">保存只改期望配置，发布后才会生效到集群。</span>
         </div>
-      </el-tab-pane>
-
-      <!-- 灰度 -->
-      <el-tab-pane v-if="row.kind === 'SERVICE'" :label="inCanary ? `灰度 · ${row.canary?.weight}%` : '灰度'" name="canary" lazy>
-        <AppExecutionPanel
-          v-if="activeExecution"
-          :app-id="appId"
-          :tenant-id="tenantId ?? undefined"
-          :execution="activeExecution"
-          :services="allRows"
-          :live-no="app.liveReleaseNo ?? 0"
-          :can-write="canWrite"
-          @tick="load({ keepForm: true })"
-          @changed="load({ keepForm: true })"
-        />
-        <AppCanaryPanel
-          :app-id="appId"
-          :tenant-id="tenantId ?? undefined"
-          :slug="app.slug"
-          :row="row"
-          :live-desired="liveDesired"
-          :dependencies="deps"
-          :service-keys="selfRefs"
-          :ctx="ctx"
-          :can-write="canWrite"
-          :busy="!!activeExecution"
-          @changed="load({ keepForm: true })"
-        />
       </el-tab-pane>
 
       <!-- Pod 与日志 -->

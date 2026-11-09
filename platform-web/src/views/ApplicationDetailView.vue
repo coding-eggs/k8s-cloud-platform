@@ -26,6 +26,7 @@ import AppDependencyDetail from '@/components/app-release/AppDependencyDetail.vu
 import AppTopology from '@/components/app-release/AppTopology.vue'
 import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import AppSettingsPanel from '@/components/app-release/AppSettingsPanel.vue'
+import AppCanaryDrawer from '@/components/app-release/AppCanaryDrawer.vue'
 import { INIT_STATUS, depStatus, ownershipText, usersOf } from '@/components/app-release/dependencyUtil'
 import { isRunning } from '@/components/app-release/releaseUtil'
 import type { AppDependencyRow, AppOverview, AppServiceRow, AppServiceState, ApplicationView } from '@/types'
@@ -137,11 +138,29 @@ async function load(silent = false): Promise<void> {
 function goList(): void {
   router.push('/applications')
 }
-function openService(row: AppServiceRow, tab?: 'canary'): void {
-  router.push({
-    path: `/applications/${appId.value}/services/${encodeURIComponent(row.key)}`,
-    query: tab ? { tab } : undefined,
-  })
+function openService(row: AppServiceRow): void {
+  router.push(`/applications/${appId.value}/services/${encodeURIComponent(row.key)}`)
+}
+
+// ---------- 入口灰度（不在灰度：开启灰度对话框；灰度中：管理抽屉） ----------
+const canaryVisible = ref(false)
+const canaryMode = ref<'start' | 'manage'>('start')
+const canaryKey = ref<string | null>(null)
+/** 每次 load 后取最新行，抽屉里的权重 / 状态跟着刷新 */
+const canaryRow = computed(() => overview.value?.services.find((s) => s.key === canaryKey.value) ?? null)
+/** 开启灰度不可用的原因（看列表上的信息先拦一层，后端以线上快照为准再校验）；空串 = 可开启 */
+function canaryStartBlocked(row: AppServiceRow): string {
+  if (!canWrite.value) return '没有应用写权限'
+  if (publishing.value) return '有进行中的执行，结束后再操作'
+  if (row.state === 'NOT_RELEASED') return '服务尚未上线'
+  if (!row.ingress) return '只有网关暴露（网关 HTTP / TCP）的服务能灰度'
+  if (row.desired?.persistenceEnabled) return '有状态服务（开启了持久化）不能灰度'
+  return ''
+}
+function openCanary(row: AppServiceRow): void {
+  canaryKey.value = row.key
+  canaryMode.value = row.canary ? 'manage' : 'start'
+  canaryVisible.value = true
 }
 
 // ---------- 发布 / 回滚 ----------
@@ -438,11 +457,16 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="170" fixed="right">
+          <el-table-column label="操作" width="200" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openService(row)">配置</el-button>
-              <el-button v-if="row.kind === 'SERVICE'" link type="primary" @click="openService(row, 'canary')">灰度</el-button>
-              <el-button link type="danger" :disabled="!editable || row.pending === 'DELETED'" @click="removeService(row)">移除</el-button>
+              <template v-if="row.kind === 'SERVICE'">
+                <el-button v-if="row.canary" link type="primary" @click="openCanary(row)">管理灰度</el-button>
+                <el-tooltip v-else :disabled="!canaryStartBlocked(row)" :content="canaryStartBlocked(row)" placement="top">
+                  <span class="app-detail__op"><el-button link type="primary" :disabled="!!canaryStartBlocked(row)" @click="openCanary(row)">开启灰度</el-button></span>
+                </el-tooltip>
+              </template>
+              <el-button link type="danger" :disabled="!editable || row.pending === 'DELETED' || !!row.canary" :title="row.canary ? '灰度中，先全量或回退' : ''" @click="removeService(row)">移除</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -537,6 +561,20 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       :live-no="live || null"
       @rolled-back="afterExecutionChange"
     />
+    <AppCanaryDrawer
+      v-if="app"
+      v-model="canaryVisible"
+      :mode="canaryMode"
+      :app="app"
+      :tenant-id="tenantId"
+      :row="canaryRow"
+      :services="overview?.services ?? []"
+      :dependencies="overview?.dependencies ?? []"
+      :live-no="live"
+      :can-write="canWrite"
+      :busy="publishing"
+      @changed="afterExecutionChange"
+    />
 
     <AppDependencyDialog
       v-if="app"
@@ -621,4 +659,5 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 .app-svc-dlg .app-svc-dlg__err { color: var(--el-color-danger); font-size: 12px; }
 .app-svc-dlg .app-svc-dlg__tip { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
 .app-detail__canary { margin-left: 6px; }
+.app-detail__op { display: inline-flex; margin: 0 12px; }
 </style>
