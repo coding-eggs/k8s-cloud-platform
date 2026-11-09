@@ -13,7 +13,23 @@ spec:
       name: {{ .Values.workload.route.parentName | quote }}
       sectionName: {{ .Values.workload.route.sectionName | quote }}
   rules:
+    {{- $c := .Values.workload.route.canary }}
+    {{- if and $c.enabled $c.headerName (ne .Values.workload.route.kind "tcp") }}
+    - matches:
+        - headers:
+            - name: {{ $c.headerName | quote }}
+              value: {{ $c.headerValue | quote }}
+      backendRefs:
+        - name: {{ $c.service | quote }}
+          port: {{ .Values.workload.route.port }}
+    {{- end }}
     - backendRefs:
         - name: {{ include "app.name" . | quote }}
           port: {{ .Values.workload.route.port }}
+          {{- if $c.enabled }}
+          weight: {{ sub 100 (int $c.weight) }}
+        - name: {{ $c.service | quote }}
+          port: {{ .Values.workload.route.port }}
+          weight: {{ $c.weight }}
+          {{- end }}
 {{- end }}

@@ -247,7 +247,8 @@ class AppWorkloadValuesTest {
                 "port", 8080, "route",
                 Map.of("kind", "tcp", "parentName", "platform-ingress", "sectionName", "p20002"))));
         assertThat(workload(v).get("route")).isEqualTo(Map.of("enabled", true, "kind", "tcp",
-                "parentName", "platform-ingress", "sectionName", "p20002", "port", 8080));
+                "parentName", "platform-ingress", "sectionName", "p20002", "port", 8080,
+                "canary", Map.of("enabled", false)));
         // 网关方式下 Service 保持 ClusterIP
         assertThat(workload(v).get("expose")).isEqualTo(Map.of("type", "none", "port", 8080, "nodePort", 0));
     }
@@ -277,5 +278,33 @@ class AppWorkloadValuesTest {
         Map<String, Object> dflt = workload(AppWorkloadValues.build("app_1", "demo", 1,
                 node(Map.of("image", "nginx"))));
         assertThat((Map<String, Object>) dflt.get("probe")).containsEntry("type", "http");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void routeCarriesCanaryBackend() {
+        Map<String, Object> header = new java.util.LinkedHashMap<>();
+        header.put("name", "x-canary");
+        header.put("value", "true");
+        Map<String, Object> canary = new java.util.LinkedHashMap<>();
+        canary.put("service", "shop-api-canary");
+        canary.put("weight", 130);
+        canary.put("header", header);
+        Map<String, Object> on = (Map<String, Object>) workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "port", 8080, "route", Map.of("kind", "http",
+                        "parentName", "platform-ingress", "sectionName", "p20000", "canary", canary))))).get("route");
+        assertThat((Map<String, Object>) on.get("canary")).containsEntry("enabled", true)
+                .containsEntry("service", "shop-api-canary").containsEntry("weight", 100)
+                .containsEntry("headerName", "x-canary").containsEntry("headerValue", "true");
+
+        Map<String, Object> tcp = (Map<String, Object>) workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "port", 8080, "route", Map.of("kind", "tcp",
+                        "parentName", "platform-ingress", "sectionName", "p20000", "canary", canary))))).get("route");
+        assertThat((Map<String, Object>) tcp.get("canary")).containsEntry("enabled", true).containsEntry("headerName", "");
+
+        Map<String, Object> off = (Map<String, Object>) workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "port", 8080, "route", Map.of("kind", "http",
+                        "parentName", "platform-ingress", "sectionName", "p20000"))))).get("route");
+        assertThat((Map<String, Object>) off.get("canary")).containsEntry("enabled", false);
     }
 }

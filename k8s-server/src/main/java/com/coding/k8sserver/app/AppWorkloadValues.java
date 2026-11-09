@@ -111,7 +111,27 @@ public final class AppWorkloadValues {
             return Map.of("enabled", false);
         }
         return Map.of("enabled", true, "kind", kind, "parentName", parentName,
-                "sectionName", sectionName, "port", num(params.get("port"), 8080));
+                "sectionName", sectionName, "port", num(params.get("port"), 8080),
+                "canary", canary(r.get("canary"), "tcp".equals(kind)));
+    }
+
+    /**
+     * 入口灰度后端：{@code route.canary = {service, weight, header: {name, value} | null}}（platform-api 生成）。
+     * 权重截到 0-100；TCP 没有 header 匹配，忽略 header。
+     */
+    private static Map<String, Object> canary(Object raw, boolean tcp) {
+        if (!(raw instanceof Map<?, ?> c) || str(c.get("service")).isBlank()) {
+            return Map.of("enabled", false);
+        }
+        int weight = Math.max(0, Math.min(100, num(c.get("weight"), 0)));
+        String headerName = "";
+        String headerValue = "";
+        if (!tcp && c.get("header") instanceof Map<?, ?> h) {
+            headerName = str(h.get("name"));
+            headerValue = str(h.get("value"));
+        }
+        return Map.of("enabled", true, "service", str(c.get("service")), "weight", weight,
+                "headerName", headerName, "headerValue", headerValue);
     }
 
     /** 用户手填的普通变量 + 依赖注入的普通值。 */

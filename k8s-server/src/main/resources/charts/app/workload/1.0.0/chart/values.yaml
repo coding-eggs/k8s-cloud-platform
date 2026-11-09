@@ -62,6 +62,13 @@ workload:
     parentName: ""
     sectionName: ""
     port: 8080
+    # 入口灰度：stable / canary 加权 + 可选 header 直达（仅 HTTP）
+    canary:
+      enabled: false
+      service: ""
+      weight: 0
+      headerName: ""
+      headerValue: ""
   expose:
     # none（仅集群内 ClusterIP）/ nodeport
     type: none

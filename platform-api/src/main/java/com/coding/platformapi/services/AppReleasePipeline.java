@@ -17,11 +17,13 @@ import com.coding.data.models.system.PlatformAppRelease;
 import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformIngressPort;
+import com.coding.platformapi.app.AppCanary;
 import com.coding.platformapi.app.AppEnvResolver;
 import com.coding.platformapi.app.AppEnvResolver.ServiceAddr;
 import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppServiceDesired;
 import com.coding.platformapi.app.AppServiceInjection;
+import com.coding.platformapi.app.AppSettings;
 import com.coding.platformapi.app.AppSnapshot;
 import org.springframework.stereotype.Component;
 
@@ -42,7 +44,8 @@ import java.util.stream.Collectors;
 @Component
 public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRenderer {
 
-    private static final Set<String> NODE_EXCLUDED = Set.of("imageRepo", "imageTag", "env", "configFiles", "otel", "mesh");
+    private static final Set<String> NODE_EXCLUDED = Set.of("imageRepo", "imageTag", "env", "configFiles", "otel", "mesh",
+            AppCanary.KEY);
 
     private final PlatformApplicationMapper apps;
     private final PlatformAppReleaseMapper releases;
@@ -195,45 +198,38 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         Map<String, List<AppInjectDTO>> inject = new LinkedHashMap<>();
         List<String> problems = new ArrayList<>();
         for (Map.Entry<String, Map<String, Object>> e : snapshot.services().entrySet()) {
+            String key = e.getKey();
             Map<String, Object> desired = e.getValue();
-            AppEnvResolver.Result r = AppEnvResolver.resolve(AppServiceDesired.envRows(desired),
-                    ctx.connections, ctx.addrs);
-            r.problems().forEach(p -> problems.add(e.getKey() + "：" + p.getMessage()));
-            inject.put(e.getKey(), r.env());
-            List<Map<String, Object>> files = resolveFiles(e.getKey(), desired, ctx, problems);
-
-            Map<String, Object> params = new LinkedHashMap<>();
-            desired.forEach((k, v) -> {
-                if (!NODE_EXCLUDED.contains(k)) {
-                    params.put(k, v);
-                }
-            });
-            params.put("image", AppServiceDesired.image(desired));
-            // otel / mesh 翻译成通用注入参数（k8s-server 只透传）；没有这两块时什么都不加
-            // 链路追踪 / 网格是应用级设置：先合并进该服务的生效配置
-            params.putAll(AppServiceInjection.params(snapshot.effective(e.getKey()),
-                    AppObjectNames.objectName(app.getSlug(), e.getKey())));
-            if (!files.isEmpty()) {
-                params.put("configFiles", files);   // 引用已替换成值；没有配置文件就不带这个键（参数不变 = 不滚动）
-            }
+            AppCanary.Spec canary = AppCanary.of(desired);
+            AppNodeDTO stable = node(app, key, key, desired, snapshot.effective(key), ctx, inject, problems);
             String gateway = AppServiceDesired.gatewayProtocol(desired);
             if (gateway != null) {
                 // 网关方式：Service 保持 ClusterIP，路由挂到命名空间 ListenerSet 上分到的那个 listener
+                Map<String, Object> params = stable.getParams();
                 params.put("expose", "none");
                 params.remove("nodePort");
-                params.put("route", Map.of(
-                        "kind", gateway.toLowerCase(java.util.Locale.ROOT),
-                        "parentName", IngressListenerSync.LISTENER_SET,
-                        "sectionName", sectionName(app, e.getKey(), preview)));
+                Map<String, Object> route = new LinkedHashMap<>();
+                route.put("kind", gateway.toLowerCase(java.util.Locale.ROOT));
+                route.put("parentName", IngressListenerSync.LISTENER_SET);
+                route.put("sectionName", sectionName(app, key, preview));
+                if (canary != null) {
+                    route.put("canary", canaryBackend(app, key, canary));
+                }
+                params.put("route", route);
             }
-            // 拉取权限不在这里补：imagePullSecrets 只取自快照（用户意图，回滚才能逐字还原）。
-            // 平台 Harbor 的拉取凭据靠命名空间 default SA 上挂着的 platform-registry-pull —— 它在分配命名空间时
-            // 下发，也可由「重下发全部模板」补；chart 不设 serviceAccountName，Pod 走 default SA，由 SA 准入带上。
-            AppNodeDTO node = new AppNodeDTO();
-            node.setKey(e.getKey());
-            node.setKind(AppServiceDesired.kindOf(desired));   // 原样发给 k8s-server
-            node.setParams(params);
-            nodes.add(node);
+            nodes.add(stable);
+            if (canary != null) {
+                // canary：同一套解析（env / 配置文件 / 应用设置），只接网关流量，不暴露、不自动伸缩
+                String canaryKey = AppCanary.nodeKey(key);
+                AppNodeDTO c = node(app, key, canaryKey, canary.desired(),
+                        AppSettings.effective(canary.desired(), snapshot.app()), ctx, inject, problems);
+                c.getParams().put("replicas", canary.replicas());
+                c.getParams().put("autoscalingEnabled", false);
+                c.getParams().put("expose", "none");
+                c.getParams().remove("nodePort");
+                c.getParams().remove("route");
+                nodes.add(c);
+            }
         }
         if (!problems.isEmpty()) {
             throw error(String.join("；", problems));
@@ -253,6 +249,51 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         req.setSpec(spec);
         req.setInjectByNode(inject);
         return req;
+    }
+
+    /**
+     * 一个渲染节点。{@code serviceKey} 用于报错前缀和配置文件解析，{@code nodeKey} 决定对象名
+     * （canary 节点 = {@code <key>-canary}）。
+     */
+    private AppNodeDTO node(PlatformApplication app, String serviceKey, String nodeKey, Map<String, Object> desired,
+                            Map<String, Object> effective, Context ctx, Map<String, List<AppInjectDTO>> inject,
+                            List<String> problems) {
+        AppEnvResolver.Result r = AppEnvResolver.resolve(AppServiceDesired.envRows(desired), ctx.connections, ctx.addrs);
+        r.problems().forEach(p -> problems.add(serviceKey + "：" + p.getMessage()));
+        inject.put(nodeKey, r.env());
+        List<Map<String, Object>> files = resolveFiles(serviceKey, desired, ctx, problems);
+
+        Map<String, Object> params = new LinkedHashMap<>();
+        desired.forEach((k, v) -> {
+            if (!NODE_EXCLUDED.contains(k)) {
+                params.put(k, v);
+            }
+        });
+        params.put("image", AppServiceDesired.image(desired));
+        // otel / mesh 翻译成通用注入参数（k8s-server 只透传）；没有这两块时什么都不加
+        // 链路追踪 / 网格是应用级设置：先合并进该服务的生效配置
+        params.putAll(AppServiceInjection.params(effective, AppObjectNames.objectName(app.getSlug(), nodeKey)));
+        if (!files.isEmpty()) {
+            params.put("configFiles", files);   // 引用已替换成值；没有配置文件就不带这个键（参数不变 = 不滚动）
+        }
+        // 拉取权限不在这里补：imagePullSecrets 只取自快照（用户意图，回滚才能逐字还原）。
+        // 平台 Harbor 的拉取凭据靠命名空间 default SA 上挂着的 platform-registry-pull —— 它在分配命名空间时
+        // 下发，也可由「重下发全部模板」补；chart 不设 serviceAccountName，Pod 走 default SA，由 SA 准入带上。
+        AppNodeDTO node = new AppNodeDTO();
+        node.setKey(nodeKey);
+        node.setKind(AppServiceDesired.kindOf(desired));   // 原样发给 k8s-server
+        node.setParams(params);
+        return node;
+    }
+
+    /** stable 路由上的 canary 后端：{@code {service, weight, header: {name, value} | null}} */
+    private static Map<String, Object> canaryBackend(PlatformApplication app, String key, AppCanary.Spec canary) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("service", AppObjectNames.objectName(app.getSlug(), AppCanary.nodeKey(key)));
+        out.put("weight", canary.weight());
+        out.put("header", canary.header() == null ? null
+                : Map.of("name", canary.header().name(), "value", canary.header().value()));
+        return out;
     }
 
     private String sectionName(PlatformApplication app, String key, boolean preview) {
@@ -276,14 +317,19 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
         }
         List<String> out = new ArrayList<>();
         for (Map.Entry<String, Map<String, Object>> e : snapshot.services().entrySet()) {
-            AppEnvResolver.Result r = AppEnvResolver.resolve(AppServiceDesired.envRows(e.getValue()),
-                    ctx.connections, ctx.addrs);
-            for (AppProblemDTO p : r.problems()) {
-                if ("ERROR".equals(p.getSeverity())) {
-                    out.add(e.getKey() + "：" + p.getMessage());
+            AppCanary.Spec canary = AppCanary.of(e.getValue());
+            List<Map<String, Object>> versions = canary == null ? List.of(e.getValue())
+                    : List.of(e.getValue(), canary.desired());
+            for (Map<String, Object> desired : versions) {
+                AppEnvResolver.Result r = AppEnvResolver.resolve(AppServiceDesired.envRows(desired),
+                        ctx.connections, ctx.addrs);
+                for (AppProblemDTO p : r.problems()) {
+                    if ("ERROR".equals(p.getSeverity())) {
+                        out.add(e.getKey() + "：" + p.getMessage());
+                    }
                 }
+                resolveFiles(e.getKey(), desired, ctx, out);
             }
-            resolveFiles(e.getKey(), e.getValue(), ctx, out);
         }
         out.addAll(nodePortClashes(snapshot));
         return out;

@@ -277,4 +277,49 @@ class AppReleasePipelineTest {
 
         verify(ports, never()).releaseApp("app1");
     }
+
+    private static AppNodeDTO nodeOf(AppRenderRequestDTO req, String key) {
+        return req.getSpec().getNodes().stream().filter(n -> key.equals(n.getKey())).findFirst().orElse(null);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void canaryServiceRendersAnExtraNodeAndWeightedRoute() {
+        when(ports.portOf("app1", "api")).thenReturn(20003);
+        Map<String, Object> stable = svc("gateway-http");
+        stable.put("replicas", 3);
+        stable.put("autoscalingEnabled", true);
+        Map<String, Object> canaryDesired = new LinkedHashMap<>(stable);
+        canaryDesired.put("imageTag", "2");
+        Map<String, Object> api = com.coding.platformapi.app.AppCanary.with(stable,
+                new com.coding.platformapi.app.AppCanary.Spec(canaryDesired, 1, 20,
+                        new com.coding.platformapi.app.AppCanary.Header("x-canary", "true")));
+
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 3, new AppSnapshot(Map.of("api", api), List.of()));
+
+        assertThat(req.getSpec().getNodes()).extracting(AppNodeDTO::getKey).containsExactly("api", "api-canary");
+        Map<String, Object> c = nodeOf(req, "api-canary").getParams();
+        assertThat((String) c.get("image")).endsWith(":2");
+        assertThat(c).containsEntry("replicas", 1).containsEntry("autoscalingEnabled", false)
+                .containsEntry("expose", "none").doesNotContainKey("route").doesNotContainKey("nodePort")
+                .doesNotContainKey("canary");
+        Map<String, Object> s = nodeOf(req, "api").getParams();
+        assertThat(s).doesNotContainKey("canary");
+        Map<String, Object> rc = (Map<String, Object>) ((Map<String, Object>) s.get("route")).get("canary");
+        assertThat(rc).containsEntry("weight", 20).containsEntry("service", "shop-api-canary")
+                .containsEntry("header", Map.of("name", "x-canary", "value", "true"));
+        assertThat(req.getInjectByNode()).containsKeys("api", "api-canary");
+    }
+
+    @Test
+    void serviceWithoutCanaryRendersExactlyAsBefore() {
+        when(ports.portOf("app1", "api")).thenReturn(20003);
+
+        AppRenderRequestDTO req = pipeline.buildRequest(app, 3,
+                new AppSnapshot(Map.of("api", svc("gateway-http")), List.of()));
+
+        assertThat(req.getSpec().getNodes()).hasSize(1);
+        assertThat(req.getSpec().getNodes().get(0).getParams().get("route")).isEqualTo(Map.of(
+                "kind", "http", "parentName", "platform-ingress", "sectionName", "p20003"));
+    }
 }

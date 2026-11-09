@@ -400,4 +400,57 @@ class AppWorkloadChartRenderTest {
                 "spec", "template", "spec").get("containers")).get(0);
         assertThat(at(httpC, "readinessProbe", "httpGet")).containsEntry("path", "/");
     }
+
+    // ---------- 入口灰度（2026-11-09） ----------
+
+    private static Map<String, Object> canaryRoute(String kind) {
+        Map<String, Object> canary = new java.util.LinkedHashMap<>();
+        canary.put("service", "shop-api-canary");
+        canary.put("weight", 20);
+        canary.put("header", Map.of("name", "x-canary", "value", "true"));
+        return Map.of("kind", kind, "parentName", "platform-ingress", "sectionName", "p20000", "canary", canary);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void httpRouteWithCanaryHasHeaderRuleFirstThenWeights() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> route = find(render(Map.of("image", "nginx", "port", 80, "route", canaryRoute("http"))),
+                "HTTPRoute", "shop-api");
+        List<Map<String, Object>> rules = (List<Map<String, Object>>) at(route, "spec").get("rules");
+        assertThat(rules).hasSize(2);
+        Map<String, Object> match = ((List<Map<String, Object>>) rules.get(0).get("matches")).get(0);
+        assertThat(((List<Map<String, Object>>) match.get("headers")).get(0))
+                .containsEntry("name", "x-canary").containsEntry("value", "true");
+        assertThat((List<Map<String, Object>>) rules.get(0).get("backendRefs"))
+                .containsExactly(Map.of("name", "shop-api-canary", "port", 80));
+        assertThat((List<Map<String, Object>>) rules.get(1).get("backendRefs")).containsExactly(
+                Map.of("name", "shop-api", "port", 80, "weight", 80),
+                Map.of("name", "shop-api-canary", "port", 80, "weight", 20));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void tcpRouteWithCanaryHasOnlyWeights() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> route = find(render(Map.of("image", "nginx", "port", 80, "route", canaryRoute("tcp"))),
+                "TCPRoute", "shop-api");
+        List<Map<String, Object>> rules = (List<Map<String, Object>>) at(route, "spec").get("rules");
+        assertThat(rules).hasSize(1);
+        assertThat(rules.get(0)).doesNotContainKey("matches");
+        assertThat((List<Map<String, Object>>) rules.get(0).get("backendRefs")).containsExactly(
+                Map.of("name", "shop-api", "port", 80, "weight", 80),
+                Map.of("name", "shop-api-canary", "port", 80, "weight", 20));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void routeWithoutCanaryIsUnchanged() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> route = find(render(Map.of("image", "nginx", "port", 80, "route",
+                Map.of("kind", "http", "parentName", "platform-ingress", "sectionName", "p20000"))),
+                "HTTPRoute", "shop-api");
+        List<Map<String, Object>> rules = (List<Map<String, Object>>) at(route, "spec").get("rules");
+        assertThat(rules).containsExactly(Map.of("backendRefs", List.of(Map.of("name", "shop-api", "port", 80))));
+    }
 }
