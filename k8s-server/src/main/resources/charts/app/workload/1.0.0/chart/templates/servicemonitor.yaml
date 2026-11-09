@@ -11,7 +11,7 @@ spec:
     matchLabels:
       {{- include "app.selector" . | nindent 6 }}
   endpoints:
-    - port: http
+    - port: {{ .Values.workload.expose.portName | default "http" }}
       path: {{ .Values.workload.metrics.path }}
       interval: 30s
 {{- end }}

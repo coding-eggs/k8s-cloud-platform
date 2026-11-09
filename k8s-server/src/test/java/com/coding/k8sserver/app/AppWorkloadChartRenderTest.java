@@ -512,4 +512,14 @@ class AppWorkloadChartRenderTest {
                 .containsEntry("name", "tcp").containsEntry("targetPort", "http");
         assertThat(servicePort(render(Map.of("image", "nginx", "port", 8080)))).containsEntry("name", "http");
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void serviceMonitorFollowsServicePortName() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> sm = find(render(Map.of("image", "nginx", "port", 8080, "protocol", "tcp",
+                "metricsEnabled", true)), "ServiceMonitor", "shop-api");
+        assertThat(sm).isNotNull();
+        assertThat(((List<Map<String, Object>>) at(sm, "spec").get("endpoints")).get(0)).containsEntry("port", "tcp");
+    }
 }
