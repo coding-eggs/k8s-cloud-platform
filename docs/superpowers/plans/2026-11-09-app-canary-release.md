@@ -369,7 +369,7 @@
 
 **Files:**
 - Modify: `platform-api/src/main/java/com/coding/platformapi/controllers/ApplicationController.java`（在 `/release/offline` 之后加 5 个端点）
-- Create: `platform-data/src/main/resources/db/migration/V2026_11_09_1__app_canary.sql`
+- Create: `platform-data/src/main/resources/db/migration/V2026_11_09_2__app_canary.sql`
 - Create: `platform-api/src/test/java/com/coding/platformapi/services/AppCanaryPermissionMigrationTest.java`
   （读 SQL 文件断言，写法照抄 `components/ComponentPermissionMigrationTest.java`：用相对路径 `../platform-data/...` 读迁移文件）
 
@@ -393,7 +393,7 @@
 - [ ] **Step 3: 编译并跑全量后端**（`AppCanaryPermissionMigrationTest` 此时应通过）
   Run: `mvn -o -pl '!platform-gateway' test`
   Expected: BUILD SUCCESS，0 失败。
-- [ ] **Step 4: 提交** `git commit -m "feat(app): canary endpoints and permission rows (V2026_11_09_1)"`
+- [ ] **Step 4: 提交** `git commit -m "feat(app): canary endpoints and permission rows (V2026_11_09_2)"`
 
 ### Task 10: 前端灰度页签
 
@@ -429,9 +429,9 @@
 ### Task 11: 文档、部署说明、验收清单
 
 **Files:**
-- Modify: `docs/development/application-release.md`（新增「§1.8 入口灰度」：模型、四个操作、ROUTE 阶段、锁、指标；部署节加 `V2026_11_09_1` 与「k8s-server 先部署」；验收清单加 spec §10 的 5 条；已知限制加「canary 只接网关流量」「有状态服务不能灰度」「指标 label 待真集群核对」）
+- Modify: `docs/development/application-release.md`（新增「§1.8 入口灰度」：模型、四个操作、ROUTE 阶段、锁、指标；部署节加 `V2026_11_09_2` 与「k8s-server 先部署」；验收清单加 spec §10 的 5 条；已知限制加「canary 只接网关流量」「有状态服务不能灰度」「指标 label 待真集群核对」）
 - Modify: `docs/superpowers/specs/2026-11-09-app-canary-release-design.md`（文首状态改为「已实现（未部署）」，附提交范围；实现与设计有出入的地方逐条列出）
-- Memory：`C:\Users\wsail\.claude\projects\D--coding-k8s-cloud-platform\memory\` 新建 `app-canary-release.md` 并在 `MEMORY.md` 加一行（待部署；先重放 V2026_11_09_1；k8s-server 先部署；指标 label 待核对）
+- Memory：`C:\Users\wsail\.claude\projects\D--coding-k8s-cloud-platform\memory\` 新建 `app-canary-release.md` 并在 `MEMORY.md` 加一行（待部署；先重放 V2026_11_09_2；k8s-server 先部署；指标 label 待核对）
 
 - [ ] **Step 1: 写文档与记忆**
 - [ ] **Step 2: 全量验证**

@@ -215,7 +215,7 @@ rules:
 | `POST /application/canary/abort` | `{appId, serviceKey, note}` |
 | `GET /application/canary/metrics` | `appId, serviceKey, window` → 两个版本的指标 |
 
-- **权限**：新端点要有权限行（不然 `PermissionCrossCheckRunner` 拒启）。四个写端点挂现有的应用发布码，metrics 挂应用查看码，用新 SQL `V2026_11_09_1` 写行。新权限行不会按 code 自动继承，所以要按「已持有对应码的角色」回填绑定，做法同 `V2026_11_08_2`。
+- **权限**：新端点要有权限行（不然 `PermissionCrossCheckRunner` 拒启）。四个写端点挂现有的应用发布码，metrics 挂应用查看码，用新 SQL `V2026_11_09_2` 写行。新权限行不会按 code 自动继承，所以要按「已持有对应码的角色」回填绑定，做法同 `V2026_11_08_2`。
 - 审计：四个写端点进审计日志（同其他应用写接口）。
 - k8s-server 不加业务端点：渲染、下发、状态都复用现有 `/application/**`。chart 只加 canary 相关的 values。
 
@@ -235,7 +235,7 @@ rules:
 
 ## 10. 部署与验证（部署后在真集群执行）
 
-- 先部署 k8s-server（chart 改动），再部署 platform-api；先重放 `V2026_11_09_1`，重新登录或等权限缓存 30 秒。
+- 先部署 k8s-server（chart 改动），再部署 platform-api；先重放 `V2026_11_09_2`，重新登录或等权限缓存 30 秒。
 - 需要真跑确认的：
   1. 网关按权重分流，含 0 和 100 两个边界；header 规则优先于权重规则。
   2. 开始灰度时 canary 镜像不存在：执行停在 HEALTH 失败，canary 收不到任何流量。
