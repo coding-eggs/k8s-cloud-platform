@@ -4,6 +4,7 @@
  *
  * 默认复制线上 stable，只把镜像 tag 置顶让用户改；端口、暴露方式只读（后端同样要求与 stable 一致）。
  * 可改：镜像、环境变量、配置文件、资源与命令；开始时另有副本数、初始权重与 header 直达（仅 HTTP）。
+ * 分流范围（内部灰度设计）：L7 网格应用集群内调用也分流；L7 且网关暴露时可选「外部流量参与灰度」。
  * 其余配置（探针、HPA、可观测、持久化等）原样沿用 stable。
  * 弹窗样式非 scoped + 前缀 app-cny-（Element Plus 弹窗 scoped CSS 坑）。
  */
@@ -28,6 +29,10 @@ const props = defineProps<{
   /** 修改时：线上灰度版本的期望配置 */
   canaryDesired?: AppServiceDesired | null
   protocol: 'HTTP' | 'TCP'
+  /** 应用线上设置为 L7 网格 */
+  l7: boolean
+  /** stable 有网关暴露 */
+  exposed: boolean
   dependencies: AppDependencyRow[]
   serviceKeys: string[]
   ctx: { tenantId: string; clusterId: string; namespace: string }
@@ -55,6 +60,7 @@ const weight = ref(10)
 const headerOn = ref(true)
 const headerName = ref('x-canary')
 const headerValue = ref('true')
+const external = ref(true)
 const submitting = ref(false)
 const error = ref('')
 
@@ -72,6 +78,7 @@ watch(visible, (v) => {
   headerOn.value = props.protocol === 'HTTP'
   headerName.value = 'x-canary'
   headerValue.value = 'true'
+  external.value = true
   error.value = ''
 }, { immediate: true })
 
@@ -80,7 +87,15 @@ const sameImage = computed(() =>
 const dataMount = computed(() => dataMountOf(form.value))
 const filesInvalid = computed(() => configFileProblems(form.value.configFiles, dataMount.value).some(Boolean))
 const probeOff = computed(() => form.value.probeEnabled === false)
-const exposeText = computed(() => (props.protocol === 'HTTP' ? '网关 HTTP' : '网关 TCP'))
+const exposeText = computed(() => (!props.exposed ? `不对外（${props.protocol}）` : props.protocol === 'HTTP' ? '网关 HTTP' : '网关 TCP'))
+/** 分流范围说明 */
+const scopeText = computed(() => {
+  if (!props.l7) return '应用未开启 L7 网格：只分网关进来的流量，集群内其他服务调用的仍是线上版本。'
+  if (!props.exposed) return '集群内其他服务调用本服务的流量按权重分流（应用为 L7 网格，经 waypoint）。'
+  return external.value
+    ? '集群内调用与网关进来的流量都按同一权重分流。'
+    : '只分集群内调用；网关进来的流量固定进线上版本。'
+})
 
 function buildDesired(): AppServiceDesired {
   const d = clone(form.value)
@@ -125,6 +140,7 @@ async function submit(): Promise<void> {
         headerEnabled: props.protocol === 'HTTP' && headerOn.value,
         headerName: headerName.value.trim() || undefined,
         headerValue: headerValue.value,
+        external: props.l7 && props.exposed ? external.value : undefined,
       })
       : await appCanaryApi.update(req)
     ElMessage.success(props.mode === 'start' ? '已开始灰度，正在执行' : '已提交灰度版本配置，正在执行')
@@ -142,8 +158,9 @@ async function submit(): Promise<void> {
   <el-dialog v-model="visible" :title="mode === 'start' ? `开始灰度 · ${serviceKey}` : `修改灰度版本配置 · ${serviceKey}`"
              width="720px" class="app-cny-dlg" destroy-on-close>
     <div class="app-cny-dlg__lead">
-      灰度版本默认复制线上配置，通常只需改镜像 tag；环境变量、配置文件、资源与命令也可以改，其余沿用线上版本。它只接网关进来的流量；集群内其他服务调用的仍是线上版本。
+      灰度版本默认复制线上配置，通常只需改镜像 tag；环境变量、配置文件、资源与命令也可以改，其余沿用线上版本。
     </div>
+    <el-alert v-if="mode === 'start'" :type="l7 ? 'info' : 'warning'" :closable="false" show-icon :title="scopeText" class="app-cny-dlg__scope" />
     <el-tabs v-model="tab" class="app-cny-dlg__tabs">
       <el-tab-pane label="基本" name="basic">
         <el-form label-width="110px" @submit.prevent>
@@ -163,7 +180,11 @@ async function submit(): Promise<void> {
             </el-form-item>
             <el-form-item label="初始权重">
               <el-input-number v-model="weight" :min="0" :max="100" />
-              <span class="app-cny-dlg__tip">% 的网关流量进灰度版本，之后可随时调整</span>
+              <span class="app-cny-dlg__tip">% 的流量进灰度版本，之后可随时调整</span>
+            </el-form-item>
+            <el-form-item v-if="l7 && exposed" label="外部流量参与">
+              <el-switch v-model="external" />
+              <div class="app-cny-dlg__tip-block">关掉后网关进来的请求固定进线上版本，权重只作用于集群内调用</div>
             </el-form-item>
             <el-form-item v-if="protocol === 'HTTP'" label="header 直达">
               <el-switch v-model="headerOn" />
@@ -172,7 +193,7 @@ async function submit(): Promise<void> {
                 <span>:</span>
                 <el-input v-model="headerValue" class="app-cny-dlg__hdr" placeholder="true" />
               </template>
-              <div class="app-cny-dlg__tip-block">带这个请求头的请求总是进灰度版本（优先于权重），方便自测</div>
+              <div class="app-cny-dlg__tip-block">带这个请求头的请求总是进灰度版本（优先于权重），方便自测{{ l7 ? '；集群内调用需调用方把这个请求头往下传' : '' }}</div>
             </el-form-item>
           </template>
         </el-form>
@@ -206,5 +227,6 @@ async function submit(): Promise<void> {
 .app-cny-dlg__warn { width: 100%; margin-top: 4px; color: var(--el-color-warning); font-size: 12px; }
 .app-cny-dlg__hdr { width: 140px; margin: 0 6px; }
 .app-cny-dlg__err { margin-top: 10px; }
+.app-cny-dlg__scope { margin-bottom: 10px; }
 .app-cny-dlg__tabs .el-tabs__content { max-height: 60vh; overflow-y: auto; }
 </style>

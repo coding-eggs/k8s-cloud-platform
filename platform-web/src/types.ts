@@ -3140,6 +3140,8 @@ export interface AppServiceCanary {
   image: string
   replicas: number
   state: Exclude<AppServiceState, 'NOT_RELEASED'>
+  /** 网关进来的流量是否参与灰度（无网关暴露时为 false） */
+  external: boolean
 }
 
 /** 开始 / 调整灰度：开始时不传 desired = 复制线上 stable；调整时字段不传 = 不改 */
@@ -3155,14 +3157,22 @@ export interface AppCanaryRequest {
   headerName?: string
   headerValue?: string
   note?: string
+  /** 网关进来的流量是否参与灰度（仅 L7 网格且有网关暴露时可为 false；调整时不传 = 不改） */
+  external?: boolean
 }
 
 /** 灰度面板指标：查不到为 null。HTTP：rps / errorRate（0-1）/ p50 / p99（毫秒）；TCP：cps / bytes（字节/秒） */
+export interface AppCanaryMetricsGroup {
+  stable: Record<string, number | null>
+  canary: Record<string, number | null>
+}
+
+/** internal = 经 waypoint 的集群内调用（非 L7 网格为 null）；external = 网关进来的（无网关暴露为 null） */
 export interface AppCanaryMetrics {
   window: string
   protocol: 'HTTP' | 'TCP'
-  stable: Record<string, number | null>
-  canary: Record<string, number | null>
+  internal: AppCanaryMetricsGroup | null
+  external: AppCanaryMetricsGroup | null
 }
 
 /** programmed / conflicted 为 null = 状态未知（集群读不到或 listener 尚未下发） */

@@ -13,6 +13,9 @@
  *
  * <p>门禁：L4 / L7 需要 ambient-mesh 旗标可用；跟随、不加入任何时候都可设；已保存的取值始终保留（不追溯）。
  * 候选与 Service 编辑页同口径：只列本命名空间 waypoint-for = service / all 的 waypoint。
+ *
+ * <p>灰度锁（内部灰度设计）：有服务在灰度时不能进出 L7、不能换 waypoint（后端同样拒绝）；
+ * 原本是 L7 → 整块只读；原本不是 L7 → 只禁 L7 选项，跟随 / 不加入 / L4 之间仍可切换。
  */
 import { computed, ref, watch } from 'vue'
 import { gatewayApi } from '@/api'
@@ -31,6 +34,7 @@ const props = defineProps<{
   readonly: boolean
   meshAvailable: boolean
   meshReason?: string
+  canaryKeys?: string[]
 }>()
 const emit = defineEmits<{ (e: 'update:modelValue', v: AppServiceMesh | undefined): void }>()
 
@@ -53,7 +57,10 @@ const waypoint = computed<string>({
 
 /** ambient 不可用时，只有原本就是该模式的才保留可选 */
 const l4Locked = computed(() => !props.meshAvailable && props.original?.mode !== 'l4')
-const l7Locked = computed(() => !props.meshAvailable && props.original?.mode !== 'l7')
+const canaryLocked = computed(() => (props.canaryKeys?.length ?? 0) > 0)
+const wasL7 = computed(() => props.original?.mode === 'l7')
+const l7Locked = computed(() => (!props.meshAvailable && !wasL7.value) || (canaryLocked.value && !wasL7.value))
+const formReadonly = computed(() => props.readonly || (canaryLocked.value && wasL7.value))
 
 const waypointOptions = ref<WaypointRef[]>([])
 const waypointLoaded = ref(false)
@@ -96,7 +103,7 @@ const MODE_TIP: Record<string, string> = {
 </script>
 
 <template>
-  <el-form label-width="140px" :disabled="readonly">
+  <el-form label-width="140px" :disabled="formReadonly">
     <el-form-item label="服务网格">
       <el-radio-group v-model="mode">
         <el-radio value="">跟随命名空间</el-radio>
@@ -105,7 +112,8 @@ const MODE_TIP: Record<string, string> = {
         <el-radio value="l7" :disabled="l7Locked">L7（需 waypoint）</el-radio>
       </el-radio-group>
       <div class="form-tip">{{ MODE_TIP[mode] ?? '' }} <AppMeshGuide /></div>
-      <div v-if="l4Locked || l7Locked" class="form-tip warn">ambient 网格不可用（{{ meshReason || '依赖的集群组件未安装或未就绪' }}）：只能选跟随或不加入。</div>
+      <div v-if="canaryLocked" class="form-tip warn">有服务在灰度中（{{ canaryKeys?.join('、') }}），{{ wasL7 ? '网格设置' : 'L7' }}暂不能改：先全量或回退。</div>
+      <div v-if="!meshAvailable && (l4Locked || l7Locked)" class="form-tip warn">ambient 网格不可用（{{ meshReason || '依赖的集群组件未安装或未就绪' }}）：只能选跟随或不加入。</div>
     </el-form-item>
     <el-form-item v-if="mode === 'l7'" label="Waypoint" required>
       <el-select v-model="waypoint" style="width: 320px" placeholder="选择 waypoint">

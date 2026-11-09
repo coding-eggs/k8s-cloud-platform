@@ -2,6 +2,8 @@
 /**
  * 灰度管理（应用页服务列表「管理灰度」抽屉，spec §9）：未灰度时说明 + 开始；灰度中时权重 / header、指标对比、两个版本的 Pod、全量 / 回退。
  * 平台只给指标，好不好由租户自己判断：canary 错误率比 stable 高 1 个百分点以上时数字标橙，不拦操作。
+ * 内部灰度（设计 2026-11-09-app-internal-canary-design.md）：应用为 L7 网格时集群内调用也按同一权重分流；
+ * 有网关暴露时「外部流量参与灰度」开关决定网关流量是否分流；指标分「内部调用」「网关进来」两组。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -10,7 +12,8 @@ import { podLabelSelector } from '@/utils/podSelector'
 import { podPhaseType } from '@/utils/format'
 import StatusBadgeTip from '@/components/StatusBadgeTip.vue'
 import AppCanaryStartDialog from './AppCanaryStartDialog.vue'
-import type { AppCanaryMetrics, AppDependencyRow, AppServiceDesired, AppServiceRow, K8sPod } from '@/types'
+import { serviceProtocol } from './releaseUtil'
+import type { AppCanaryMetrics, AppCanaryMetricsGroup, AppDependencyRow, AppServiceDesired, AppServiceRow, K8sPod } from '@/types'
 
 const props = defineProps<{
   appId: string
@@ -25,6 +28,8 @@ const props = defineProps<{
   canWrite: boolean
   /** 应用有进行中的执行：按钮全部禁用 */
   busy: boolean
+  /** 应用线上设置为 L7 网格（集群内调用分流） */
+  l7: boolean
 }>()
 const emit = defineEmits<{ (e: 'changed'): void }>()
 
@@ -39,15 +44,24 @@ const stable = computed<AppServiceDesired>(() => {
   delete d.canary
   return d as AppServiceDesired
 })
-const protocol = computed<'HTTP' | 'TCP'>(() => (stable.value.expose === 'gateway-tcp' ? 'TCP' : 'HTTP'))
+const protocol = computed<'HTTP' | 'TCP'>(() => serviceProtocol(stable.value))
+/** 有网关暴露：网关流量可参与灰度 */
+const exposed = computed(() => stable.value.expose === 'gateway-http' || stable.value.expose === 'gateway-tcp')
+/** 「外部流量参与」开关：只在 L7 且有网关暴露时可调（非 L7 时网关流量是唯一分流的部分，固定参与） */
+const externalSwitchable = computed(() => props.l7 && exposed.value)
+/** 当前分流范围说明 */
+const scopeText = computed(() => {
+  const ext = exposed.value && (props.row.canary?.external ?? true)
+  if (!props.l7) return '仅网关进来的流量分流（应用未开启 L7 网格，集群内调用不分流、全部进 stable）'
+  return ext ? '集群内调用与网关进来的流量都按权重分流' : '仅集群内调用分流（网关进来的固定进 stable）'
+})
 
 /** 开始灰度不可用的原因；空串 = 可以开始 */
 const startBlocked = computed(() => {
   if (!props.canWrite) return '没有应用写权限'
   if (props.busy) return '有进行中的执行，结束后再操作'
   if (props.row.state === 'NOT_RELEASED' || !props.liveDesired) return '服务尚未上线'
-  const expose = props.liveDesired.expose
-  if (expose !== 'gateway-http' && expose !== 'gateway-tcp') return '只有网关暴露（网关 HTTP / TCP）的服务能灰度'
+  if (!props.l7 && !exposed.value) return '应用未开启 L7 网格（在应用设置里开启并选择 waypoint），且服务没有网关暴露'
   if (props.liveDesired.persistenceEnabled) return '有状态服务（开启了持久化）不能灰度'
   return ''
 })
@@ -64,7 +78,9 @@ const weight = ref(10)
 const headerOn = ref(false)
 const headerName = ref('x-canary')
 const headerValue = ref('true')
+const external = ref(true)
 function syncFromLive(): void {
+  external.value = props.row.canary?.external ?? true
   weight.value = props.row.canary?.weight ?? 10
   headerOn.value = !!props.row.canary?.headerName
   headerName.value = props.row.canary?.headerName ?? 'x-canary'
@@ -75,6 +91,7 @@ const routeDirty = computed(() => {
   const c = props.row.canary
   if (!c) return false
   if (weight.value !== c.weight) return true
+  if (externalSwitchable.value && external.value !== c.external) return true
   if (headerOn.value !== !!c.headerName) return true
   return headerOn.value && (headerName.value !== c.headerName || headerValue.value !== c.headerValue)
 })
@@ -88,6 +105,7 @@ async function applyRoute(): Promise<void> {
       headerEnabled: protocol.value === 'HTTP' && headerOn.value,
       headerName: headerOn.value ? headerName.value.trim() || undefined : undefined,
       headerValue: headerOn.value ? headerValue.value : undefined,
+      external: externalSwitchable.value ? external.value : undefined,
     })
     ElMessage.success('已提交，正在执行')
     emit('changed')
@@ -161,16 +179,23 @@ const metricRows = computed<MetricRow[]>(() => (protocol.value === 'TCP'
       { label: 'P50 延迟', key: 'p50', fmt: (v) => `${num(v)} ms` },
       { label: 'P99 延迟', key: 'p99', fmt: (v) => `${num(v)} ms` },
     ]))
-function cell(side: 'stable' | 'canary', r: MetricRow): string {
-  const v = metrics.value?.[side]?.[r.key]
+/** 两组来源：内部调用（L7 才有）、网关进来（有网关暴露才有） */
+const groups = computed<{ key: string; title: string; data: AppCanaryMetricsGroup }[]>(() => {
+  const out: { key: string; title: string; data: AppCanaryMetricsGroup }[] = []
+  if (metrics.value?.internal) out.push({ key: 'internal', title: '内部调用', data: metrics.value.internal })
+  if (metrics.value?.external) out.push({ key: 'external', title: '网关进来', data: metrics.value.external })
+  return out
+})
+function cell(g: AppCanaryMetricsGroup, side: 'stable' | 'canary', r: MetricRow): string {
+  const v = g[side]?.[r.key]
   return v == null ? '暂无数据' : r.fmt(v)
 }
 /** canary 错误率比 stable 高 1 个百分点以上：标橙（只提示） */
-const errorWorse = computed(() => {
-  const s = metrics.value?.stable?.errorRate
-  const c = metrics.value?.canary?.errorRate
+function errorWorse(g: AppCanaryMetricsGroup): boolean {
+  const s = g.stable?.errorRate
+  const c = g.canary?.errorRate
   return s != null && c != null && c - s > 0.01
-})
+}
 
 // ---------- 两个版本的 Pod ----------
 const pods = ref<{ stable: K8sPod[]; canary: K8sPod[] }>({ stable: [], canary: [] })
@@ -215,8 +240,7 @@ function readyCount(p: K8sPod): string {
     </template>
 
     <template v-else-if="row.canary">
-      <el-alert type="info" :closable="false" show-icon class="app-cny__alert"
-                title="集群内其他服务调用的仍是 stable，canary 只接网关进来的流量" />
+      <el-alert type="info" :closable="false" show-icon class="app-cny__alert" :title="scopeText" />
 
       <section class="panel app-cny__card">
         <h4>流量</h4>
@@ -229,6 +253,10 @@ function readyCount(p: K8sPod): string {
         <div class="app-cny__kv"><span class="k"></span>
           <el-button v-for="w in [0, 10, 25, 50, 100]" :key="w" size="small" :disabled="!!actBlocked" @click="weight = w">{{ w }}%</el-button>
         </div>
+        <div v-if="externalSwitchable" class="app-cny__kv"><span class="k">外部流量</span>
+          <el-switch v-model="external" :disabled="!!actBlocked" />
+          <span class="muted">{{ external ? '网关进来的请求也按权重分流' : '网关进来的请求固定进 stable，权重只作用于集群内调用' }}</span>
+        </div>
         <div v-if="protocol === 'HTTP'" class="app-cny__kv"><span class="k">header 直达</span>
           <el-switch v-model="headerOn" :disabled="!!actBlocked" />
           <template v-if="headerOn">
@@ -236,7 +264,7 @@ function readyCount(p: K8sPod): string {
             <span>:</span>
             <el-input v-model="headerValue" size="small" class="app-cny__hdr" :disabled="!!actBlocked" />
           </template>
-          <span class="muted">带此请求头的请求总是进灰度（优先于权重）</span>
+          <span class="muted">带此请求头的请求总是进灰度（优先于权重）{{ l7 ? '；集群内调用需调用方把这个请求头往下传' : '' }}</span>
         </div>
         <div class="app-cny__kv"><span class="k"></span>
           <el-tooltip :disabled="!actBlocked" :content="actBlocked" placement="top">
@@ -255,19 +283,23 @@ function readyCount(p: K8sPod): string {
             <el-radio-button value="1h">1 小时</el-radio-button>
           </el-radio-group>
           <el-button size="small" :loading="metricsLoading" @click="loadMetrics">刷新</el-button>
-          <span class="muted">每 30 秒自动刷新；数据来自入口网关</span>
+          <span class="muted">每 30 秒自动刷新；内部调用来自 waypoint，网关进来来自入口网关</span>
         </div>
-        <el-table :data="metricRows" size="small">
-          <el-table-column label="指标" prop="label" width="160" />
-          <el-table-column label="stable">
-            <template #default="{ row: r }">{{ cell('stable', r) }}</template>
-          </el-table-column>
-          <el-table-column label="canary">
-            <template #default="{ row: r }">
-              <span :class="{ 'app-cny__worse': r.key === 'errorRate' && errorWorse }">{{ cell('canary', r) }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
+        <div v-if="!groups.length" class="muted">暂无数据</div>
+        <div v-for="g in groups" :key="g.key" class="app-cny__group">
+          <div class="app-cny__group-title">{{ g.title }}</div>
+          <el-table :data="metricRows" size="small">
+            <el-table-column label="指标" prop="label" width="160" />
+            <el-table-column label="stable">
+              <template #default="{ row: r }">{{ cell(g.data, 'stable', r) }}</template>
+            </el-table-column>
+            <el-table-column label="canary">
+              <template #default="{ row: r }">
+                <span :class="{ 'app-cny__worse': r.key === 'errorRate' && errorWorse(g.data) }">{{ cell(g.data, 'canary', r) }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
       </section>
 
       <section class="panel app-cny__card">
@@ -309,6 +341,8 @@ function readyCount(p: K8sPod): string {
       :stable="stable"
       :canary-desired="block?.desired ?? null"
       :protocol="protocol"
+      :l7="l7"
+      :exposed="exposed"
       :dependencies="dependencies"
       :service-keys="serviceKeys"
       :ctx="ctx"
@@ -330,5 +364,7 @@ function readyCount(p: K8sPod): string {
 .app-cny__hdr { width: 140px; }
 .app-cny__worse { color: var(--el-color-warning); font-weight: 600; }
 .app-cny__tip { margin-top: 6px; }
+.app-cny__group + .app-cny__group { margin-top: 12px; }
+.app-cny__group-title { margin-bottom: 6px; font-size: 13px; font-weight: 600; }
 .app-cny__btns { display: inline-flex; gap: 8px; }
 </style>

@@ -10,6 +10,7 @@ import { computed, ref, watch } from 'vue'
 import { appReleaseApi } from '@/api'
 import AppCanaryPanel from './AppCanaryPanel.vue'
 import AppCanaryStartDialog from './AppCanaryStartDialog.vue'
+import { serviceProtocol } from './releaseUtil'
 import type { AppDependencyRow, AppServiceDesired, AppServiceRow, ApplicationView } from '@/types'
 
 const props = defineProps<{
@@ -23,6 +24,8 @@ const props = defineProps<{
   liveNo: number
   canWrite: boolean
   busy: boolean
+  /** 应用线上设置为 L7 网格（集群内调用也分流） */
+  l7: boolean
 }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
@@ -63,7 +66,8 @@ const stable = computed<AppServiceDesired>(() => {
   delete d.canary
   return d as unknown as AppServiceDesired
 })
-const protocol = computed<'HTTP' | 'TCP'>(() => (stable.value.expose === 'gateway-tcp' ? 'TCP' : 'HTTP'))
+const protocol = computed<'HTTP' | 'TCP'>(() => serviceProtocol(stable.value))
+const exposed = computed(() => stable.value.expose === 'gateway-http' || stable.value.expose === 'gateway-tcp')
 
 /** start 模式：快照读完才弹对话框；对话框关掉 = 整个入口关掉 */
 const startVisible = computed({
@@ -95,6 +99,8 @@ function onStarted(): void {
     :service-key="row.key"
     :stable="stable"
     :protocol="protocol"
+    :l7="l7"
+    :exposed="exposed"
     :dependencies="dependencies"
     :service-keys="serviceKeys"
     :ctx="ctx"
@@ -121,6 +127,7 @@ function onStarted(): void {
       :ctx="ctx"
       :can-write="canWrite"
       :busy="busy"
+      :l7="l7"
       @changed="onChanged"
     />
   </el-drawer>

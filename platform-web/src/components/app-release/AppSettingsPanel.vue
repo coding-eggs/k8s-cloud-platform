@@ -22,6 +22,8 @@ const props = defineProps<{
   namespace?: string
   view: AppSettingsView
   editable: boolean
+  /** 灰度中的服务 key：非空时网格不能进出 L7、不能换 waypoint */
+  canaryKeys?: string[]
 }>()
 const emit = defineEmits<{ (e: 'saved'): void }>()
 
@@ -110,7 +112,7 @@ async function save(): Promise<void> {
     <AppMeshForm v-model="mesh" :original="view.settings?.mesh"
                  :tenant-id="tenantId" :cluster-id="clusterId" :namespace="namespace"
                  :readonly="!editable" :mesh-available="meshAvailable"
-                 :mesh-reason="comps.unavailableReason('ambient-mesh')" />
+                 :mesh-reason="comps.unavailableReason('ambient-mesh')" :canary-keys="canaryKeys" />
     <div class="app-settings__save">
       <el-button type="primary" :loading="saving" :disabled="!editable || !dirty || invalid" :title="invalid ? 'L7 需要选择 waypoint' : ''" @click="save">保存</el-button>
       <el-button :disabled="!editable || !dirty" @click="reset">还原</el-button>

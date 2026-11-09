@@ -28,7 +28,7 @@ import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import AppSettingsPanel from '@/components/app-release/AppSettingsPanel.vue'
 import AppCanaryDrawer from '@/components/app-release/AppCanaryDrawer.vue'
 import { INIT_STATUS, depStatus, ownershipText, usersOf } from '@/components/app-release/dependencyUtil'
-import { isRunning } from '@/components/app-release/releaseUtil'
+import { isL7, isRunning } from '@/components/app-release/releaseUtil'
 import type { AppDependencyRow, AppOverview, AppServiceRow, AppServiceState, ApplicationView } from '@/types'
 
 const route = useRoute()
@@ -149,11 +149,15 @@ const canaryKey = ref<string | null>(null)
 /** 每次 load 后取最新行，抽屉里的权重 / 状态跟着刷新 */
 const canaryRow = computed(() => overview.value?.services.find((s) => s.key === canaryKey.value) ?? null)
 /** 开启灰度不可用的原因（看列表上的信息先拦一层，后端以线上快照为准再校验）；空串 = 可开启 */
+/** 线上应用设置为 L7 网格：集群内调用也能分流，没有网关暴露的服务也能灰度 */
+const l7 = computed(() => isL7(overview.value?.settings?.live))
+/** 灰度中的服务：应用设置里网格不能进出 L7 / 换 waypoint */
+const canaryKeys = computed(() => (overview.value?.services ?? []).filter((s) => s.canary).map((s) => s.key))
 function canaryStartBlocked(row: AppServiceRow): string {
   if (!canWrite.value) return '没有应用写权限'
   if (publishing.value) return '有进行中的执行，结束后再操作'
   if (row.state === 'NOT_RELEASED') return '服务尚未上线'
-  if (!row.ingress) return '只有网关暴露（网关 HTTP / TCP）的服务能灰度'
+  if (!l7.value && !row.ingress) return '应用未开启 L7 网格（在应用设置里开启并选择 waypoint），且服务没有网关暴露'
   if (row.desired?.persistenceEnabled) return '有状态服务（开启了持久化）不能灰度'
   return ''
 }
@@ -515,7 +519,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
           <span class="muted">链路追踪与服务网格作用于全部服务</span>
         </div>
         <AppSettingsPanel :app-id="appId" :tenant-id="tenantId" :cluster-id="app?.clusterId" :namespace="app?.namespace"
-                          :view="overview.settings" :editable="editable" @saved="load(true)" />
+                          :view="overview.settings" :editable="editable" :canary-keys="canaryKeys" @saved="load(true)" />
       </section>
 
       <el-tabs v-model="bottomTab" class="app-detail__tabs">
@@ -573,6 +577,7 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
       :live-no="live"
       :can-write="canWrite"
       :busy="publishing"
+      :l7="l7"
       @changed="afterExecutionChange"
     />
 

@@ -167,3 +167,14 @@ export function diffDependencies(live: AppRelease['snapshot'], target: AppReleas
   }
   return out
 }
+
+/** 服务协议（同后端 AppServiceDesired.serviceProtocol）：网关 TCP 暴露 → TCP；否则 TCP 探针 → TCP；否则 HTTP */
+export function serviceProtocol(d?: { expose?: unknown; probeType?: unknown } | null): 'HTTP' | 'TCP' {
+  if (d?.expose === 'gateway-tcp') return 'TCP'
+  return d?.probeType === 'tcp' ? 'TCP' : 'HTTP'
+}
+
+/** 应用级网格为 L7 且选了 waypoint（同后端 AppSettings.isL7）：内部灰度分流的前提 */
+export function isL7(settings?: { mesh?: { mode?: string; waypoint?: string } } | null): boolean {
+  return settings?.mesh?.mode === 'l7' && !!settings.mesh.waypoint
+}
