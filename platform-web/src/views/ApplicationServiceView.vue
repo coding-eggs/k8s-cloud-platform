@@ -155,13 +155,29 @@ function buildDesired(): AppServiceDesired {
   return d
 }
 
+/** 探针类型（缺省 http 不存；tcp 存 'tcp'）。用户手动选过就不再跟着暴露方式自动切 */
+const probeTypeTouched = ref(false)
+const probeTypeModel = computed<'http' | 'tcp'>({
+  get: () => (form.value.probeType === 'tcp' ? 'tcp' : 'http'),
+  set: (v) => {
+    probeTypeTouched.value = true
+    if (v === 'tcp') form.value.probeType = 'tcp'
+    else delete form.value.probeType
+  },
+})
+
 /** 对外暴露方式（表单里用 none 表示「不暴露」，保存时去掉） */
 const exposeMode = computed<string>({
   get: () => (form.value.expose === 'nodeport' || isGatewayExpose(form.value.expose)
     ? form.value.expose as string : 'none'),
   set: (v) => {
     if (v === 'nodeport') form.value.expose = 'nodeport'
-    else if (isGatewayExpose(v)) { form.value.expose = v; delete form.value.nodePort }
+    else if (isGatewayExpose(v)) {
+      form.value.expose = v
+      delete form.value.nodePort
+      // 纯 TCP 服务用 HTTP 探针会一直失败：用户没手动选过探针类型时跟着切成 TCP
+      if (v === 'gateway-tcp' && !probeTypeTouched.value) form.value.probeType = 'tcp'
+    }
     else { delete form.value.expose; delete form.value.nodePort }
   },
 })
@@ -653,7 +669,14 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
               <el-form-item label="健康探针">
                 <el-switch :model-value="form.probeEnabled !== false" @update:model-value="(v: string | number | boolean) => (form.probeEnabled = v === true)" />
               </el-form-item>
-              <el-form-item v-if="form.probeEnabled !== false" label="探针路径"><el-input v-model="form.probePath" placeholder="默认 /，如 /healthz" /></el-form-item>
+              <el-form-item v-if="form.probeEnabled !== false" label="探针类型">
+                <el-radio-group v-model="probeTypeModel">
+                  <el-radio value="http">HTTP</el-radio>
+                  <el-radio value="tcp">TCP 端口</el-radio>
+                </el-radio-group>
+                <span class="app-svc__tip">HTTP 请求探针路径；TCP 只检查服务端口能否连上（非 HTTP 服务用）</span>
+              </el-form-item>
+              <el-form-item v-if="form.probeEnabled !== false && probeTypeModel === 'http'" label="探针路径"><el-input v-model="form.probePath" placeholder="默认 /，如 /healthz" /></el-form-item>
               <el-form-item label="暴露指标">
                 <el-tooltip :disabled="!metricsLocked || !form.port" :content="flagReasons.servicemonitor" placement="top">
                   <span><el-switch v-model="form.metricsEnabled" :disabled="!!form.port && metricsLocked" /></span>

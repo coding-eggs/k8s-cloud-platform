@@ -31,7 +31,7 @@ public final class AppServiceDesired {
             "probeEnabled", "probePath", "metricsEnabled", "metricsPath");
 
     private static final Set<String> CORE = Set.of("imageRepo", "imageTag", "port", "replicas", "env", "configFiles",
-            "expose", "nodePort", "otel");
+            "expose", "nodePort", "otel", "probeType");
 
     /** 接入 OTel 后由平台写的环境变量：用户同名变量与平台值谁生效不可预期，故接入时拒绝 */
     public static final Set<String> OTEL_RESERVED_ENV = Set.of(
@@ -103,6 +103,7 @@ public final class AppServiceDesired {
             out.put("configFiles", files);   // 空列表不存：否则「没有 vs 空」会被当成待发布改动
         }
         normalizeExpose(raw, port, out);
+        normalizeProbeType(raw.get("probeType"), out);
         Map<String, Object> otel = normalizeOtel(raw.get("otel"), dataMountPath(raw, port));
         if (otel != null) {
             for (Map<String, Object> row : (List<Map<String, Object>>) out.get("env")) {
@@ -128,6 +129,18 @@ public final class AppServiceDesired {
             }
         }
         return out;
+    }
+
+    /** 探针类型：http（缺省，不存——旧数据没有这个键）/ tcp（tcpSocket 探服务端口，纯 TCP 服务用）。 */
+    private static void normalizeProbeType(Object raw, Map<String, Object> out) {
+        String t = text(raw).toLowerCase();
+        if (t.isEmpty() || "http".equals(t)) {
+            return;
+        }
+        if (!"tcp".equals(t)) {
+            throw bad("不支持的探针类型：" + raw + "（可选 HTTP / TCP）");
+        }
+        out.put("probeType", "tcp");
     }
 
     /**

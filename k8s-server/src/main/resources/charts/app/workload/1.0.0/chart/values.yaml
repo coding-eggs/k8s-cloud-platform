@@ -39,6 +39,8 @@ workload:
   probe:
     # 关掉探针：非 HTTP 服务（gRPC / 只监听 TCP）必须关，否则 Pod 永远 NotReady
     enabled: true
+    # http = httpGet path；tcp = tcpSocket 探服务端口（纯 TCP 服务）
+    type: http
     path: /
   metrics:
     enabled: false

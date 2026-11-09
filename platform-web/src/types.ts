@@ -3096,6 +3096,8 @@ export interface AppServiceDesired {
   otel?: AppServiceOtel
   probeEnabled?: boolean
   probePath?: string
+  /** 探针类型：缺省 = http（httpGet probePath）；tcp = tcpSocket 探服务端口 */
+  probeType?: 'tcp'
   metricsEnabled?: boolean
   metricsPath?: string
   /** 对外暴露：'nodeport' / 'gateway-http' / 'gateway-tcp'；不暴露 = 没有这个键（网关端口由平台分配，不在这里） */

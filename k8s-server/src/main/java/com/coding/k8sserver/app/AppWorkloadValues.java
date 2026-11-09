@@ -66,6 +66,7 @@ public final class AppWorkloadValues {
         // 默认开：HTTP 服务需要探针；非 HTTP 服务由用户在节点里关掉
         workload.put("probe", Map.of(
                 "enabled", !Boolean.FALSE.equals(params.get("probeEnabled")),
+                "type", "tcp".equals(params.get("probeType")) ? "tcp" : "http",
                 "path", strOrDefault(params.get("probePath"), "/")));
         workload.put("metrics", Map.of(
                 "enabled", bool(params.get("metricsEnabled")),

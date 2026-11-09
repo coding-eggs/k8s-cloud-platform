@@ -266,4 +266,16 @@ class AppWorkloadValuesTest {
         assertThat(workload(AppWorkloadValues.build("app_1", "demo", 1, node(Map.of("image", "nginx"))))
                 .get("route")).isEqualTo(Map.of("enabled", false));
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void tcpProbeTypeReachesValues() {
+        Map<String, Object> tcp = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx", "probeType", "tcp"))));
+        assertThat((Map<String, Object>) tcp.get("probe")).containsEntry("type", "tcp");
+
+        Map<String, Object> dflt = workload(AppWorkloadValues.build("app_1", "demo", 1,
+                node(Map.of("image", "nginx"))));
+        assertThat((Map<String, Object>) dflt.get("probe")).containsEntry("type", "http");
+    }
 }

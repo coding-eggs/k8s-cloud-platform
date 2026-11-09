@@ -107,9 +107,14 @@ spec:
             {{- toYaml .Values.workload.resources | nindent 12 }}
           {{- if .Values.workload.probe.enabled }}
           readinessProbe:
+            {{- if eq .Values.workload.probe.type "tcp" }}
+            tcpSocket:
+              port: http
+            {{- else }}
             httpGet:
               path: {{ .Values.workload.probe.path }}
               port: http
+            {{- end }}
             initialDelaySeconds: 10
             failureThreshold: 3
           {{- end }}

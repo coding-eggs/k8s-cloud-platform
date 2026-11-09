@@ -336,4 +336,20 @@ class AppServiceDesiredTest {
         assertThat(AppServiceDesired.gatewayProtocol(Map.of("expose", "nodeport"))).isNull();
         assertThat(AppServiceDesired.gatewayProtocol(null)).isNull();
     }
+
+    @Test
+    void probeTypeTcpIsKeptAndHttpIsTheDefault() {
+        Map<String, Object> tcp = base();
+        tcp.put("probeType", "TCP");
+        assertThat(AppServiceDesired.normalize(tcp)).containsEntry("probeType", "tcp");
+
+        Map<String, Object> http = base();
+        http.put("probeType", "http");
+        // 缺省不存：旧数据没有这个键，存了 "http" 会让所有服务变成待发布改动
+        assertThat(AppServiceDesired.normalize(http)).doesNotContainKey("probeType");
+
+        Map<String, Object> bad = base();
+        bad.put("probeType", "grpc");
+        rejects(bad).hasMessageContaining("探针类型");
+    }
 }

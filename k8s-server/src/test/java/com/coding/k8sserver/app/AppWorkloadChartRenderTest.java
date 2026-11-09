@@ -383,4 +383,21 @@ class AppWorkloadChartRenderTest {
         List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 80));
         assertThat(docs).noneMatch(d -> "HTTPRoute".equals(d.get("kind")) || "TCPRoute".equals(d.get("kind")));
     }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void tcpProbeRendersTcpSocket() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> tcpC = ((List<Map<String, Object>>) at(find(
+                render(Map.of("image", "nginx", "port", 80, "probeType", "tcp")), "Deployment", "shop-api"),
+                "spec", "template", "spec").get("containers")).get(0);
+        assertThat(at(tcpC, "readinessProbe", "tcpSocket")).containsEntry("port", "http");
+        assertThat(at(tcpC, "livenessProbe", "tcpSocket")).containsEntry("port", "http");
+        assertThat((Map<String, Object>) tcpC.get("readinessProbe")).doesNotContainKey("httpGet");
+
+        Map<String, Object> httpC = ((List<Map<String, Object>>) at(find(
+                render(Map.of("image", "nginx", "port", 80)), "Deployment", "shop-api"),
+                "spec", "template", "spec").get("containers")).get(0);
+        assertThat(at(httpC, "readinessProbe", "httpGet")).containsEntry("path", "/");
+    }
 }
