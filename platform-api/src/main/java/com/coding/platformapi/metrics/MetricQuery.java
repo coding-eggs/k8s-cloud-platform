@@ -7,6 +7,7 @@ import com.coding.platformapi.metrics.labels.MeshErrorLabels;
 import com.coding.platformapi.metrics.labels.MeshLatencyLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
 import com.coding.platformapi.metrics.labels.NamespaceLabels;
+import com.coding.platformapi.metrics.labels.WaypointPodLabels;
 
 /**
  * 具名查询目录：每个常量 = 一条查询 =（返回类型 + 带 {@code %s} 的 promql）。纯数据，零逻辑。
@@ -169,6 +170,14 @@ public enum MetricQuery {
      *  ⚠️ 必须按集群过滤：否则「B 集群没采集、A 集群在采集」会被误判成已采集。 */
     MESH_TOPOLOGY_SCRAPED(MetricLabels.class,
             "count(istio_build{cluster_name=\"%s\"})"),
+    /**
+     * 时间窗内**哪些 Pod 是 waypoint**：{@code reporter="waypoint"} 的序列只有 waypoint 自己会产出，
+     * 抓取目标的 {@code namespace}/{@code pod} 即 waypoint Pod（去掉 Deployment 的两段哈希 = 工作负载名）。
+     * 用途：ztunnel 把「A → B 经 waypoint」记成 A→waypoint、waypoint→B 两段 L4，拓扑要把这两段中转剔掉
+     * （真实两端已由 waypoint 自己上报的 L7 边覆盖）。2026-11-09 实测本集群 L4 中转边全部来自 ztunnel。
+     */
+    MESH_TOPOLOGY_WAYPOINTS(WaypointPodLabels.class,
+            "count by (namespace, pod) (count_over_time({__name__=~\"istio_requests_total|istio_tcp_sent_bytes_total\",cluster_name=\"%s\",reporter=\"waypoint\"}[%s]))"),
 
     // ===== 入口灰度对比（位置占位符：%1$s 集群名、%2$s 命名空间、%3$s 服务名正则 stable|canary、%4$s 时间窗）=====
     // 全部 sum by (destination_service_name)：一条序列 = 一个版本。不加 reporter 过滤（见上面拓扑段的实测注释），

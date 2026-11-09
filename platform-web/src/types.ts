@@ -2289,6 +2289,8 @@ export interface MeshTopologyNode {
   workload: string
   /** 外部网关（istio-system 里那些）：它是"外部入口"，画得跟业务节点不一样 */
   gateway: boolean
+  /** waypoint 代理本身。ztunnel 记的中转边后端已剔除，正常不出现；出现了就弱化显示 */
+  waypoint?: boolean
 }
 
 /** 拓扑里的一条边。⚠️ p95Ms 为 null = 窗口内没有延迟样本，UI 要显示「—」而不是 0。 */

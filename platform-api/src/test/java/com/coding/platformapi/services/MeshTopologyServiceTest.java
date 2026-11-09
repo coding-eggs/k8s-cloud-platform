@@ -10,6 +10,7 @@ import com.coding.platformapi.metrics.labels.MeshEdgeLabels;
 import com.coding.platformapi.metrics.labels.MeshErrorLabels;
 import com.coding.platformapi.metrics.labels.MeshLatencyLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
+import com.coding.platformapi.metrics.labels.WaypointPodLabels;
 import com.coding.platformapi.metrics.model.PromResult;
 import org.junit.jupiter.api.Test;
 
@@ -91,6 +92,16 @@ class MeshTopologyServiceTest {
     /** 延迟查询是否模拟失败（只有「延迟失败不影响整张图」那条用）。 */
     private boolean latencyFails;
 
+    /** waypoint 名单查询的返回（默认空 = 没有 waypoint）。 */
+    private List<PromResult<WaypointPodLabels>> waypointRows = List.of();
+
+    private static PromResult<WaypointPodLabels> waypointPod(String ns, String pod) {
+        WaypointPodLabels l = new WaypointPodLabels();
+        l.setNamespace(ns);
+        l.setPod(pod);
+        return row(l, "13");
+    }
+
     private void stub(List<PromResult<MeshEdgeLabels>> edges,
                       List<PromResult<MeshErrorLabels>> errors,
                       List<PromResult<MeshLatencyLabels>> latency,
@@ -125,6 +136,9 @@ class MeshTopologyServiceTest {
             }
             if (type == MetricLabels.class) {
                 return sentinel;
+            }
+            if (type == WaypointPodLabels.class) {
+                return waypointRows;
             }
             return List.of();
         });
@@ -340,5 +354,50 @@ class MeshTopologyServiceTest {
 
         assertThat(resp.getEdges()).isEmpty();
         assertThat(resp.getNodes()).isEmpty();
+    }
+
+    @Test
+    void ztunnelHopsThroughAWaypointAreDroppedButTheRealCallStays() {
+        cluster();
+        // 2026-11-09 真集群形状：api→k8s-server 经 waypoint，ztunnel 记成两段 L4 中转；waypoint 记 L7 真实两端
+        waypointRows = List.of(waypointPod("ps", "ps-waypoint-79b47b4479-4ttcv"));
+        stub(List.of(row(edgeLabels("ps", "api", "ps", "k8s-server"), "3")),
+                List.of(), List.of(), List.of(sentinel("8")),
+                List.of(row(edgeLabels("ps", "api", "ps", "ps-waypoint"), "500"),
+                        row(edgeLabels("ps", "ps-waypoint", "ps", "k8s-server"), "480"),
+                        row(edgeLabels("ps", "api", "ps", "redis"), "120")));
+
+        MeshTopologyResponse resp = svc.meshTopology("c1", null, 300);
+
+        assertThat(resp.getEdges()).extracting(e -> e.getSource() + ">" + e.getTarget() + ":" + e.getLevel())
+                .containsExactlyInAnyOrder("ps/api>ps/k8s-server:L7", "ps/api>ps/redis:L4");
+        assertThat(resp.getNodes()).extracting(MeshTopologyResponse.MeshNode::getId)
+                .doesNotContain("ps/ps-waypoint");
+    }
+
+    @Test
+    void withoutAWaypointListHopsAreKeptAsBefore() {
+        cluster();
+        // 名单查不到（查询失败 / 没采集 waypoint）→ 退回原行为，不靠名字猜 waypoint
+        stub(List.of(), List.of(), List.of(), List.of(sentinel("8")),
+                List.of(row(edgeLabels("ps", "api", "ps", "ps-waypoint"), "500")));
+
+        MeshTopologyResponse resp = svc.meshTopology("c1", null, 300);
+
+        assertThat(resp.getEdges()).hasSize(1);
+        assertThat(resp.getNodes()).noneMatch(MeshTopologyResponse.MeshNode::isWaypoint);
+    }
+
+    @Test
+    void aWaypointThatIsStillOnAnL7EdgeIsFlagged() {
+        cluster();
+        waypointRows = List.of(waypointPod("ps", "ps-waypoint-79b47b4479-4ttcv"));
+        stub(List.of(row(edgeLabels("ps", "probe", "ps", "ps-waypoint"), "1")),
+                List.of(), List.of(), List.of(sentinel("8")));
+
+        MeshTopologyResponse resp = svc.meshTopology("c1", null, 300);
+
+        assertThat(resp.getNodes()).filteredOn(MeshTopologyResponse.MeshNode::isWaypoint)
+                .extracting(MeshTopologyResponse.MeshNode::getId).containsExactly("ps/ps-waypoint");
     }
 }

@@ -46,6 +46,13 @@ public class MeshTopologyResponse {
         /** 外部网关（`istio-system` 里那些）：它是"外部入口"，前端要画得不一样。 */
         @Schema(description = "是否外部网关")
         private boolean gateway;
+
+        /**
+         * waypoint 代理本身。正常情况下它不会出现在图里（ztunnel 记的中转 L4 边已剔除），
+         * 出现了说明有直接打到 waypoint 的流量，前端弱化显示。
+         */
+        @Schema(description = "是否 waypoint 代理")
+        private boolean waypoint;
     }
 
     /** 拓扑里的一条边。 */

@@ -9,6 +9,7 @@
  * <p><b>两种空态必须分开说</b>：`meshMetricsAvailable=false` 是「这个集群没在采集网格指标」，
  * 不是「没有流量」。两者主查询都是空的，后端靠与流量无关的哨兵 `count(istio_build)` 分开。
  */
+import dagre from '@dagrejs/dagre'
 import * as echarts from 'echarts/core'
 import { GraphChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
@@ -38,6 +39,8 @@ const scopeToNamespace = ref(false)
 const currentNamespace = computed(() => ctx.state.namespace ?? '')
 const namespace = computed(() => (scopeToNamespace.value ? currentNamespace.value : ''))
 const windowSeconds = ref(300)
+/** 显示 L4 连接（虚线）。关掉 = 只看有请求数/错误率的 L7 调用，图会干净很多 */
+const showL4 = ref(true)
 const WINDOWS = [
   { label: '5 分钟', value: 300 },
   { label: '1 小时', value: 3600 },
@@ -80,16 +83,19 @@ const focusState = computed<'off' | 'on' | 'missing'>(() => {
   return focusKeep.value ? 'on' : 'missing'
 })
 
-/** 实际参与画布渲染的拓扑（聚焦后只留子图） */
+/** 实际参与画布渲染的拓扑（聚焦后只留子图；关掉 L4 时连带去掉只靠 L4 连着的节点） */
 const viewTopo = computed<MeshTopology | null>(() => {
   const t = topo.value
+  if (!t) return t
   const keep = focusKeep.value
-  if (!t || !keep) return t
-  return {
-    ...t,
-    nodes: t.nodes.filter((n) => keep.has(n.id)),
-    edges: t.edges.filter((e) => keep.has(e.source) && keep.has(e.target)),
+  let nodes = keep ? t.nodes.filter((n) => keep.has(n.id)) : t.nodes
+  let edges = keep ? t.edges.filter((e) => keep.has(e.source) && keep.has(e.target)) : t.edges
+  if (!showL4.value) {
+    edges = edges.filter((e) => e.level !== 'L4')
+    const touched = new Set(edges.flatMap((e) => [e.source, e.target]))
+    nodes = nodes.filter((n) => touched.has(n.id))
   }
+  return { ...t, nodes, edges }
 })
 
 function clearFocus(): void {
@@ -126,6 +132,8 @@ function stopTimer(): void {
     timer = undefined
   }
 }
+
+watch(showL4, () => dragOffsets.clear())   // 换了一张图（节点/层次都变），旧的手工位置不再适用
 
 watch([clusterId, namespace, windowSeconds], () => {
   forced.value = false
@@ -271,16 +279,20 @@ const chartNodes = computed(() => {
         workload: n.workload,
         namespace: n.namespace,
         gateway: n.gateway,
+        waypoint: !!n.waypoint,
         health,
-        symbol: n.gateway ? 'diamond' : 'circle',
-        symbolSize: 18 + Math.min((degree.get(n.id) ?? 0) * 2, 18),
-        itemStyle: {
-          // 有入向流量 → 用健康色；没有 → 保留原来的命名空间色（不假装健康）
-          color: healthColor ?? (n.gateway ? cssVar('--accent', '#6f7cff') : nsColor(n.namespace)),
-          // 描边始终是命名空间色：颜色说健康，边框说归属，两个信号都不丢
-          borderColor: nsColor(n.namespace),
-          borderWidth: healthColor ? 2 : 0,
-        },
+        symbol: n.gateway ? 'diamond' : n.waypoint ? 'roundRect' : 'circle',
+        symbolSize: n.waypoint ? 14 : 18 + Math.min((degree.get(n.id) ?? 0) * 2, 18),
+        itemStyle: n.waypoint
+          // waypoint 是代理不是业务：弱化成灰色小方块，别让它抢视线
+          ? { color: cssVar('--text-3', '#94a3b8'), opacity: 0.6 }
+          : {
+              // 有入向流量 → 用健康色；没有 → 保留原来的命名空间色（不假装健康）
+              color: healthColor ?? (n.gateway ? cssVar('--accent', '#6f7cff') : nsColor(n.namespace)),
+              // 描边始终是命名空间色：颜色说健康，边框说归属，两个信号都不丢
+              borderColor: nsColor(n.namespace),
+              borderWidth: healthColor ? 2 : 0,
+            },
       }
     })
 })
@@ -291,7 +303,11 @@ const healthById = computed(() => new Map(chartNodes.value.map((n) => [n.id, n.h
 const chartLinks = computed(() => {
   void themeTick.value // 主题变量是依赖
   const l4Color = cssVar('--text-3', '#94a3b8')
-  return [...(viewTopo.value?.edges ?? [])]
+  const all = viewTopo.value?.edges ?? []
+  // 只有 A→B 与 B→A 同时存在才弯（两条反向边同一曲率会各自弯向一侧，正好分开），其余画直线
+  const pairs = new Set(all.map((e) => `${e.source} ${e.target}`))
+  const curve = (e: MeshTopologyEdge): number => (pairs.has(`${e.target} ${e.source}`) ? 0.2 : 0)
+  return [...all]
     .sort((a, b) => a.source.localeCompare(b.source) || a.target.localeCompare(b.target))
     .map((e: MeshTopologyEdge) => {
       const l4 = e.level === 'L4'
@@ -307,89 +323,40 @@ const chartLinks = computed(() => {
         bytesPerSec: e.bytesPerSec,
         lineStyle: l4
           // L4 没有响应码，不能用错误率上色；虚线 + 中性色表示"只看到连接与字节"
-          ? { width: bytesWidth(e.bytesPerSec ?? 0), color: l4Color, type: 'dashed', opacity: 0.85, curveness: 0.12 }
-          : { width: edgeWidth(e.rps), color: edgeColor(e.errorRate), curveness: 0.12 },
+          ? { width: bytesWidth(e.bytesPerSec ?? 0), color: l4Color, type: 'dashed', opacity: 0.85, curveness: curve(e) }
+          : { width: edgeWidth(e.rps), color: edgeColor(e.errorRate), curveness: curve(e) },
       }
     })
 })
 
 /**
- * 分层布局：把"谁调谁"画成**从左到右**的流，层内上下排。
- * 静态计算、没有模拟 —— 不会晃，也不会每次刷新重新收敛。
- * 步骤：断环 → 最长路径定层 → 层内重心排序（减交叉）→ 摆坐标。
+ * 分层布局（dagre）：把"谁调谁"画成**从左到右**的流，层内上下排。
+ * 静态计算、没有模拟 —— 不会晃，也不会每次刷新重新收敛（同一份数据 → 同一张图）。
+ *
+ * 为什么不再手写最长路径分层：节点少时每层只剩一两个，全挤在中线上，跨层的长边直接压过中间节点。
+ * dagre 会给跨层的边在中间各层**占位**（节点因此错开），并按交叉最少排层内顺序、自己处理环。
+ * ECharts graph 画不了 dagre 的拐点，只用它的节点坐标；占位已经让直线基本不穿节点。
  */
 function computeLayout(
   nodes: { id: string }[],
   edges: { source: string; target: string }[],
-  w: number,
-  h: number,
 ): Map<string, [number, number]> {
-  const ids = nodes.map((n) => n.id)
-  const known = new Set(ids)
-  const succ = new Map<string, string[]>(ids.map((id) => [id, []]))
-  const pred = new Map<string, string[]>(ids.map((id) => [id, []]))
+  const g = new dagre.graphlib.Graph({ multigraph: false })
+  // 节点框按"圆点 + 下方截断标签"的占地估：宽 = 标签宽，高 = 圆点 + 标签
+  g.setGraph({ rankdir: 'LR', nodesep: 36, ranksep: 140, edgesep: 20, marginx: 40, marginy: 40 })
+  g.setDefaultEdgeLabel(() => ({}))
+  const known = new Set(nodes.map((n) => n.id))
+  for (const n of nodes) g.setNode(n.id, { width: 150, height: 56 })
   for (const e of edges) {
     if (!known.has(e.source) || !known.has(e.target) || e.source === e.target) continue
-    succ.get(e.source)!.push(e.target)
-    pred.get(e.target)!.push(e.source)
+    g.setEdge(e.source, e.target)
   }
-
-  // ① 断环：DFS 里指向"正在访问"的边是回边，分层时忽略（节点本身照画）
-  const backEdges = new Set<string>()
-  const state = new Map<string, 0 | 1 | 2>(ids.map((id) => [id, 0]))
-  const isBack = (u: string, v: string): boolean => backEdges.has(`${u}\u0000${v}`)
-  const visit = (u: string): void => {
-    state.set(u, 1)
-    for (const v of succ.get(u)!) {
-      const s = state.get(v)!
-      if (s === 1) backEdges.add(`${u}\u0000${v}`)
-      else if (s === 0) visit(v)
-    }
-    state.set(u, 2)
-  }
-  for (const id of ids) if (state.get(id) === 0) visit(id)
-
-  // ② 分层 = 无环图上的最长路径（保证每条边都从左指向右）
-  const rank = new Map<string, number>(ids.map((id) => [id, 0]))
-  const indeg = new Map<string, number>(ids.map((id) => [id, 0]))
-  for (const [u, vs] of succ) for (const v of vs) if (!isBack(u, v)) indeg.set(v, indeg.get(v)! + 1)
-  const queue = ids.filter((id) => indeg.get(id) === 0)
-  while (queue.length) {
-    const u = queue.shift()!
-    for (const v of succ.get(u)!) {
-      if (isBack(u, v)) continue
-      rank.set(v, Math.max(rank.get(v)!, rank.get(u)! + 1))
-      indeg.set(v, indeg.get(v)! - 1)
-      if (indeg.get(v) === 0) queue.push(v)
-    }
-  }
-
-  // ③ 层内排序：按前驱的平均位置（重心）排，减少交叉
-  const byRank: string[][] = []
-  for (const id of ids) (byRank[rank.get(id)!] ??= []).push(id)
-  const layers = byRank.filter((l) => l && l.length)
-  for (let i = 1; i < layers.length; i++) {
-    const prevLayer = layers[i - 1]!
-    const curLayer = layers[i]!
-    const prev = new Map(prevLayer.map((id, idx) => [id, idx]))
-    const bary = (id: string): number => {
-      const ps = pred.get(id)!.filter((p) => prev.has(p))
-      return ps.length ? ps.reduce((s, p) => s + prev.get(p)!, 0) / ps.length : Number.POSITIVE_INFINITY
-    }
-    curLayer.sort((a, b) => bary(a) - bary(b) || a.localeCompare(b))
-  }
-
-  // ④ 坐标：横向按层、纵向层内均匀分布；间距按画布大小收缩，保证一屏放得下
+  dagre.layout(g)
   const pos = new Map<string, [number, number]>()
-  const cols = Math.max(layers.length, 1)
-  const maxRows = Math.max(...layers.map((l) => l.length), 1)
-  const xGap = cols > 1 ? Math.min(300, Math.max(150, (w - 160) / (cols - 1))) : 0
-  const yGap = Math.min(90, Math.max(52, (h - 120) / Math.max(maxRows - 1, 1)))
-  const x0 = Math.max(80, (w - (cols - 1) * xGap) / 2)
-  layers.forEach((layer, col) => {
-    const top = h / 2 - ((layer.length - 1) * yGap) / 2
-    layer.forEach((id, row) => pos.set(id, [x0 + col * xGap, top + row * yGap]))
-  })
+  for (const id of g.nodes()) {
+    const n = g.node(id)
+    if (n) pos.set(id, [n.x, n.y])
+  }
   return pos
 }
 
@@ -445,12 +412,11 @@ function buildOption(): echarts.EChartsCoreOption {
   const text1 = cssVar('--text-1', '#1e293b')
 
   const nodes = chartNodes.value
-  const w = chart?.getWidth() || 900
-  const h = chart?.getHeight() || 620
-  // 每帧都重算：纯函数、成本可忽略；结果是确定性的，数据不变图就不变
-  const layout = computeLayout(nodes, chartLinks.value, w, h)
+  // 每帧都重算：纯函数、成本可忽略；结果是确定性的，数据不变图就不变。
+  // dagre 给的是绝对坐标；layout:'none' 时 ECharts 会把整张图等比缩放进画布
+  const layout = computeLayout(nodes, chartLinks.value)
   const data = nodes.map((node) => {
-    const p = dragOffsets.get(node.id) ?? layout.get(node.id) ?? [w / 2, h / 2]
+    const p = dragOffsets.get(node.id) ?? layout.get(node.id) ?? [0, 0]
     return { ...node, x: p[0], y: p[1] }
   })
   return {
@@ -476,7 +442,7 @@ function buildOption(): echarts.EChartsCoreOption {
             + `P95 ${num(d.p95Ms, 1)} ms`
             + (d.bytesPerSec != null ? `<br/>L4 流量 ${bytesText(d.bytesPerSec)}` : '')
         }
-        return `${d.workload}<br/>命名空间 ${d.namespace}${d.gateway ? '<br/>（外部网关）' : ''}`
+        return `${d.workload}<br/>命名空间 ${d.namespace}${d.gateway ? '<br/>（外部网关）' : ''}${d.waypoint ? '<br/>（waypoint 代理）' : ''}`
           + `<br/>${healthText(d.health)}`
       },
     },
@@ -611,6 +577,7 @@ onMounted(() => {
       <el-checkbox v-model="scopeToNamespace" :disabled="!currentNamespace">
         仅当前命名空间<template v-if="currentNamespace">（{{ currentNamespace }}）</template>
       </el-checkbox>
+      <el-checkbox v-model="showL4">显示 L4 连接</el-checkbox>
       <el-radio-group v-model="windowSeconds" size="small">
         <el-radio-button v-for="w in WINDOWS" :key="w.value" :value="w.value">{{ w.label }}</el-radio-button>
       </el-radio-group>
@@ -670,6 +637,7 @@ onMounted(() => {
       <strong>实线（L7）</strong>：有请求数 / 响应码 / 延迟 —— 来自外部网关（南北向）和挂了 waypoint 的工作负载（东西向）。<br/>
       <strong>虚线（L4）</strong>：只有连接与字节 —— ztunnel 看到的全部 TCP，所以它的目标<strong>可能是不在网格里的</strong>
       工作负载（mysql / redis 这类），但调用本身是从网格内发起的。<br/>
+      经 waypoint 的调用直接画成「调用方 → 被调方」：ztunnel 记的「→ waypoint」「waypoint →」两段中转连接不单独画。<br/>
       两层都看不见的：完全不经过 ztunnel 的流量。这是 Istio 的机制决定的，不是平台少画了。
     </p>
 
@@ -692,7 +660,7 @@ onMounted(() => {
         <el-descriptions :column="1" border>
           <el-descriptions-item label="工作负载">{{ selectedNode.workload }}</el-descriptions-item>
           <el-descriptions-item label="命名空间">{{ selectedNode.namespace }}</el-descriptions-item>
-          <el-descriptions-item label="类型">{{ selectedNode.gateway ? '外部网关（南北向入口）' : '业务工作负载' }}</el-descriptions-item>
+          <el-descriptions-item label="类型">{{ selectedNode.gateway ? '外部网关（南北向入口）' : selectedNode.waypoint ? 'waypoint 代理' : '业务工作负载' }}</el-descriptions-item>
           <el-descriptions-item label="健康">{{ healthText(healthById.get(selectedNode.id)) }}</el-descriptions-item>
         </el-descriptions>
       </template>

@@ -24,6 +24,7 @@ import com.coding.platformapi.metrics.labels.MeshLatencyLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
 import com.coding.platformapi.metrics.labels.DestinationWorkloadLabels;
 import com.coding.platformapi.metrics.labels.NamespaceLabels;
+import com.coding.platformapi.metrics.labels.WaypointPodLabels;
 import com.coding.platformapi.metrics.model.PromResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -407,8 +408,18 @@ public class MetricsService {
                     log.warn("拓扑 L4 查询失败，图里只会有 L7 边", e);
                     return List.of();
                 });
+        // waypoint 名单：⚠️ 不按命名空间过滤 —— waypoint 可以在别的命名空间里服务本命名空间。
+        // 失败只是退回"中转边照画"，不算整体失败
+        CompletableFuture<List<PromResult<WaypointPodLabels>>> waypointsF = CompletableFuture.supplyAsync(() ->
+                        client.query(String.format(MetricQuery.MESH_TOPOLOGY_WAYPOINTS.sql(), cluster, span),
+                                null, WaypointPodLabels.class))
+                .exceptionally(e -> {
+                    log.warn("拓扑 waypoint 名单查询失败，waypoint 中转边不会被剔除", e);
+                    return List.of();
+                });
 
-        CompletableFuture.allOf(edgesF, errorsF, latencyF, sentinelF, l4EdgesF).join();
+        CompletableFuture.allOf(edgesF, errorsF, latencyF, sentinelF, l4EdgesF, waypointsF).join();
+        Set<String> waypoints = waypointIds(waypointsF.join());
 
         Map<Pair, Double> rps = new LinkedHashMap<>();
         for (PromResult<MeshEdgeLabels> r : edgesF.join()) {
@@ -471,6 +482,11 @@ public class MetricsService {
             if (rps.containsKey(p)) {
                 continue;   // 已在 ① 里并进 L7 那条边
             }
+            if (waypoints.contains(p.source()) || waypoints.contains(p.target())) {
+                // ztunnel 记的 waypoint 中转跳（A→waypoint、waypoint→B）：同一次调用的真实两端
+                // 已由 waypoint 上报的 L7 边画出，再画一遍只会让 waypoint 变成假的中心节点
+                continue;
+            }
             MeshTopologyResponse.MeshEdge edge = new MeshTopologyResponse.MeshEdge();
             edge.setSource(p.source());
             edge.setTarget(p.target());
@@ -490,9 +506,30 @@ public class MetricsService {
             node.setNamespace(id.substring(0, slash));
             node.setWorkload(id.substring(slash + 1));
             node.setGateway(INGRESS_NAMESPACE.equals(node.getNamespace()));
+            node.setWaypoint(waypoints.contains(id));
             resp.getNodes().add(node);
         }
         return resp;
+    }
+
+    /** Deployment 管的 Pod 名 = {@code <工作负载>-<pod-template-hash>-<5 位随机>}；waypoint 都是 Deployment。 */
+    private static final java.util.regex.Pattern DEPLOYMENT_POD_SUFFIX =
+            java.util.regex.Pattern.compile("-[a-z0-9]{1,10}-[a-z0-9]{5}$");
+
+    /** waypoint Pod → `命名空间/工作负载` id（与边两端同口径）。名字不像 Deployment Pod 的丢弃，不猜。 */
+    private Set<String> waypointIds(List<PromResult<WaypointPodLabels>> rows) {
+        Set<String> ids = new LinkedHashSet<>();
+        for (PromResult<WaypointPodLabels> r : rows == null ? List.<PromResult<WaypointPodLabels>>of() : rows) {
+            WaypointPodLabels l = r.getMetric();
+            if (l == null || !StringUtils.hasText(l.getNamespace()) || !StringUtils.hasText(l.getPod())) {
+                continue;
+            }
+            java.util.regex.Matcher m = DEPLOYMENT_POD_SUFFIX.matcher(l.getPod());
+            if (m.find()) {
+                ids.add(l.getNamespace() + "/" + l.getPod().substring(0, m.start()));
+            }
+        }
+        return ids;
     }
 
     /** 标签 → 边两端；标签缺失或落在 `unknown` 上时返回 null（该行丢弃，不编造节点）。 */
