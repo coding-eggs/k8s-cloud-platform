@@ -26,15 +26,15 @@ import PodLogDialog from '@/components/PodLogDialog.vue'
 import WorkloadLogsDialog from '@/components/WorkloadLogsDialog.vue'
 import MetricsPanel from '@/components/workload/MetricsPanel.vue'
 import AppEnvEditor from '@/components/app-release/AppEnvEditor.vue'
-import StringListEditor from '@/components/app-release/StringListEditor.vue'
 import AppTagInput from '@/components/app-release/AppTagInput.vue'
 import AppReleaseGuide from '@/components/app-release/AppReleaseGuide.vue'
 import AppQuantityInput from '@/components/app-release/AppQuantityInput.vue'
+import AppConfigFilesEditor from '@/components/app-release/AppConfigFilesEditor.vue'
+import AppResourcesForm from '@/components/app-release/AppResourcesForm.vue'
+import { cleanCommandLists, cleanConfigFiles, configFileProblems, dataMountOf } from '@/components/app-release/desiredFormUtil'
 import AppServiceOtelForm from '@/components/app-release/AppServiceOtelForm.vue'
 import AppServiceRuntimeRows from '@/components/app-release/AppServiceRuntimeRows.vue'
 import { useClusterComponents } from '@/composables/useClusterComponents'
-import { parseQuantity } from '@/utils/quantity'
-import { FILE_REF_FIELDS, refToken } from '@/components/app-release/dependencyUtil'
 import { useResourceContext } from '@/stores/context'
 import type { AppDependencyRow, AppServiceDesired, AppServiceRow, AppServiceState, AppSettings, ApplicationView, K8sPod, K8sService } from '@/types'
 import type { WorkloadDetail } from '@/types/workload'
@@ -124,14 +124,7 @@ function buildDesired(): AppServiceDesired {
   const d: AppServiceDesired = clone(form.value)
   d.imageRepo = (d.imageRepo ?? '').trim()
   d.imageTag = (d.imageTag ?? '').trim()
-  // 命令 / 参数：用户新加了没填的空项在保存时丢掉；原本就有的空串（按个数）原样保留
-  for (const k of ['command', 'args'] as const) {
-    const list = d[k]
-    if (!Array.isArray(list)) continue
-    const orig = original[k]
-    let allowed = Array.isArray(orig) ? orig.filter((x) => x === '').length : 0
-    d[k] = list.filter((x) => x !== '' || allowed-- > 0)
-  }
+  cleanCommandLists(d, original)
   for (const k of Object.keys(d)) {
     const v = d[k]
     if (v === '' || v == null || (Array.isArray(v) && v.length === 0 && k !== 'env')) delete d[k]
@@ -142,9 +135,7 @@ function buildDesired(): AppServiceDesired {
     return o
   })
   // 配置文件：路径去首尾空白；路径和内容都空的新行丢掉；没有文件就不带这个键（后端同样不存空列表）
-  const files = (form.value.configFiles ?? [])
-    .map((f) => ({ path: (f.path ?? '').trim(), content: f.content ?? '' }))
-    .filter((f) => f.path || f.content)
+  const files = cleanConfigFiles(form.value.configFiles)
   if (files.length) d.configFiles = files
   else delete d.configFiles
   // 对外暴露：只有有端口的服务能暴露；不暴露就不带这两个键（后端同样不存 none）。
@@ -201,72 +192,9 @@ const nodePortModel = computed<number | undefined>({
   set: (v) => { if (v == null) delete form.value.nodePort; else form.value.nodePort = v },
 })
 
-/** 软校验：请求不能大于上限（K8s 会拒绝，发布时才报就晚了） */
-const resourceProblem = computed(() => {
-  const over = (req?: string | null, lim?: string | null): boolean => {
-    const r = parseQuantity(req); const l = parseQuantity(lim)
-    return Number.isFinite(r) && Number.isFinite(l) && r > l
-  }
-  const out: string[] = []
-  if (over(form.value.cpuRequest, form.value.cpuLimit)) out.push('CPU 请求大于上限')
-  if (over(form.value.memoryRequest, form.value.memoryLimit)) out.push('内存请求大于上限')
-  return out.join('；')
-})
-
-// ---------- 配置文件 ----------
-/**
- * 软校验，与后端 AppServiceDesired.normalizeConfigFiles 同一套规则（权威校验在后端）：
- * 路径形状与字符集、长度、重复 / 嵌套、与持久化挂载路径冲突、引用只能是 FILE_REF_FIELDS。
- */
-const PATH_SEGMENT = /^[A-Za-z0-9._@+=,-]+$/
-const FILE_REF = /\$\{([^.${}]+)\.([^${}]+)\}/g
-/** 持久化数据卷挂载点：只有「有端口 + 开持久化」才有，默认 /data（同后端 dataMountPath） */
-const dataMount = computed(() => {
-  if (!form.value.port || !form.value.persistenceEnabled) return null
-  const p = (form.value.mountPath ?? '').trim() || '/data'
-  return p.length > 1 && p.endsWith('/') ? p.slice(0, -1) : p
-})
-function fileProblem(i: number): string {
-  const list = form.value.configFiles ?? []
-  const f = list[i]
-  if (!f) return ''
-  const path = (f.path ?? '').trim()
-  if (!path) return f.content ? '请填写路径' : ''
-  if (!path.startsWith('/')) return '路径必须以 / 开头'
-  if (path.length > 255) return '路径过长（最多 255 个字符）'
-  if (path.endsWith('/')) return '路径要指向文件，不能以 / 结尾'
-  if (path.split('/').slice(1).some((seg) => seg === '' || seg === '.' || seg === '..' || !PATH_SEGMENT.test(seg))) {
-    return '路径只允许字母、数字和 . _ - @ + = ,，不能有空段、. 或 ..'
-  }
-  const others = list.filter((_, j) => j !== i).map((o) => (o.path ?? '').trim()).filter(Boolean)
-  if (others.includes(path)) return '路径重复'
-  const nested = others.find((o) => path.startsWith(`${o}/`) || o.startsWith(`${path}/`))
-  if (nested) return `与 ${nested} 互相嵌套`
-  const mount = dataMount.value
-  if (mount && (path === mount || path.startsWith(`${mount}/`) || mount.startsWith(`${path}/`))) {
-    return `与持久化挂载路径 ${mount} 冲突`
-  }
-  for (const m of (f.content ?? '').matchAll(FILE_REF)) {
-    if (!FILE_REF_FIELDS.includes(m[2] ?? '')) {
-      return `${m[0]} 不能用在配置文件里：内容会明文写进 ConfigMap，只能引用 ${FILE_REF_FIELDS.join(' / ')}；凭据请用环境变量`
-    }
-  }
-  return ''
-}
-const fileProblems = computed(() => (form.value.configFiles ?? []).map((_, i) => fileProblem(i)))
-const filesInvalid = computed(() => fileProblems.value.some(Boolean))
-const fileRefHint = computed(() => {
-  const keys = [...deps.value.map((d) => d.key), ...selfRefs.value]
-  const sample = keys[0] ? refToken(keys[0], 'host') : '${order-db.host}'
-  return `内容可引用 ${FILE_REF_FIELDS.map((f) => `.${f}`).join(' / ')}，如 ${sample}；发布时替换成实际值。`
-    + '不能引用 username / password（文件明文进 ConfigMap），凭据请用环境变量。'
-})
-function addFile(): void {
-  form.value.configFiles = [...(form.value.configFiles ?? []), { path: '', content: '' }]
-}
-function removeFile(i: number): void {
-  form.value.configFiles = (form.value.configFiles ?? []).filter((_, j) => j !== i)
-}
+// ---------- 配置文件（编辑与校验在 AppConfigFilesEditor / desiredFormUtil） ----------
+const dataMount = computed(() => dataMountOf(form.value))
+const filesInvalid = computed(() => configFileProblems(form.value.configFiles, dataMount.value).some(Boolean))
 
 async function load(opts: { keepForm?: boolean } = {}): Promise<void> {
   if (!appId.value || !key.value) return
@@ -603,47 +531,12 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
           </el-tab-pane>
 
           <el-tab-pane label="配置文件" name="files">
-            <div class="app-svc__files-hint">
-              每个文件以只读方式挂载到容器里的指定路径（ConfigMap 卷，按文件挂，不覆盖所在目录的其他文件）；内容改了发布时会滚动 Pod。
-              {{ fileRefHint }}
-            </div>
-            <div v-for="(f, i) in form.configFiles ?? []" :key="i" class="app-svc__file">
-              <div class="app-svc__file-head">
-                <el-input v-model="f.path" :disabled="readonly" placeholder="容器内绝对路径，如 /etc/app/application.yaml" />
-                <el-button link type="danger" :disabled="readonly" @click="removeFile(i)">删除</el-button>
-              </div>
-              <el-input
-                v-model="f.content"
-                type="textarea"
-                :disabled="readonly"
-                :autosize="{ minRows: 4, maxRows: 16 }"
-                class="app-svc__file-body"
-                placeholder="文件内容"
-              />
-              <div v-if="fileProblems[i]" class="app-svc__file-err">{{ fileProblems[i] }}</div>
-            </div>
-            <EmptyState v-if="!(form.configFiles ?? []).length" title="没有配置文件" description="需要把配置文件放进容器时在这里添加，例如 nginx.conf、application.yaml。" />
-            <el-button v-if="!readonly" plain class="app-svc__file-add" @click="addFile">+ 添加配置文件</el-button>
+            <AppConfigFilesEditor v-model="form.configFiles" :data-mount="dataMount" :dependencies="deps" :service-keys="selfRefs" :disabled="readonly" />
           </el-tab-pane>
 
           <el-tab-pane label="资源与命令" name="resources">
             <el-form label-width="110px" :disabled="readonly" @submit.prevent>
-              <el-form-item label="CPU 请求"><AppQuantityInput v-model="form.cpuRequest" kind="cpu" :disabled="readonly" placeholder="如 0.1，留空不设" /></el-form-item>
-              <el-form-item label="CPU 上限"><AppQuantityInput v-model="form.cpuLimit" kind="cpu" :disabled="readonly" placeholder="如 1，留空不设" /></el-form-item>
-              <el-form-item label="内存请求"><AppQuantityInput v-model="form.memoryRequest" kind="memory" :disabled="readonly" placeholder="如 128，留空不设" /></el-form-item>
-              <el-form-item label="内存上限">
-                <AppQuantityInput v-model="form.memoryLimit" kind="memory" :disabled="readonly" placeholder="如 512，留空不设" />
-                <div v-if="resourceProblem" class="app-svc__file-err">{{ resourceProblem }}</div>
-              </el-form-item>
-              <el-form-item label="启动命令"><StringListEditor v-model="form.command" :disabled="readonly" placeholder="一个参数，如 sh；留空则用镜像默认" /></el-form-item>
-              <el-form-item label="启动参数"><StringListEditor v-model="form.args" :disabled="readonly" placeholder="一个参数，如 -c" /></el-form-item>
-              <el-form-item label="拉取策略">
-                <el-select v-model="form.imagePullPolicy" clearable placeholder="跟随默认" style="width: 200px">
-                  <el-option label="Always" value="Always" />
-                  <el-option label="IfNotPresent" value="IfNotPresent" />
-                  <el-option label="Never" value="Never" />
-                </el-select>
-              </el-form-item>
+              <AppResourcesForm :form="form" :disabled="readonly" />
             </el-form>
           </el-tab-pane>
 
@@ -774,11 +667,5 @@ watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; voi
 .app-svc__tip.warn { color: var(--el-color-warning); }
 .app-svc__save { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--el-border-color-lighter); }
 .app-svc__bar { display: flex; gap: 8px; margin-bottom: 10px; }
-.app-svc__files-hint { margin-bottom: 12px; color: var(--text-3); font-size: 12.5px; line-height: 1.6; }
-.app-svc__file { margin-bottom: 14px; padding: 10px 12px; border: 1px solid var(--el-border-color-lighter); border-radius: 6px; }
-.app-svc__file-head { display: flex; align-items: center; gap: 10px; }
-.app-svc__file-body { margin-top: 8px; font-family: var(--el-font-family-mono, monospace); }
-.app-svc__file-err { margin-top: 6px; color: var(--el-color-danger); font-size: 12px; }
-.app-svc__file-add { margin-top: 4px; }
 .app-svc__newtag { width: 100%; font-size: 12px; color: var(--el-color-warning); margin-top: 4px; }
 </style>
