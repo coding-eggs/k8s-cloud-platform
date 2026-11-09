@@ -91,7 +91,8 @@ class AppReleaseExecutorTest {
         when(precheckProvider.getIfAvailable()).thenReturn(precheck);
         when(rendererProvider.getIfAvailable()).thenReturn(renderer);
         logMapper = mock(PlatformAppExecutionLogMapper.class);
-        executor = new AppReleaseExecutor(apps, releases, executions, resources, client, credentials, leases,
+        executor = new AppReleaseExecutor(apps, releases, executions, resources, client,
+                mock(AppDependencyService.class), credentials, leases,
                 precheckProvider, rendererProvider, new AppExecutionJournal(logMapper), 30);
 
         app = new PlatformApplication();
@@ -638,7 +639,8 @@ class AppReleaseExecutorTest {
         @SuppressWarnings("unchecked")
         ObjectProvider<AppReleaseRenderer> noneR = mock(ObjectProvider.class);
         AppReleaseExecutor bare = new AppReleaseExecutor(apps, releases, executions, resources, client,
-                credentials, leases, none, noneR, new AppExecutionJournal(logMapper), 30);
+                mock(AppDependencyService.class), credentials, leases, none, noneR,
+                new AppExecutionJournal(logMapper), 30);
 
         bare.advance(at("PRECHECK"));
 

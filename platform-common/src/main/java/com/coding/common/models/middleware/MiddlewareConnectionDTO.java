@@ -47,6 +47,14 @@ public class MiddlewareConnectionDTO {
 
         private String secretName;
 
+        /**
+         * 凭据 Secret 实际所在的命名空间；与工作负载同命名空间时为 null。
+         *
+         * <p>跨命名空间绑定的依赖，{@code secretName} 已被改写为复制到应用命名空间后的名字，
+         * 这里记来源（k8s-server 复制/对账时用）。
+         */
+        private String secretNamespace;
+
         private String usernameKey;
 
         private String passwordKey;

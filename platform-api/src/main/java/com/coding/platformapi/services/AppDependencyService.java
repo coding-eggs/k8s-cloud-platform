@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.app.AppDependencySecretRequestDTO;
 import com.coding.common.models.app.AppInitRequestDTO;
 import com.coding.common.models.app.AppInitResultDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO;
@@ -147,16 +148,23 @@ public class AppDependencyService {
     }
 
     public Map<String, ConnInfo> connections(String appId, String tenantId) {
-        return connectionsOf(list(appId), tenantId);
+        PlatformApplication app = apps.selectById(appId);
+        return connectionsOf(list(appId), tenantId, app == null ? null : app.getNamespace());
     }
 
-    /** 任何一个依赖取不到连接信息都抛错并点名：静默跳过会让引用变成「不存在」这种误导的报错。 */
-    public Map<String, ConnInfo> connectionsOf(List<PlatformAppDependency> deps, String tenantId) {
+    /**
+     * 依赖 key → 连接信息。{@code appNamespace} 用于判断实例是否在别的命名空间：跨命名空间的凭据
+     * Secret 不能直接引用，这里把 {@code secretName} 改写成「复制到应用命名空间后的名字」。
+     * 任何一个依赖取不到连接信息都抛错并点名：静默跳过会让引用变成「不存在」这种误导的报错。
+     */
+    public Map<String, ConnInfo> connectionsOf(List<PlatformAppDependency> deps, String tenantId,
+                                               String appNamespace) {
         Map<String, ConnInfo> out = new LinkedHashMap<>();
         for (PlatformAppDependency dep : deps) {
             ConnInfo info;
             try {
-                info = EXTERNAL.equals(dep.getType()) ? externalInfo(dep) : middlewareInfo(dep, tenantId);
+                info = EXTERNAL.equals(dep.getType())
+                        ? externalInfo(dep) : middlewareInfo(dep, tenantId, appNamespace);
             } catch (CloudPlatformException e) {
                 throw e;
             } catch (RuntimeException e) {
@@ -223,13 +231,79 @@ public class AppDependencyService {
         }
     }
 
-    private ConnInfo middlewareInfo(PlatformAppDependency dep, String tenantId) {
+    private ConnInfo middlewareInfo(PlatformAppDependency dep, String tenantId, String appNamespace) {
         if (dep.getInstanceId() == null || dep.getInstanceId().isBlank()) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "依赖 " + dep.getDepKey() + " 还没有关联的中间件实例");
         }
         MiddlewareConnectionDTO dto = middleware.connection(dep.getInstanceId(), tenantId);
-        return dto == null ? null : dto.getInfo();
+        ConnInfo info = dto == null ? null : dto.getInfo();
+        if (info == null || info.getSecretName() == null || info.getSecretName().isBlank()
+                || dto.getNamespace() == null
+                || appNamespace == null || appNamespace.equals(dto.getNamespace())) {
+            return info;
+        }
+        // 跨命名空间：secretKeyRef 不能跨 ns，引用的是复制到应用命名空间的那份（发布/初始化前同步）
+        info.setSecretNamespace(dto.getNamespace());
+        info.setSecretName(mirrorSecretName(dep.getAppId(), dep.getDepKey(), info.getSecretName()));
+        return info;
+    }
+
+    /**
+     * 跨命名空间依赖的凭据副本名：{@code mwdep-<应用>-<依赖名>-<源 Secret>}。
+     *
+     * <p>带应用和依赖名，同一命名空间里两个应用绑同一个实例（或不同命名空间的同名实例）都不会撞车；
+     * 超长时退化成短哈希（Secret 名上限 253）。应用 id 里的 {@code _} 不能出现在 Secret 名里，换成 {@code -}。
+     */
+    static String mirrorSecretName(String appId, String depKey, String sourceName) {
+        String app = appId == null || appId.isBlank() ? "app" : appId.toLowerCase(java.util.Locale.ROOT).replace('_', '-');
+        String name = "mwdep-" + app + "-" + depKey + "-" + sourceName;
+        if (name.length() <= 253) {
+            return name;
+        }
+        return "mwdep-" + app + "-" + depKey + "-" + sha256(sourceName).substring(0, 12);
+    }
+
+    /**
+     * 把跨命名空间依赖的凭据 Secret 对齐到应用命名空间（每次发布 / 初始化前）。
+     *
+     * <p>清单覆盖应用的**全部**已绑定依赖：只清「依赖已经不在」的副本，不会因为某次发布没勾某些服务
+     * 就把线上还在用的凭据删掉。连「没有跨 ns 依赖」也照常调一次——空清单等于清理，不留孤儿副本。
+     * 实例读不到的依赖跳过；{@code requiredKeys} 里的依赖本次真会被引用，来源 Secret 缺失时由
+     * k8s-server 报错挡住发布，其余依赖只登记副本、缺来源时不挡。
+     */
+    public void ensureMirrorSecrets(PlatformApplication app, Set<String> requiredKeys) {
+        if (app == null) {
+            return;
+        }
+        Set<String> required = requiredKeys == null ? Set.of() : requiredKeys;
+        List<AppDependencySecretRequestDTO.Copy> copies = new ArrayList<>();
+        for (PlatformAppDependency dep : dependencies.selectByApp(app.getId())) {
+            if (!MIDDLEWARE.equals(dep.getType()) || dep.getInstanceId() == null || dep.getInstanceId().isBlank()) {
+                continue;
+            }
+            MiddlewareConnectionDTO dto;
+            try {
+                dto = middleware.connection(dep.getInstanceId(), app.getTenantId());
+            } catch (RuntimeException e) {
+                continue;
+            }
+            ConnInfo info = dto == null ? null : dto.getInfo();
+            if (info == null || info.getSecretName() == null || info.getSecretName().isBlank()
+                    || dto.getNamespace() == null
+                    || dto.getNamespace().equals(app.getNamespace())) {
+                continue;
+            }
+            copies.add(AppDependencySecretRequestDTO.Copy.of(dto.getNamespace(), info.getSecretName(),
+                    mirrorSecretName(app.getId(), dep.getDepKey(), info.getSecretName()),
+                    required.contains(dep.getDepKey())));
+        }
+        AppDependencySecretRequestDTO req = new AppDependencySecretRequestDTO();
+        req.setClusterId(app.getClusterId());
+        req.setNamespace(app.getNamespace());
+        req.setAppId(app.getId());
+        req.setCopies(copies);
+        client.syncDependencySecrets(req);
     }
 
     private ConnInfo externalInfo(PlatformAppDependency dep) {
@@ -291,8 +365,8 @@ public class AppDependencyService {
         if (!app.getTenantId().equals(inst.getTenantId())) {
             throw error("不能绑定别的租户的实例");
         }
-        if (!app.getClusterId().equals(inst.getClusterId()) || !app.getNamespace().equals(inst.getNamespace())) {
-            throw error("只能绑定同一集群同一命名空间里的实例：" + inst.getNamespace());
+        if (!app.getClusterId().equals(inst.getClusterId())) {
+            throw error("只能绑定同一集群里的实例");
         }
         for (PlatformAppDependency other : dependencies.selectByApp(app.getId())) {
             if (instanceId.equals(other.getInstanceId())) {
@@ -650,11 +724,13 @@ public class AppDependencyService {
         if (authorization == null || authorization.isBlank()) {
             throw error("缺少登录凭据，无法发起初始化");
         }
-        ConnInfo info = middleware.connection(row.getInstanceId(), app.getTenantId()).getInfo();
+        ConnInfo info = middlewareInfo(row, app.getTenantId(), app.getNamespace());
         String indexPath = req.getInitPath() == null ? "" : req.getInitPath().trim();
         if ("elasticsearch".equals(inst.getCode()) && !INDEX_PATH.matcher(indexPath).matches()) {
             throw error("Elasticsearch 初始化需要填写目标路径（以 / 开头，例如 /my-index 或 /_index_template/x）");
         }
+        // 跨命名空间绑定的凭据先复制到应用命名空间：初始化 Job 里的 secretKeyRef 只能引用同 ns 的 Secret
+        ensureMirrorSecrets(app, Set.of(row.getDepKey()));
         AppInitRequestDTO dto = buildInitRequest(app, row, inst.getCode(), payload, info, indexPath);
         String hash = sha256(payload);
         if (dependencies.startInit(row.getId(), new Date()) == 0) {

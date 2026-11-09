@@ -246,6 +246,9 @@ watch(
           </el-link>
           <span v-else class="app-dep-drawer__muted">还没有关联的实例</span>
         </el-descriptions-item>
+        <el-descriptions-item v-if="dep.type === 'MIDDLEWARE' && instance && instance.namespace !== namespace" label="实例命名空间">
+          {{ instance.namespace }}（跨命名空间绑定；凭据 Secret 发布前复制到 {{ namespace }}）
+        </el-descriptions-item>
         <template v-if="dep.type === 'EXTERNAL' && dep.external">
           <el-descriptions-item label="协议">{{ dep.external.protocol || '—' }}</el-descriptions-item>
           <el-descriptions-item label="地址">{{ dep.external.host }}{{ dep.external.port ? `:${dep.external.port}` : '' }}</el-descriptions-item>

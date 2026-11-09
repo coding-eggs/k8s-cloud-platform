@@ -151,6 +151,13 @@ public class ApplicationService {
         // 依赖：CREATED 实例保留并转交中间件模块（删应用不静默删数据），引用行与依赖行清掉，
         // 否则实例会被一个已删除的应用永远占着、实例页也删不掉
         appDependencies.detachForAppDelete(req.getAppId());
+        // 跨命名空间依赖的凭据副本：依赖行刚清掉，按应用标签把 mwdep-* 副本一并清干净。
+        // 失败只记日志——应用已经删了，残留的副本不影响结果，下次该命名空间上的发布也不会再用到它
+        try {
+            appDependencies.ensureMirrorSecrets(row, java.util.Set.of());
+        } catch (RuntimeException e) {
+            log.warn("删除应用 {} 后清理依赖凭据副本失败：{}", req.getAppId(), e.getMessage());
+        }
     }
 
     /** 新建应用表单的可选项：命名空间与中间件商店同源（分配表），避免两处口径不一致。 */

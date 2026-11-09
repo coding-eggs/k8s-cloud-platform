@@ -1,6 +1,7 @@
 package com.coding.k8sserver.controllers.app;
 
 import com.coding.common.models.app.AppApplyRequestDTO;
+import com.coding.common.models.app.AppDependencySecretRequestDTO;
 import com.coding.common.models.app.AppInitRequestDTO;
 import com.coding.common.models.app.AppInitResultDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
@@ -12,6 +13,7 @@ import com.coding.common.models.system.ResponseData;
 import com.coding.common.models.k8s.dto.IngressListenerSetRequestDTO;
 import com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO;
 import com.coding.k8sserver.app.AppApplyService;
+import com.coding.k8sserver.app.AppDependencySecretService;
 import com.coding.k8sserver.app.AppIngressService;
 import com.coding.k8sserver.app.AppInitService;
 import com.coding.k8sserver.app.AppRenderService;
@@ -40,14 +42,17 @@ public class AppController implements AccessBoundaryAware {
     private final AppStatusService status;
     private final AppInitService init;
     private final AppIngressService ingress;
+    private final AppDependencySecretService dependencySecrets;
 
     public AppController(AppRenderService render, AppApplyService apply, AppStatusService status,
-                         AppInitService init, AppIngressService ingress) {
+                         AppInitService init, AppIngressService ingress,
+                         AppDependencySecretService dependencySecrets) {
         this.render = render;
         this.apply = apply;
         this.status = status;
         this.init = init;
         this.ingress = ingress;
+        this.dependencySecrets = dependencySecrets;
     }
 
     @Override
@@ -78,6 +83,14 @@ public class AppController implements AccessBoundaryAware {
     @Operation(summary = "跑一次中间件初始化（一次性 Job，等完成并取日志）")
     public ResponseData<AppInitResultDTO> init(@RequestBody AppInitRequestDTO request) {
         return new ResponseData<>(init.run(request));
+    }
+
+    @PostMapping("/dependency-secrets")
+    @Operation(summary = "把跨命名空间依赖的凭据 Secret 对齐到应用命名空间",
+            description = "幂等 SSA；副本带平台标签，本应用不再需要的副本会被删掉。发布 / 初始化前由 platform-api 调用")
+    public ResponseData<Void> dependencySecrets(@RequestBody AppDependencySecretRequestDTO request) {
+        dependencySecrets.sync(request);
+        return new ResponseData<>();
     }
 
     @PostMapping("/status")

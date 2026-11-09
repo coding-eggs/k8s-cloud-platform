@@ -1,6 +1,7 @@
 package com.coding.platformapi.k8s;
 
 import com.coding.common.models.app.AppApplyRequestDTO;
+import com.coding.common.models.app.AppDependencySecretRequestDTO;
 import com.coding.common.models.app.AppInitRequestDTO;
 import com.coding.common.models.app.AppInitResultDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
@@ -45,6 +46,12 @@ public class K8sAppClient {
         // 初始化最长等 10 分钟，常规通道的 120s 读超时会提前掐断
         return gateway.exchangeSlow(HttpMethod.POST, "/application/init", Map.of(), body,
                 gateway.responseType(AppInitResultDTO.class));
+    }
+
+    /** 把跨命名空间依赖的凭据 Secret 对齐到应用命名空间（幂等；含清理本应用遗留的副本）。 */
+    public void syncDependencySecrets(AppDependencySecretRequestDTO body) {
+        gateway.exchange(HttpMethod.POST, "/application/dependency-secrets", Map.of(), body,
+                gateway.responseType(Void.class));
     }
 
     public AppStatusResultDTO status(AppStatusRequestDTO body) {

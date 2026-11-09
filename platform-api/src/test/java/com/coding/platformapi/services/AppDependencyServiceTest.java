@@ -1,6 +1,7 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.models.app.AppDependencySecretRequestDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO.ConnInfo;
 import com.coding.data.mapper.system.PlatformAppDependencyMapper;
@@ -217,19 +218,31 @@ class AppDependencyServiceTest {
     }
 
     @Test
-    void bindRejectsOtherTenantNamespaceClusterAndDeleted() {
+    void bindRejectsOtherTenantClusterAndDeleted() {
         PlatformMiddlewareInstance otherTenant = instance("a", "t2", "demo", null);
-        PlatformMiddlewareInstance otherNs = instance("b", "t1", "other", null);
         PlatformMiddlewareInstance otherCluster = instance("c", "t1", "demo", null);
         otherCluster.setClusterId("c2");
         PlatformMiddlewareInstance deleted = instance("d", "t1", "demo", null);
         deleted.setDeletedAt(new java.util.Date());
-        for (PlatformMiddlewareInstance i : List.of(otherTenant, otherNs, otherCluster, deleted)) {
+        for (PlatformMiddlewareInstance i : List.of(otherTenant, otherCluster, deleted)) {
             when(instances.selectByPrimaryKey(i.getId())).thenReturn(i);
             assertThatThrownBy(() -> service.add(bindReq("db", i.getId()), "alice", "t1"))
                     .as(i.getId()).isInstanceOf(CloudPlatformException.class);
         }
         verify(deps, never()).insert(any());
+    }
+
+    @Test
+    void bindCrossNamespaceIsAllowed() {
+        // 实例建在租户的另一个命名空间：凭据 Secret 由平台复制过去，绑定本身不再拦
+        when(instances.selectByPrimaryKey("mwi_9")).thenReturn(instance("mwi_9", "t1", "middleware", null));
+
+        service.add(bindReq("db", "mwi_9"), "alice", "t1");
+
+        ArgumentCaptor<PlatformAppDependency> cap = ArgumentCaptor.forClass(PlatformAppDependency.class);
+        verify(deps).insert(cap.capture());
+        assertThat(cap.getValue().getOwnership()).isEqualTo("BOUND");
+        assertThat(cap.getValue().getInstanceId()).isEqualTo("mwi_9");
     }
 
     @Test
@@ -381,6 +394,94 @@ class AppDependencyServiceTest {
         when(deps.selectByApp("app1")).thenReturn(List.of(dep));
 
         assertThat(service.connections("app1", "t1")).containsKey("db");
+    }
+
+    /** 实例在别的命名空间：连接信息里的 Secret 名改写成「复制到应用命名空间」的那份。 */
+    MiddlewareConnectionDTO conn(String namespace, String secretName) {
+        MiddlewareConnectionDTO dto = new MiddlewareConnectionDTO();
+        dto.setNamespace(namespace);
+        ConnInfo info = new ConnInfo();
+        info.setHost("h");
+        info.setSecretName(secretName);
+        info.setPasswordKey("password");
+        dto.setInfo(info);
+        return dto;
+    }
+
+    @Test
+    void connectionsRewriteCrossNamespaceSecretName() {
+        PlatformAppDependency dep = depRow("cache", "BOUND", "mwi_2");
+        when(deps.selectByApp("app1")).thenReturn(List.of(dep));
+        when(middleware.connection("mwi_2", "t1")).thenReturn(conn("middleware", "cache-credentials"));
+
+        ConnInfo info = service.connections("app1", "t1").get("cache");
+
+        assertThat(info.getSecretName()).isEqualTo("mwdep-app1-cache-cache-credentials");
+        assertThat(info.getSecretNamespace()).isEqualTo("middleware");
+    }
+
+    @Test
+    void connectionsKeepSecretNameInSameNamespace() {
+        PlatformAppDependency dep = depRow("db", "BOUND", "mwi_1");
+        when(deps.selectByApp("app1")).thenReturn(List.of(dep));
+        when(middleware.connection("mwi_1", "t1")).thenReturn(conn("demo", "db-credentials"));
+
+        ConnInfo info = service.connections("app1", "t1").get("db");
+
+        assertThat(info.getSecretName()).isEqualTo("db-credentials");
+        assertThat(info.getSecretNamespace()).isNull();
+    }
+
+    @Test
+    void mirrorSecretNameStaysWithinLimit() {
+        assertThat(AppDependencyService.mirrorSecretName("app1", "db", "db-credentials"))
+                .isEqualTo("mwdep-app1-db-db-credentials");
+        // 应用 id 里的下划线不能进 Secret 名
+        assertThat(AppDependencyService.mirrorSecretName("app_ab", "db", "db-credentials"))
+                .isEqualTo("mwdep-app-ab-db-db-credentials");
+        String longName = "x".repeat(300) + "-credentials";
+        assertThat(AppDependencyService.mirrorSecretName("app1", "db", longName).length())
+                .isLessThanOrEqualTo(253);
+        assertThat(AppDependencyService.mirrorSecretName("app1", "db", longName))
+                .isEqualTo(AppDependencyService.mirrorSecretName("app1", "db", longName));
+    }
+
+    @Test
+    void ensureMirrorSecretsCopiesOnlyCrossNamespaceCredentials() {
+        PlatformAppDependency sameNs = depRow("db", "BOUND", "mwi_1");
+        PlatformAppDependency crossNs = depRow("cache", "BOUND", "mwi_2");
+        PlatformAppDependency noAuth = depRow("mq", "BOUND", "mwi_3");
+        when(deps.selectByApp("app1")).thenReturn(List.of(sameNs, crossNs, noAuth));
+        when(middleware.connection("mwi_1", "t1")).thenReturn(conn("demo", "db-credentials"));
+        when(middleware.connection("mwi_2", "t1")).thenReturn(conn("middleware", "cache-credentials"));
+        when(middleware.connection("mwi_3", "t1")).thenReturn(conn("middleware", null));
+
+        service.ensureMirrorSecrets(app, java.util.Set.of("cache"));
+
+        ArgumentCaptor<AppDependencySecretRequestDTO> cap =
+                ArgumentCaptor.forClass(AppDependencySecretRequestDTO.class);
+        verify(client).syncDependencySecrets(cap.capture());
+        assertThat(cap.getValue().getNamespace()).isEqualTo("demo");
+        assertThat(cap.getValue().getAppId()).isEqualTo("app1");
+        assertThat(cap.getValue().getCopies()).hasSize(1);
+        AppDependencySecretRequestDTO.Copy copy = cap.getValue().getCopies().get(0);
+        assertThat(copy.getSourceNamespace()).isEqualTo("middleware");
+        assertThat(copy.getSourceName()).isEqualTo("cache-credentials");
+        assertThat(copy.getTargetName()).isEqualTo("mwdep-app1-cache-cache-credentials");
+        assertThat(copy.isRequired()).isTrue();
+    }
+
+    @Test
+    void ensureMirrorSecretsMarksUnreferencedDependenciesNotRequired() {
+        when(deps.selectByApp("app1")).thenReturn(List.of(depRow("cache", "BOUND", "mwi_2")));
+        when(middleware.connection("mwi_2", "t1")).thenReturn(conn("middleware", "cache-credentials"));
+
+        service.ensureMirrorSecrets(app, java.util.Set.of());
+
+        ArgumentCaptor<AppDependencySecretRequestDTO> cap =
+                ArgumentCaptor.forClass(AppDependencySecretRequestDTO.class);
+        verify(client).syncDependencySecrets(cap.capture());
+        assertThat(cap.getValue().getCopies().get(0).isRequired()).isFalse();
     }
 
     // ------------------------------------------------------------------ 移除

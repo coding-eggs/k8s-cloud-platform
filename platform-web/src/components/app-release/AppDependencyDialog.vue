@@ -4,7 +4,8 @@
  *
  * - 新建：在应用所在的集群和命名空间里建一个中间件实例，规格字段沿用中间件商店的表单定义（middlewareForms）；
  *   后端依赖请求只接收形态、版本、副本数、资源和存储，Milvus（需要对象存储来源）请先在商店创建再绑定。
- * - 绑定：只列同一集群、同一命名空间、还没被本应用绑定的实例。
+ * - 绑定：列同一集群、本租户**所有命名空间**里还没被本应用绑定的实例（按命名空间分组）。
+ *   绑定只建立引用；实例在别的命名空间时，凭据 Secret 由平台复制到应用命名空间（发布 / 初始化前同步）。
  * - 外部：协议 + 地址 + 端口 + Secret 名与键（表单项见 AppExternalForm，与「修改外部连接」共用）。
  *   **没有口令输入框**：口令放在与应用同命名空间的 Secret 里。
  * 依赖名与服务名共用一个命名空间；规则与后端一致（见 dependencyUtil）。
@@ -141,13 +142,33 @@ const instances = ref<MiddlewareInstance[]>([])
 const instanceId = ref('')
 const instLoading = ref(false)
 const bindable = computed(() => instances.value.filter((i) =>
-  i.namespace === props.namespace && i.status !== 'DELETING' && !props.usedInstanceIds.includes(i.id)))
+  i.status !== 'DELETING' && !props.usedInstanceIds.includes(i.id)))
+
+/** 按命名空间分组：应用自己的命名空间排最前，其余按名字排 */
+const bindableGroups = computed(() => {
+  const byNs = new Map<string, MiddlewareInstance[]>()
+  for (const i of bindable.value) {
+    const list = byNs.get(i.namespace) ?? []
+    list.push(i)
+    byNs.set(i.namespace, list)
+  }
+  return [...byNs.entries()]
+    .sort(([a], [b]) => (a === props.namespace ? -1 : b === props.namespace ? 1 : a.localeCompare(b)))
+    .map(([ns, list]) => ({ ns, list, label: ns === props.namespace ? `${ns}（本应用）` : ns }))
+})
+
+/** 选中的实例在别的命名空间：提示凭据会被复制过来 */
+const crossNamespace = computed(() => {
+  const i = bindable.value.find((x) => x.id === instanceId.value)
+  return !!i && i.namespace !== props.namespace
+})
 
 async function loadInstances(): Promise<void> {
   if (!props.clusterId) return
   instLoading.value = true
   try {
-    instances.value = (await middlewareApi.instanceList(props.clusterId, undefined, props.tenantId, props.namespace)) ?? []
+    // 不传 namespace：列本租户在本集群的所有命名空间（后端按 tenantId 收窄）
+    instances.value = (await middlewareApi.instanceList(props.clusterId, undefined, props.tenantId)) ?? []
     if (!bindable.value.some((i) => i.id === instanceId.value)) instanceId.value = ''
   } catch (e) {
     error.value = errMsg(e, '实例列表加载失败')
@@ -299,10 +320,15 @@ watch(mode, (m) => {
       <!-- 绑定 -->
       <template v-else-if="mode === 'BIND'">
         <el-form-item label="实例" required>
-          <el-select v-model="instanceId" v-loading="instLoading" filterable placeholder="选择本命名空间的实例" style="width: 100%">
-            <el-option v-for="i in bindable" :key="i.id" :label="instLabel(i)" :value="i.id" />
+          <el-select v-model="instanceId" v-loading="instLoading" filterable placeholder="选择实例" style="width: 100%">
+            <el-option-group v-for="g in bindableGroups" :key="g.ns" :label="g.label">
+              <el-option v-for="i in g.list" :key="i.id" :label="instLabel(i)" :value="i.id" />
+            </el-option-group>
           </el-select>
-          <div class="app-dep-dlg__tip">只列同一集群、同一命名空间（{{ namespace }}）里还没被本应用使用的实例。绑定只建立引用，移除依赖时不会动实例。</div>
+          <div class="app-dep-dlg__tip">列出同一集群、本租户所有命名空间里还没被本应用使用的实例。绑定只建立引用，移除依赖时不会动实例。</div>
+          <div v-if="crossNamespace" class="app-dep-dlg__tip">
+            实例在别的命名空间：应用通过集群内地址访问；凭据 Secret 会复制到本应用的命名空间 {{ namespace }}（发布前自动同步）。
+          </div>
           <div v-if="!instLoading && !bindable.length" class="app-dep-dlg__tip">没有可绑定的实例。</div>
         </el-form-item>
       </template>

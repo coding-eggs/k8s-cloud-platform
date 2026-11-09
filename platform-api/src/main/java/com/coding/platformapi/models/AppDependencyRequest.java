@@ -24,7 +24,7 @@ public class AppDependencyRequest {
     /** MIDDLEWARE / EXTERNAL */
     private String type;
 
-    /** MIDDLEWARE 的来源：CREATE（新建实例）/ BIND（绑定同命名空间已有实例） */
+    /** MIDDLEWARE 的来源：CREATE（新建实例）/ BIND（绑定同租户已有实例，可跨命名空间） */
     private String source;
 
     // ---- CREATE ----

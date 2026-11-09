@@ -16,9 +16,11 @@ import com.coding.data.mapper.system.PlatformAppReleaseMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
 import com.coding.data.models.system.PlatformAppExecution;
+import com.coding.data.models.system.PlatformAppDependency;
 import com.coding.data.models.system.PlatformAppRelease;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationResource;
+import com.coding.platformapi.app.AppSnapshot;
 import com.coding.platformapi.k8s.K8sAppClient;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.k8s.K8sServerUnauthorizedException;
@@ -88,6 +90,7 @@ public class AppReleaseExecutor {
     private final PlatformAppExecutionMapper executions;
     private final PlatformApplicationResourceMapper resources;
     private final K8sAppClient client;
+    private final AppDependencyService dependencies;
     private final ApplicationDeployCredentials credentials;
     private final AppExecutionLease leases;
     private final ObjectProvider<AppReleasePrecheck> precheck;
@@ -100,6 +103,7 @@ public class AppReleaseExecutor {
                               PlatformAppExecutionMapper executions,
                               PlatformApplicationResourceMapper resources,
                               K8sAppClient client,
+                              AppDependencyService dependencies,
                               ApplicationDeployCredentials credentials,
                               AppExecutionLease leases,
                               ObjectProvider<AppReleasePrecheck> precheck,
@@ -111,6 +115,7 @@ public class AppReleaseExecutor {
         this.executions = executions;
         this.resources = resources;
         this.client = client;
+        this.dependencies = dependencies;
         this.credentials = credentials;
         this.leases = leases;
         this.precheck = precheck;
@@ -316,10 +321,20 @@ public class AppReleaseExecutor {
         request.setClusterId(app.getClusterId());
         request.setManifest(release.getManifest());
         request.setSkipKinds(ROUTE_KINDS);   // 路由等工作负载就绪后在 ROUTE 阶段下发：流量不会先打到没就绪的后端
+        // 跨命名空间绑定的依赖：凭据 Secret 先复制到应用命名空间，Pod 的 secretKeyRef 才取得到。
+        // 只有本次快照里真被引用的依赖才算「必须有」；其余登记着的依赖照建副本，但缺来源时不挡发布。
+        dependencies.ensureMirrorSecrets(app, referencedKeys(release));
         client.apply(request);
         journal.info(execution, "APPLY", "已下发 " + rows.size() + " 个对象到命名空间 " + app.getNamespace()
                 + "，开始等待就绪");
         return "HEALTH";
+    }
+
+    /** 这次快照里被环境变量 / 配置文件引用到的依赖 key（跨 ns 凭据副本的「必须有」集合）。 */
+    private static Set<String> referencedKeys(PlatformAppRelease release) {
+        return AppReleasePipeline.referencedDependencies(AppSnapshot.parse(release.getSnapshotJson())).stream()
+                .map(PlatformAppDependency::getDepKey)
+                .collect(Collectors.toSet());
     }
 
     /**

@@ -283,7 +283,8 @@ class AppExecutionWorkerTest {
         K8sAppClient client = mock(K8sAppClient.class);
         AppReleaseExecutor real = new AppReleaseExecutor(mock(PlatformApplicationMapper.class),
                 mock(PlatformAppReleaseMapper.class), executions, mock(PlatformApplicationResourceMapper.class),
-                client, new ApplicationDeployCredentials(), new AppExecutionLease("restarted"),
+                client, mock(AppDependencyService.class), new ApplicationDeployCredentials(),
+                new AppExecutionLease("restarted"),
                 mock(ObjectProvider.class), mock(ObjectProvider.class),
                 new AppExecutionJournal(mock(PlatformAppExecutionLogMapper.class)), 30);
         AppExecutionWorker restarted = new AppExecutionWorker(real, executions, new AppExecutionLease("restarted"), 4);
