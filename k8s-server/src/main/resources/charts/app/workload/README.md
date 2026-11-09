@@ -36,6 +36,8 @@ charts/app/workload/
 | `workload.extraEnv[]` | `{name, value}` 直接写进容器 env，排在 `inlineEnv` 之后（OTel 服务名 / 采样） |
 | `workload.logVolume` | `{enabled, mountDir}`：emptyDir 卷 `platform-otel-logs` 挂到 `mountDir`（OTel 读文件日志） |
 | `workload.route` | `{enabled, kind, parentName, sectionName, port}`：网关端口池暴露（2026-11-08）。`kind=http` → HTTPRoute，`tcp` → TCPRoute（都是 `gateway.networking.k8s.io/v1`）；`parentRefs` 指向命名空间 ListenerSet（`kind: ListenerSet`）的 listener `sectionName`；`port` = 服务端口。Service 保持 ClusterIP（`expose.type=none`）；worker 不生成 |
+| `workload.meshRoute` | `{enabled, kind, port, canary}`：网格路由（内部灰度，2026-11-09）。HTTPRoute / TCPRoute `<name>-mesh`，`parentRefs` 指向本服务 Service（`group: ""`、`kind: Service`，GAMMA），规则与 `route` 的灰度规则同形；platform-api 只在灰度中且应用为 L7 网格时给 |
+| `workload.expose.portName` | Service 端口名 `http` / `tcp`（params `protocol=tcp` 时为 `tcp`）；Istio 按端口名判协议，`targetPort` 仍是容器端口 `http` |
 
 ## 产物对照
 
@@ -48,6 +50,7 @@ charts/app/workload/
 | `metrics.enabled` 且 `mode=service` | 加 ServiceMonitor（`/metrics`，端口名 `http`） |
 | `expose.type=nodeport` | Service 类型改 NodePort |
 | `route.enabled` 且 `mode=service` | 加 HTTPRoute 或 TCPRoute（与 Service 同名），挂到 ListenerSet 的 listener |
+| `meshRoute.enabled` 且 `mode=service` | 加 HTTPRoute 或 TCPRoute `<name>-mesh`，挂到本服务 Service |
 
 ## 标签与只读保护（别改）
 

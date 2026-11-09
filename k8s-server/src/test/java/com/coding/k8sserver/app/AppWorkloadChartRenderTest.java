@@ -453,4 +453,63 @@ class AppWorkloadChartRenderTest {
         List<Map<String, Object>> rules = (List<Map<String, Object>>) at(route, "spec").get("rules");
         assertThat(rules).containsExactly(Map.of("backendRefs", List.of(Map.of("name", "shop-api", "port", 80))));
     }
+
+    // ---------- 内部灰度（2026-11-09）：网格路由、TCP 端口名 ----------
+
+    private static Map<String, Object> meshRouteParam(String kind) {
+        Map<String, Object> canary = new java.util.LinkedHashMap<>();
+        canary.put("service", "shop-api-canary");
+        canary.put("weight", 20);
+        canary.put("header", Map.of("name", "x-canary", "value", "true"));
+        return Map.of("kind", kind, "canary", canary);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void meshRouteRendersServiceParentWithHeaderThenWeights() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> route = find(render(Map.of("image", "nginx", "port", 8080,
+                "meshRoute", meshRouteParam("http"))), "HTTPRoute", "shop-api-mesh");
+        assertThat(route).isNotNull();
+        assertThat(((List<Map<String, Object>>) at(route, "spec").get("parentRefs")).get(0))
+                .isEqualTo(Map.of("group", "", "kind", "Service", "name", "shop-api", "port", 8080));
+        List<Map<String, Object>> rules = (List<Map<String, Object>>) at(route, "spec").get("rules");
+        assertThat(rules).hasSize(2);
+        Map<String, Object> match = ((List<Map<String, Object>>) rules.get(0).get("matches")).get(0);
+        assertThat(((List<Map<String, Object>>) match.get("headers")).get(0))
+                .containsEntry("name", "x-canary").containsEntry("value", "true");
+        assertThat((List<Map<String, Object>>) rules.get(0).get("backendRefs"))
+                .containsExactly(Map.of("name", "shop-api-canary", "port", 8080));
+        assertThat((List<Map<String, Object>>) rules.get(1).get("backendRefs")).containsExactly(
+                Map.of("name", "shop-api", "port", 8080, "weight", 80),
+                Map.of("name", "shop-api-canary", "port", 8080, "weight", 20));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void tcpMeshRouteHasNoHeaderRule() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        Map<String, Object> route = find(render(Map.of("image", "nginx", "port", 8080,
+                "meshRoute", meshRouteParam("tcp"))), "TCPRoute", "shop-api-mesh");
+        assertThat(route).isNotNull();
+        List<Map<String, Object>> rules = (List<Map<String, Object>>) at(route, "spec").get("rules");
+        assertThat(rules).hasSize(1);
+        assertThat(rules.get(0)).doesNotContainKey("matches");
+    }
+
+    @Test
+    void noMeshRouteByDefault() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        List<Map<String, Object>> docs = render(Map.of("image", "nginx", "port", 8080));
+        assertThat(find(docs, "HTTPRoute", "shop-api-mesh")).isNull();
+        assertThat(find(docs, "TCPRoute", "shop-api-mesh")).isNull();
+    }
+
+    @Test
+    void tcpProtocolNamesServicePortTcp() throws Exception {
+        assumeTrue(HelmProbe.available(), "本机没有 helm，跳过");
+        assertThat(servicePort(render(Map.of("image", "nginx", "port", 8080, "protocol", "tcp"))))
+                .containsEntry("name", "tcp").containsEntry("targetPort", "http");
+        assertThat(servicePort(render(Map.of("image", "nginx", "port", 8080)))).containsEntry("name", "http");
+    }
 }

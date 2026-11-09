@@ -69,7 +69,20 @@ workload:
       weight: 0
       headerName: ""
       headerValue: ""
+  # 网格路由（内部灰度）：挂在 Service 上，经 waypoint 的集群内调用按权重分流；platform-api 只在灰度中 + L7 网格时给
+  meshRoute:
+    enabled: false
+    kind: http
+    port: 8080
+    canary:
+      enabled: false
+      service: ""
+      weight: 0
+      headerName: ""
+      headerValue: ""
   expose:
     # none（仅集群内 ClusterIP）/ nodeport
     type: none
     port: 8080
+    # Service 端口名：http / tcp（Istio 按端口名判协议）
+    portName: http

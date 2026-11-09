@@ -84,9 +84,12 @@ public final class AppWorkloadValues {
                 "type", exposeType,
                 "port", num(params.get("port"), 8080),
                 // 0 = 由集群自动分配；只在 nodeport 时有意义
-                "nodePort", "nodeport".equals(exposeType) ? num(params.get("nodePort"), 0) : 0));
+                "nodePort", "nodeport".equals(exposeType) ? num(params.get("nodePort"), 0) : 0,
+                // Service 端口名：Istio 按端口名判协议，TCP 服务若叫 http 会被 waypoint 当 HTTP 解析（内部灰度设计 §4.4）
+                "portName", "tcp".equals(str(params.get("protocol")).toLowerCase()) ? "tcp" : "http"));
 
         workload.put("route", route(params, worker));
+        workload.put("meshRoute", meshRoute(params, worker));
 
         Map<String, Object> app = new LinkedHashMap<>();
         app.put("id", appId);
@@ -113,6 +116,22 @@ public final class AppWorkloadValues {
         return Map.of("enabled", true, "kind", kind, "parentName", parentName,
                 "sectionName", sectionName, "port", num(params.get("port"), 8080),
                 "canary", canary(r.get("canary"), "tcp".equals(kind)));
+    }
+
+    /**
+     * 网格路由（内部灰度）：{@code params.meshRoute = {kind: http|tcp, canary: {service, weight, header}}}（platform-api 生成）。
+     * 挂在本服务的 Service 上（GAMMA），经 waypoint 的集群内调用按权重分到两个后端；何时生成由 platform-api 决定。
+     */
+    private static Map<String, Object> meshRoute(Map<String, Object> params, boolean worker) {
+        if (worker || !(params.get("meshRoute") instanceof Map<?, ?> r)) {
+            return Map.of("enabled", false);
+        }
+        String kind = str(r.get("kind")).toLowerCase();
+        Map<String, Object> canary = canary(r.get("canary"), "tcp".equals(kind));
+        if (!("http".equals(kind) || "tcp".equals(kind)) || !Boolean.TRUE.equals(canary.get("enabled"))) {
+            return Map.of("enabled", false);
+        }
+        return Map.of("enabled", true, "kind", kind, "port", num(params.get("port"), 8080), "canary", canary);
     }
 
     /**

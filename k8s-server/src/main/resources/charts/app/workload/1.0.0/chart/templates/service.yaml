@@ -14,7 +14,7 @@ spec:
   selector:
     {{- include "app.selector" . | nindent 4 }}
   ports:
-    - name: http
+    - name: {{ .Values.workload.expose.portName | default "http" }}
       port: {{ .Values.workload.expose.port }}
       targetPort: http
       {{- if and (eq .Values.workload.expose.type "nodeport") (gt (int .Values.workload.expose.nodePort) 0) }}

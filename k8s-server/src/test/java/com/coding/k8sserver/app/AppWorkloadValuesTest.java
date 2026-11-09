@@ -250,7 +250,8 @@ class AppWorkloadValuesTest {
                 "parentName", "platform-ingress", "sectionName", "p20002", "port", 8080,
                 "canary", Map.of("enabled", false)));
         // 网关方式下 Service 保持 ClusterIP
-        assertThat(workload(v).get("expose")).isEqualTo(Map.of("type", "none", "port", 8080, "nodePort", 0));
+        assertThat(workload(v).get("expose")).isEqualTo(Map.of("type", "none", "port", 8080, "nodePort", 0,
+                "portName", "http"));
     }
 
     @Test
@@ -306,5 +307,48 @@ class AppWorkloadValuesTest {
                 node(Map.of("image", "nginx", "port", 8080, "route", Map.of("kind", "http",
                         "parentName", "platform-ingress", "sectionName", "p20000"))))).get("route");
         assertThat((Map<String, Object>) off.get("canary")).containsEntry("enabled", false);
+    }
+
+    // ---------- 内部灰度（2026-11-09）：Service 端口名、网格路由 ----------
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> expose(Map<String, Object> values) {
+        return (Map<String, Object>) workload(values).get("expose");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> meshRoute(Map<String, Object> values) {
+        return (Map<String, Object>) workload(values).get("meshRoute");
+    }
+
+    private static Map<String, Object> values(Map<String, Object> params) {
+        return AppWorkloadValues.build("app_1", "demo", 1, node(params));
+    }
+
+    @Test
+    void portNameFollowsProtocol() {
+        assertThat(expose(values(Map.of("image", "x", "port", 80, "protocol", "tcp")))).containsEntry("portName", "tcp");
+        assertThat(expose(values(Map.of("image", "x", "port", 80)))).containsEntry("portName", "http");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void meshRouteParsedAndClamped() {
+        Map<String, Object> mr = Map.of("kind", "http", "canary", Map.of("service", "shop-api-canary", "weight", 150,
+                "header", Map.of("name", "x-canary", "value", "true")));
+        Map<String, Object> v = meshRoute(values(Map.of("image", "x", "port", 80, "meshRoute", mr)));
+        assertThat(v).containsEntry("enabled", true).containsEntry("kind", "http").containsEntry("port", 80);
+        assertThat((Map<String, Object>) v.get("canary")).containsEntry("weight", 100)
+                .containsEntry("headerName", "x-canary");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void meshRouteAbsentOrTcpDropsHeader() {
+        assertThat(meshRoute(values(Map.of("image", "x", "port", 80)))).containsEntry("enabled", false);
+        Map<String, Object> tcp = Map.of("kind", "tcp", "canary",
+                Map.of("service", "s-canary", "weight", 10, "header", Map.of("name", "x", "value", "y")));
+        assertThat((Map<String, Object>) meshRoute(values(Map.of("image", "x", "port", 80, "meshRoute", tcp)))
+                .get("canary")).containsEntry("headerName", "");
     }
 }

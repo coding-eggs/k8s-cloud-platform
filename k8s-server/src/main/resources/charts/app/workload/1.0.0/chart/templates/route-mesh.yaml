@@ -1,0 +1,35 @@
+{{- /* 网格路由（内部灰度）：挂在本服务 Service 上（GAMMA），经 waypoint 的集群内调用按权重分 stable / canary */ -}}
+{{- if and (eq .Values.workload.mode "service") .Values.workload.meshRoute.enabled }}
+{{- $m := .Values.workload.meshRoute }}
+{{- $c := $m.canary }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: {{ if eq $m.kind "tcp" }}TCPRoute{{ else }}HTTPRoute{{ end }}
+metadata:
+  name: {{ printf "%s-mesh" (include "app.name" .) | quote }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels:
+    {{- include "app.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - group: ""
+      kind: Service
+      name: {{ include "app.name" . | quote }}
+      port: {{ $m.port }}
+  rules:
+    {{- if and $c.headerName (ne $m.kind "tcp") }}
+    - matches:
+        - headers:
+            - name: {{ $c.headerName | quote }}
+              value: {{ $c.headerValue | quote }}
+      backendRefs:
+        - name: {{ $c.service | quote }}
+          port: {{ $m.port }}
+    {{- end }}
+    - backendRefs:
+        - name: {{ include "app.name" . | quote }}
+          port: {{ $m.port }}
+          weight: {{ sub 100 (int $c.weight) }}
+        - name: {{ $c.service | quote }}
+          port: {{ $m.port }}
+          weight: {{ $c.weight }}
+{{- end }}
