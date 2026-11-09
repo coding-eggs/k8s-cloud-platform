@@ -3128,6 +3128,18 @@ export interface AppServiceRow {
   ingress?: AppServiceIngress | null
   /** 线上 Service 为 NodePort 时实际的 nodePort（现读，自动分配的也在）；否则为空 */
   nodePort?: number | null
+  /** 线上正在入口灰度时的灰度信息；不在灰度为空 */
+  canary?: AppServiceCanary | null
+}
+
+/** 入口灰度：权重、header 规则（没开为空）、灰度版本镜像与副本、灰度工作负载现读状态 */
+export interface AppServiceCanary {
+  weight: number
+  headerName?: string | null
+  headerValue?: string | null
+  image: string
+  replicas: number
+  state: Exclude<AppServiceState, 'NOT_RELEASED'>
 }
 
 /** programmed / conflicted 为 null = 状态未知（集群读不到或 listener 尚未下发） */

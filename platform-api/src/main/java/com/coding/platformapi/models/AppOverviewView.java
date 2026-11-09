@@ -22,10 +22,19 @@ public record AppOverviewView(String appId, String status, Integer liveReleaseNo
      * newTag：镜像仓库里比线上 tag 更晚推送的 tag（见 AppImageUpdates）；没有、不适用或没查成为 null。
      * ingress：网关方式分到的端口及其 listener 状态；没分端口为 null。
      * nodePort：线上 Service 为 NodePort 类型时实际的 nodePort（现读）；不是 NodePort 或读不到为 null。
+     * canary：线上正在灰度时的灰度信息；不在灰度为 null。
      */
     public record ServiceRow(String key, String kind, String image, String liveImage, Integer replicas,
                              String state, String pending, Map<String, Object> desired, Integer version,
-                             String newTag, Ingress ingress, Integer nodePort) {
+                             String newTag, Ingress ingress, Integer nodePort, Canary canary) {
+    }
+
+    /**
+     * 入口灰度：权重、header 规则（没开为 null）、灰度版本镜像与副本数、灰度工作负载的现读状态
+     * （READY / PENDING / FAILED / MISSING / UNKNOWN）。
+     */
+    public record Canary(int weight, String headerName, String headerValue, String image, int replicas,
+                         String state) {
     }
 
     /**

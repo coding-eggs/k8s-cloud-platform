@@ -1572,4 +1572,37 @@ class AppReleaseServiceTest {
         var s = service.overview("app1", "t1").services().get(0);
         assertThat(s.pending()).isNull();
     }
+
+    @Test
+    void overviewCarriesCanaryWeightImageAndState() {
+        Map<String, Object> api = com.coding.platformapi.app.AppCanary.with(gw("1"),
+                new com.coding.platformapi.app.AppCanary.Spec(gw("2"), 2, 30,
+                        new com.coding.platformapi.app.AppCanary.Header("x-canary", "true")));
+        live(1, Map.of("api", api, "web", svc("1")));
+        PlatformAppRelease r = releases.selectByNo("app1", 1);
+        r.setObjectsJson("[{\"kind\":\"Deployment\",\"namespace\":\"ns\",\"name\":\"shop-api\"},"
+                + "{\"kind\":\"Deployment\",\"namespace\":\"ns\",\"name\":\"shop-api-canary\"}]");
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", gw("1"), false), row("web", svc("1"), false)));
+        com.coding.common.models.app.AppObjectStatusDTO stable = new com.coding.common.models.app.AppObjectStatusDTO();
+        stable.setKind("Deployment");
+        stable.setName("shop-api");
+        stable.setState("READY");
+        com.coding.common.models.app.AppObjectStatusDTO canary = new com.coding.common.models.app.AppObjectStatusDTO();
+        canary.setKind("Deployment");
+        canary.setName("shop-api-canary");
+        canary.setState("READY");
+        com.coding.common.models.app.AppStatusResultDTO result = new com.coding.common.models.app.AppStatusResultDTO();
+        result.setObjects(List.of(stable, canary));
+        when(client.status(any())).thenReturn(result);
+
+        var rows = service.overview("app1", "t1").services();
+
+        var c = rows.stream().filter(x -> x.key().equals("api")).findFirst().orElseThrow().canary();
+        assertThat(c.weight()).isEqualTo(30);
+        assertThat(c.image()).endsWith(":2");
+        assertThat(c.replicas()).isEqualTo(2);
+        assertThat(c.headerName()).isEqualTo("x-canary");
+        assertThat(c.state()).isEqualTo("READY");
+        assertThat(rows.stream().filter(x -> x.key().equals("web")).findFirst().orElseThrow().canary()).isNull();
+    }
 }

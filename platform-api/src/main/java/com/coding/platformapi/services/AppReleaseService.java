@@ -605,7 +605,7 @@ public class AppReleaseService {
                     desired.get("replicas") instanceof Number n ? n.intValue() : null,
                     state, change == null ? null : change.type(), desired, row.getVersion(),
                     newTags.get(row.getServiceKey()), ingress.get(row.getServiceKey()),
-                    deployed ? nodePorts.get(objectName) : null));
+                    deployed ? nodePorts.get(objectName) : null, canaryRow(app, row.getServiceKey(), liveDesired, states)));
         }
         // 线上有、台账无行的孤儿服务（待删除）：照样列出来，才有地方勾选删除
         Set<String> rowKeys = rows.stream().map(PlatformAppService::getServiceKey).collect(Collectors.toSet());
@@ -619,7 +619,7 @@ public class AppReleaseService {
                     AppServiceDesired.image(liveDesired), AppServiceDesired.image(liveDesired),
                     liveDesired.get("replicas") instanceof Number n ? n.intValue() : null,
                     states.getOrDefault(objectName, "UNKNOWN"), "DELETED", liveDesired, null, null,
-                    ingress.get(c.key()), nodePorts.get(objectName)));
+                    ingress.get(c.key()), nodePorts.get(objectName), canaryRow(app, c.key(), liveDesired, states)));
         }
         Map<String, String> depStatus = dependencies.statusOf(dependencyRows.selectByApp(app.getId()));
         List<AppOverviewView.DependencyRow> depRows = dependencyRows.selectByApp(app.getId()).stream()
@@ -855,6 +855,19 @@ public class AppReleaseService {
      * 现读线上对象状态：对象名 → state。查询失败不让概览整页失败，状态记 UNKNOWN。
      * 顺带把 NodePort 类型 Service 的实际 nodePort 填进 {@code nodePorts}（对象名 → 端口）。
      */
+    private static AppOverviewView.Canary canaryRow(PlatformApplication app, String key,
+                                                    Map<String, Object> liveDesired, Map<String, String> states) {
+        AppCanary.Spec spec = AppCanary.of(liveDesired);
+        if (spec == null) {
+            return null;
+        }
+        String name = AppObjectNames.objectName(app.getSlug(), AppCanary.nodeKey(key));
+        return new AppOverviewView.Canary(spec.weight(),
+                spec.header() == null ? null : spec.header().name(),
+                spec.header() == null ? null : spec.header().value(),
+                AppServiceDesired.image(spec.desired()), spec.replicas(), states.getOrDefault(name, "UNKNOWN"));
+    }
+
     private Map<String, String> liveStates(PlatformApplication app, Map<String, Integer> nodePorts) {
         List<AppObjectRefDTO> objects = liveObjects(app);
         Map<String, String> out = new HashMap<>();
