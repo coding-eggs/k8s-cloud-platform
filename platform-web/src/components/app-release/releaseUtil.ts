@@ -24,9 +24,9 @@ export function isRunning(status?: string | null): boolean {
 }
 
 export const EXEC_STAGE: Record<string, string> = {
-  DONE: '完成', PRECHECK: '预检', RENDER: '渲染', CONFLICT: '冲突检查', APPLY: '下发', HEALTH: '健康检查', PRUNE: '清理旧对象',
+  DONE: '完成', PRECHECK: '预检', RENDER: '渲染', CONFLICT: '冲突检查', APPLY: '下发', HEALTH: '健康检查', ROUTE: '路由', PRUNE: '清理旧对象',
 }
-export const STAGE_ORDER = ['PRECHECK', 'RENDER', 'CONFLICT', 'APPLY', 'HEALTH', 'PRUNE']
+export const STAGE_ORDER = ['PRECHECK', 'RENDER', 'CONFLICT', 'APPLY', 'HEALTH', 'ROUTE', 'PRUNE']
 /** 下线执行：PRECHECK 后直接 PRUNE（删本应用全部对象） */
 export const OFFLINE_STAGE_ORDER = ['PRECHECK', 'PRUNE']
 

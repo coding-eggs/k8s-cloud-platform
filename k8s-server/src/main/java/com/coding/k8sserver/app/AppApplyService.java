@@ -11,6 +11,8 @@ import com.coding.k8sserver.kube.ManifestApplier;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -35,14 +37,49 @@ public class AppApplyService {
     }
 
     public void apply(AppApplyRequestDTO req) {
+        String manifest = filter(req.getManifest(), req.getOnlyKinds(), req.getSkipKinds());
+        if (manifest.isBlank()) {
+            return;   // 过滤后没有对象：什么都不做
+        }
         String kubeconfig = kubeconfig(req.getClusterId());
         // 渲染阶段已强制每个对象声明目标命名空间（AppRenderService），这里不需要默认命名空间
-        handOverReplicas(kubeconfig, req.getManifest());
-        HelmResult r = manifests.applyServerSide(kubeconfig, req.getManifest(), null);
+        handOverReplicas(kubeconfig, manifest);
+        HelmResult r = manifests.applyServerSide(kubeconfig, manifest, null);
         if (!r.ok()) {
             throw new CloudPlatformException(EnumResponseType.ERROR, "应用清单写入失败：" + r.output());
         }
     }
+
+    /**
+     * 按 kind 过滤多文档清单。按 {@code ---} 行切文档、保留原文（不重新序列化，避免 YAML 1.1 取值被改写）；
+     * 一个文档里任一对象不通过就整篇丢掉。两个集合都为空时原样返回。
+     */
+    static String filter(String manifest, Set<String> only, Set<String> skip) {
+        if (manifest == null) {
+            return "";
+        }
+        boolean hasOnly = only != null && !only.isEmpty();
+        boolean hasSkip = skip != null && !skip.isEmpty();
+        if (!hasOnly && !hasSkip) {
+            return manifest;
+        }
+        List<String> kept = new ArrayList<>();
+        for (String doc : DOC_SEPARATOR.split(manifest)) {
+            List<GenericKubernetesResource> objs = ManifestApplier.parse(doc);
+            if (objs.isEmpty()) {
+                continue;
+            }
+            boolean pass = objs.stream().map(GenericKubernetesResource::getKind)
+                    .allMatch(k -> (!hasOnly || only.contains(k)) && (!hasSkip || !skip.contains(k)));
+            if (pass) {
+                kept.add(doc.strip());
+            }
+        }
+        return kept.isEmpty() ? "" : String.join("\n---\n", kept) + "\n";
+    }
+
+    private static final java.util.regex.Pattern DOC_SEPARATOR =
+            java.util.regex.Pattern.compile("(?m)^---[ \\t]*(#.*)?\\r?$");
 
     /** 清单里不写 replicas 的 Deployment / StatefulSet：线上存在则先按线上副本交接所有权（见 {@link #REPLICAS_HANDOVER_MANAGER}） */
     void handOverReplicas(String kubeconfig, String manifest) {

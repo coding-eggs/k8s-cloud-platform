@@ -175,4 +175,84 @@ class AppApplyServiceTest {
 
         assertThat(calls).singleElement().asString().startsWith("apply:");
     }
+
+    // ---------- 按 kind 过滤（ROUTE 阶段，2026-11-09） ----------
+
+    private static final String MIXED = """
+            apiVersion: v1
+            kind: Service
+            metadata:
+              name: shop-api
+              namespace: demo
+            ---
+            apiVersion: gateway.networking.k8s.io/v1
+            kind: HTTPRoute
+            metadata:
+              name: shop-api
+              namespace: demo
+            spec:
+              rules:
+                - backendRefs:
+                    - name: shop-api
+                      port: 80
+            """;
+
+    private static ManifestApplier recording(List<String> sent) {
+        return new ManifestApplier() {
+            @Override
+            public com.coding.k8sserver.helm.HelmResult applyServerSide(String kubeconfig, String manifest,
+                                                                        String defaultNamespace) {
+                sent.add(manifest);
+                return new com.coding.k8sserver.helm.HelmResult(true, 0, "applied");
+            }
+        };
+    }
+
+    private static AppApplyRequestDTO mixed() {
+        AppApplyRequestDTO req = new AppApplyRequestDTO();
+        req.setClusterId("c1");
+        req.setManifest(MIXED);
+        return req;
+    }
+
+    @Test
+    void skipKindsDropsRoutesFromTheManifest() {
+        List<String> sent = new ArrayList<>();
+        AppApplyRequestDTO req = mixed();
+        req.setSkipKinds(java.util.Set.of("HTTPRoute", "TCPRoute"));
+        new AppApplyService(recording(sent), null).apply(req);
+
+        assertThat(sent).hasSize(1);
+        assertThat(sent.get(0)).contains("kind: Service").doesNotContain("HTTPRoute");
+    }
+
+    @Test
+    void onlyKindsKeepsOnlyRoutes() {
+        List<String> sent = new ArrayList<>();
+        AppApplyRequestDTO req = mixed();
+        req.setOnlyKinds(java.util.Set.of("HTTPRoute", "TCPRoute"));
+        new AppApplyService(recording(sent), null).apply(req);
+
+        assertThat(sent).hasSize(1);
+        assertThat(sent.get(0)).contains("kind: HTTPRoute").contains("backendRefs").doesNotContain("kind: Service");
+        assertThat(ManifestApplier.parse(sent.get(0))).hasSize(1);
+    }
+
+    @Test
+    void emptyAfterFilterIsANoop() {
+        List<String> sent = new ArrayList<>();
+        AppApplyRequestDTO req = mixed();
+        req.setOnlyKinds(java.util.Set.of("TCPRoute"));
+        new AppApplyService(recording(sent), null).apply(req);
+
+        assertThat(sent).isEmpty();
+    }
+
+    @Test
+    void noFilterSendsTheManifestVerbatim() {
+        List<String> sent = new ArrayList<>();
+        new AppApplyService(recording(sent), null).apply(mixed());
+
+        assertThat(sent).containsExactly(MIXED);
+    }
 }

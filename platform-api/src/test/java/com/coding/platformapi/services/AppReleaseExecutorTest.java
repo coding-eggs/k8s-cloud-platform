@@ -290,7 +290,7 @@ class AppReleaseExecutorTest {
 
         executor.advance(at("HEALTH"));
 
-        assertThat(lastSaved().getStage()).isEqualTo("PRUNE");
+        assertThat(lastSaved().getStage()).isEqualTo("ROUTE");
         assertThat(lastSaved().getStatus()).isEqualTo("RUNNING");
     }
 
@@ -320,12 +320,12 @@ class AppReleaseExecutorTest {
     }
 
     @Test
-    void healthReadyMovesToPruneWithoutPruning() {
+    void healthReadyMovesToRouteWithoutPruning() {
         when(client.status(any())).thenReturn(statusOf("READY"));
 
         executor.advance(at("HEALTH"));
 
-        assertThat(lastSaved().getStage()).isEqualTo("PRUNE");
+        assertThat(lastSaved().getStage()).isEqualTo("ROUTE");
         verify(client, never()).prune(any());
     }
 
@@ -407,7 +407,7 @@ class AppReleaseExecutorTest {
     @Test
     void offlineNeverRendersOrAppliesEvenIfResumedMidway() {
         asOffline();
-        for (String stage : List.of("RENDER", "CONFLICT", "APPLY", "HEALTH")) {
+        for (String stage : List.of("RENDER", "CONFLICT", "APPLY", "HEALTH", "ROUTE")) {
             PlatformAppExecution e = at(stage);
             executor.advance(e);
             assertThat(e.getStage()).as(stage).isEqualTo("PRUNE");
@@ -819,5 +819,82 @@ class AppReleaseExecutorTest {
         executor.advance(at("DONE"));
 
         verify(precheck, never()).afterRelease(any());
+    }
+
+    // ---------- ROUTE 阶段（入口灰度，2026-11-09） ----------
+
+    private static final String OBJECTS_WITH_ROUTE = """
+            [{"apiVersion":"apps/v1","kind":"Deployment","namespace":"demo","name":"demo-web"},
+             {"apiVersion":"gateway.networking.k8s.io/v1","kind":"HTTPRoute","namespace":"demo","name":"demo-web"}]
+            """;
+
+    @Test
+    void applySkipsRoutesAndHealthIgnoresThem() {
+        release.setObjectsJson(OBJECTS_WITH_ROUTE);
+        executor.advance(at("APPLY"));
+        ArgumentCaptor<AppApplyRequestDTO> req = ArgumentCaptor.forClass(AppApplyRequestDTO.class);
+        verify(client).apply(req.capture());
+        assertThat(req.getValue().getSkipKinds()).isEqualTo(AppReleaseExecutor.ROUTE_KINDS);
+        assertThat(req.getValue().getOnlyKinds()).isNull();
+
+        // Deployment READY，HTTPRoute 没有状态（MISSING）：照样进入 ROUTE
+        AppStatusResultDTO s = statusOf("READY");
+        AppObjectStatusDTO route = new AppObjectStatusDTO();
+        route.setKind("HTTPRoute");
+        route.setName("demo-web");
+        route.setState("MISSING");
+        s.setObjects(List.of(s.getObjects().get(0), route));
+        when(client.status(any())).thenReturn(s);
+        PlatformAppExecution e = at("HEALTH");
+        executor.advance(e);
+        assertThat(e.getStage()).isEqualTo("ROUTE");
+        ArgumentCaptor<com.coding.common.models.app.AppStatusRequestDTO> sr =
+                ArgumentCaptor.forClass(com.coding.common.models.app.AppStatusRequestDTO.class);
+        verify(client).status(sr.capture());
+        assertThat(sr.getValue().getObjects()).extracting(AppObjectRefDTO::getKind).containsExactly("Deployment");
+    }
+
+    @Test
+    void routeStageAppliesOnlyRoutesThenPrunes() {
+        release.setObjectsJson(OBJECTS_WITH_ROUTE);
+        PlatformAppExecution e = at("ROUTE");
+        executor.advance(e);
+
+        ArgumentCaptor<AppApplyRequestDTO> req = ArgumentCaptor.forClass(AppApplyRequestDTO.class);
+        verify(client).apply(req.capture());
+        assertThat(req.getValue().getOnlyKinds()).isEqualTo(AppReleaseExecutor.ROUTE_KINDS);
+        assertThat(req.getValue().getManifest()).isEqualTo("kind: Deployment");
+        assertThat(e.getStage()).isEqualTo("PRUNE");
+        ArgumentCaptor<com.coding.data.models.system.PlatformAppExecutionLog> row =
+                ArgumentCaptor.forClass(com.coding.data.models.system.PlatformAppExecutionLog.class);
+        verify(logMapper).insert(row.capture());
+        assertThat(row.getValue().getStage()).isEqualTo("ROUTE");
+        assertThat(row.getValue().getMessage()).contains("1 个路由");
+    }
+
+    @Test
+    void routeStageWithoutRoutesGoesStraightToPrune() {
+        PlatformAppExecution e = at("ROUTE");
+        executor.advance(e);
+
+        verify(client, never()).apply(any());
+        assertThat(e.getStage()).isEqualTo("PRUNE");
+    }
+
+    @Test
+    void routeStageIsIdempotentOnResume() {
+        release.setObjectsJson(OBJECTS_WITH_ROUTE);
+        PlatformAppExecution first = at("ROUTE");
+        executor.advance(first);
+        PlatformAppExecution again = at("ROUTE");
+        executor.advance(again);
+
+        ArgumentCaptor<AppApplyRequestDTO> req = ArgumentCaptor.forClass(AppApplyRequestDTO.class);
+        verify(client, org.mockito.Mockito.times(2)).apply(req.capture());
+        assertThat(req.getAllValues()).allSatisfy(r ->
+                assertThat(r.getOnlyKinds()).isEqualTo(AppReleaseExecutor.ROUTE_KINDS));
+        assertThat(first.getStage()).isEqualTo("PRUNE");
+        assertThat(again.getStage()).isEqualTo("PRUNE");
+        assertThat(again.getStatus()).isEqualTo("RUNNING");
     }
 }

@@ -70,6 +70,8 @@ public class AppReleaseExecutor {
 
     /** 下线发布：快照不含服务，跳过渲染 / 应用 / 健康检查，直接清掉本应用的全部对象（见 {@link AppReleaseService#offline}） */
     public static final String OFFLINE_TYPE = "OFFLINE";
+    /** 路由类对象：APPLY 先不下发，HEALTH 不看，ROUTE 阶段单独下发 */
+    public static final Set<String> ROUTE_KINDS = Set.of("HTTPRoute", "TCPRoute");
 
     private static final int MESSAGE_MAX = 1024;   // platform_app_execution.message 的列宽
     private static final String CREDENTIAL_LOST =
@@ -195,6 +197,7 @@ public class AppReleaseExecutor {
                 case "CONFLICT" -> conflict(execution);
                 case "APPLY" -> apply(execution);
                 case "HEALTH" -> health(execution);
+                case "ROUTE" -> route(execution);
                 case "PRUNE" -> prune(execution);
                 case "DONE" -> finish(execution);
                 default -> throw new CloudPlatformException(EnumResponseType.ERROR, "未知阶段：" + stage);
@@ -312,10 +315,34 @@ public class AppReleaseExecutor {
         AppApplyRequestDTO request = new AppApplyRequestDTO();
         request.setClusterId(app.getClusterId());
         request.setManifest(release.getManifest());
+        request.setSkipKinds(ROUTE_KINDS);   // 路由等工作负载就绪后在 ROUTE 阶段下发：流量不会先打到没就绪的后端
         client.apply(request);
         journal.info(execution, "APPLY", "已下发 " + rows.size() + " 个对象到命名空间 " + app.getNamespace()
                 + "，开始等待就绪");
         return "HEALTH";
+    }
+
+    /**
+     * 工作负载全部就绪后才下发路由（SSA 幂等，续跑重发无副作用）。只确认写入成功，不读 Istio 的 Programmed：
+     * 顶层状态在本集群不可信（spec §11）。
+     */
+    private String route(PlatformAppExecution execution) {
+        PlatformAppRelease release = requireRelease(execution);
+        if (isOffline(release)) {
+            return "PRUNE";
+        }
+        long routes = objectsOf(release).stream().filter(o -> ROUTE_KINDS.contains(o.getKind())).count();
+        if (routes == 0) {
+            return "PRUNE";
+        }
+        PlatformApplication app = requireApp(execution);
+        AppApplyRequestDTO request = new AppApplyRequestDTO();
+        request.setClusterId(app.getClusterId());
+        request.setManifest(release.getManifest());
+        request.setOnlyKinds(ROUTE_KINDS);
+        client.apply(request);
+        journal.info(execution, "ROUTE", "已下发 " + routes + " 个路由");
+        return "PRUNE";
     }
 
     /** 必须清单里每个对象都明确 READY；状态缺失不能当就绪，否则会误删旧版本。返回 null = 留在本阶段。 */
@@ -324,7 +351,10 @@ public class AppReleaseExecutor {
             return "PRUNE";
         }
         PlatformApplication app = requireApp(execution);
-        List<AppObjectRefDTO> objects = requireObjects(requireRelease(execution));
+        // 路由在 ROUTE 阶段才下发，且 Istio 顶层状态不可信（spec §11）：不参与就绪判定
+        List<AppObjectRefDTO> objects = requireObjects(requireRelease(execution)).stream()
+                .filter(o -> !ROUTE_KINDS.contains(o.getKind()))
+                .toList();
         AppStatusResultDTO status = null;
         try {
             status = statusOf(app, objects);
@@ -367,7 +397,7 @@ public class AppReleaseExecutor {
         if (notReady.isEmpty()) {
             execution.setMessage("");
             journal.info(execution, "HEALTH", "全部 " + objects.size() + " 个对象已就绪");
-            return "PRUNE";
+            return "ROUTE";
         }
         if (status == null) {
             detail.add(0, "（本拍查询对象状态失败，按未就绪处理）");
@@ -474,6 +504,7 @@ public class AppReleaseExecutor {
             case "CONFLICT" -> "冲突检查";
             case "APPLY" -> "下发";
             case "HEALTH" -> "健康检查";
+            case "ROUTE" -> "路由";
             case "PRUNE" -> "清理";
             case "DONE" -> "完成";
             default -> stage;
