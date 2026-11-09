@@ -381,7 +381,9 @@ async function remove(): Promise<void> {
 }
 
 // ---------- Pod 与日志 / 监控 ----------
-const tab = ref('overview')
+/** 列表页「灰度」按钮带 ?tab=canary 直达灰度页签 */
+const initialTab = (): string => (route.query.tab === 'canary' ? 'canary' : 'overview')
+const tab = ref(initialTab())
 const cfgTab = ref('basic')
 const wl = ref<WorkloadDetail | null>(null)
 const pods = ref<K8sPod[]>([])
@@ -471,7 +473,7 @@ onMounted(async () => {
   await ensure()
   await load()
 })
-watch(key, () => { wl.value = null; pods.value = []; tab.value = 'overview'; void load() })
+watch(key, () => { wl.value = null; pods.value = []; tab.value = initialTab(); void load() })
 </script>
 
 <template>

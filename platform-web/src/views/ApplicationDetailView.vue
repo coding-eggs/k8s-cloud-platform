@@ -137,8 +137,11 @@ async function load(silent = false): Promise<void> {
 function goList(): void {
   router.push('/applications')
 }
-function openService(row: AppServiceRow): void {
-  router.push(`/applications/${appId.value}/services/${encodeURIComponent(row.key)}`)
+function openService(row: AppServiceRow, tab?: 'canary'): void {
+  router.push({
+    path: `/applications/${appId.value}/services/${encodeURIComponent(row.key)}`,
+    query: tab ? { tab } : undefined,
+  })
 }
 
 // ---------- 发布 / 回滚 ----------
@@ -435,9 +438,10 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="130" fixed="right">
+          <el-table-column label="操作" width="170" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openService(row)">配置</el-button>
+              <el-button v-if="row.kind === 'SERVICE'" link type="primary" @click="openService(row, 'canary')">灰度</el-button>
               <el-button link type="danger" :disabled="!editable || row.pending === 'DELETED'" @click="removeService(row)">移除</el-button>
             </template>
           </el-table-column>
