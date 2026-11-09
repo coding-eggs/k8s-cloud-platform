@@ -12,6 +12,9 @@ public class AppCanaryRequest {
     @Schema(description = "应用 id", requiredMode = Schema.RequiredMode.REQUIRED)
     private String appId;
 
+    @Schema(description = "租户 id（管理员代操作时传；租户用户忽略）")
+    private String tenantId;
+
     @Schema(description = "服务 key", requiredMode = Schema.RequiredMode.REQUIRED)
     private String serviceKey;
 

@@ -2,6 +2,8 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.page.PageResult;
 import com.coding.common.models.system.ResponseData;
+import com.coding.platformapi.models.AppCanaryMetricsView;
+import com.coding.platformapi.models.AppCanaryRequest;
 import com.coding.platformapi.models.AppReleaseListRequest;
 import com.coding.common.audit.AuditAction;
 import com.coding.common.audit.Auditable;
@@ -16,6 +18,7 @@ import com.coding.platformapi.models.AppReleaseRequest;
 import com.coding.platformapi.models.AppReleaseView;
 import com.coding.platformapi.models.AppServiceRequest;
 import com.coding.platformapi.models.AppServiceView;
+import com.coding.platformapi.services.AppCanaryService;
 import com.coding.platformapi.services.AppDependencyService;
 import com.coding.platformapi.services.AppExecutionLogService;
 import com.coding.platformapi.services.AppReleaseService;
@@ -54,13 +57,16 @@ public class ApplicationController {
     private final AppServiceConfigService serviceConfig;
     private final AppReleaseService release;
     private final AppDependencyService dependency;
+    private final AppCanaryService canary;
 
     public ApplicationController(ApplicationService service, AppServiceConfigService serviceConfig,
-                                 AppReleaseService release, AppDependencyService dependency) {
+                                 AppReleaseService release, AppDependencyService dependency,
+                                 AppCanaryService canary) {
         this.service = service;
         this.serviceConfig = serviceConfig;
         this.release = release;
         this.dependency = dependency;
+        this.canary = canary;
     }
 
     @PostMapping("/list")
@@ -198,6 +204,45 @@ public class ApplicationController {
     public ResponseData<Long> releaseOffline(@RequestBody AppReleaseRequest request) {
         return new ResponseData<>(release.offline(request.getAppId(), request.getNote(),
                 operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    // ------------------------------------------------------------------ 入口灰度
+
+    @PostMapping("/canary/start")
+    @Auditable(action = AuditAction.APPLICATION_CANARY_START, target = "#request.appId + '/' + #request.serviceKey")
+    @Operation(summary = "开始入口灰度：线上快照为底，给该服务加灰度版本与加权路由（异步执行，返回执行 id）")
+    public ResponseData<Long> canaryStart(@RequestBody AppCanaryRequest request) {
+        return new ResponseData<>(canary.start(request, operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/canary/update")
+    @Auditable(action = AuditAction.APPLICATION_CANARY_UPDATE, target = "#request.appId + '/' + #request.serviceKey")
+    @Operation(summary = "调整灰度：权重 / header / 灰度版本配置，只改给出的字段（异步执行，返回执行 id）")
+    public ResponseData<Long> canaryUpdate(@RequestBody AppCanaryRequest request) {
+        return new ResponseData<>(canary.update(request, operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/canary/promote")
+    @Auditable(action = AuditAction.APPLICATION_CANARY_PROMOTE, target = "#request.appId + '/' + #request.serviceKey")
+    @Operation(summary = "灰度全量：灰度版本成为新的 stable，删除灰度版本（异步执行，返回执行 id）")
+    public ResponseData<Long> canaryPromote(@RequestBody AppCanaryRequest request) {
+        return new ResponseData<>(canary.promote(request.getAppId(), request.getServiceKey(), request.getNote(),
+                operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/canary/abort")
+    @Auditable(action = AuditAction.APPLICATION_CANARY_ABORT, target = "#request.appId + '/' + #request.serviceKey")
+    @Operation(summary = "灰度回退：回到灰度开始前（stable 恢复为灰度前配置），删除灰度版本（异步执行，返回执行 id）")
+    public ResponseData<Long> canaryAbort(@RequestBody AppCanaryRequest request) {
+        return new ResponseData<>(canary.abort(request.getAppId(), request.getServiceKey(), request.getNote(),
+                operator(), auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/canary/metrics")
+    @Operation(summary = "灰度指标对比：stable / canary 两个版本的网关侧即时指标（window：5m / 15m / 1h）")
+    public ResponseData<AppCanaryMetricsView> canaryMetrics(@RequestBody AppCanaryRequest request) {
+        return new ResponseData<>(canary.metrics(request.getAppId(), request.getServiceKey(), request.getWindow(),
+                auth.effectiveTenantId(request.getTenantId())));
     }
 
     @PostMapping("/release/list")

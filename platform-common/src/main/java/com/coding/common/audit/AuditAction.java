@@ -277,6 +277,15 @@ public final class AuditAction {
     /** 下线：删掉应用的全部集群对象（PVC 保留），记一条 OFFLINE 发布 */
     public static final String APPLICATION_RELEASE_OFFLINE = "application:release-offline";
 
+    /** 入口灰度：开始 / 调整权重与配置 / 全量 / 回退（服务 key 记在 target 里） */
+    public static final String APPLICATION_CANARY_START = "application:canary-start";
+
+    public static final String APPLICATION_CANARY_UPDATE = "application:canary-update";
+
+    public static final String APPLICATION_CANARY_PROMOTE = "application:canary-promote";
+
+    public static final String APPLICATION_CANARY_ABORT = "application:canary-abort";
+
     public static final String APPLICATION_DEPENDENCY_ADD = "application:dependency-add";
 
     /** 修改外部连接（地址 / 端口 / Secret 登记） */
