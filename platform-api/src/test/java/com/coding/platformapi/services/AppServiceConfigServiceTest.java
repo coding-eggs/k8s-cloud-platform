@@ -105,6 +105,15 @@ class AppServiceConfigServiceTest {
     }
 
     @Test
+    void createRejectsKeysEndingWithCanarySuffix() {
+        // api-canary 会和服务 api 灰度版本的对象名（<slug>-api-canary）撞上
+        assertThatThrownBy(() -> service.create(req("api-canary", web("1")), "t1"))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("-canary");
+        verify(services, never()).insert(any());
+    }
+
+    @Test
     void createRejectsBadKeys() {
         for (String bad : List.of("Web", "1web", "web_x", "a-env", "a-secret", "a-headless", "a-files", "", "x".repeat(21))) {
             assertThatThrownBy(() -> service.create(req(bad, web("1")), "t1"))

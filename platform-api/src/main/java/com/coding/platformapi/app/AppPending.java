@@ -103,6 +103,9 @@ public final class AppPending {
         keys.addAll(after.keySet());
         List<String> out = new ArrayList<>();
         for (String k : keys) {
+            if (AppCanary.KEY.equals(k)) {
+                continue;   // 灰度块只在快照里、不在台账里：不是待发布改动
+            }
             JsonNode a = AppSnapshot.JSON.valueToTree(before.get(k));
             JsonNode b = AppSnapshot.JSON.valueToTree(after.get(k));
             if (!a.equals(b)) {

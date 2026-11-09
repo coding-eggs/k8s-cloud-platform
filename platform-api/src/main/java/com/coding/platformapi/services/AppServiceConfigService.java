@@ -34,7 +34,7 @@ import java.util.regex.Pattern;
  * 服务的期望配置（增删改）。只动 desired，不碰线上：发布时才按勾选生成快照。
  *
  * <p>key 规则：DNS 标签、至多 20 字符（对象名 {@code <slug>-<key>} 要装进 63）、创建后不可改、
- * 与依赖共用一个命名空间。不能以 -env / -secret / -headless / -files 结尾：台账按这些后缀把对象归并回服务，
+ * 与依赖共用一个命名空间。不能以 -env / -secret / -headless / -files / -canary 结尾：台账按这些后缀把对象归并回服务，
  * 允许的话 {@code api-env} 会和 api 的 ConfigMap 混成同一个服务。
  */
 @lombok.extern.slf4j.Slf4j
@@ -43,7 +43,8 @@ public class AppServiceConfigService {
 
     private static final ObjectMapper JSON = JsonMapper.builder().build();
     private static final Pattern KEY = Pattern.compile("^[a-z]([a-z0-9-]{0,18}[a-z0-9])?$");
-    private static final List<String> RESERVED_SUFFIXES = List.of("-env", "-secret", "-headless", "-files");
+    private static final List<String> RESERVED_SUFFIXES = List.of("-env", "-secret", "-headless", "-files",
+            com.coding.platformapi.app.AppCanary.SUFFIX);
 
     private final PlatformApplicationMapper apps;
     private final PlatformAppServiceMapper services;
