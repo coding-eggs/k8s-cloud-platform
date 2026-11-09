@@ -48,6 +48,7 @@ class AppCanaryServiceTest {
     private PlatformAppExecutionMapper executions;
     private AppCanaryService canary;
     private PlatformApplication app;
+    private com.coding.platformapi.metrics.MetricsService metrics;
 
     @BeforeEach
     void setUp() {
@@ -72,7 +73,8 @@ class AppCanaryServiceTest {
                 new AppFeatureGate(new ComponentFeatureGuard(componentFlags), componentFlags,
                         mock(GatewayService.class)),
                 mock(IngressPortService.class));
-        canary = new AppCanaryService(apps, services, releaseService, pipeline);
+        metrics = mock(com.coding.platformapi.metrics.MetricsService.class);
+        canary = new AppCanaryService(apps, services, releaseService, pipeline, metrics);
 
         app = new PlatformApplication();
         app.setId("app1");
@@ -353,5 +355,21 @@ class AppCanaryServiceTest {
         assertThatThrownBy(() -> canary.promote("app1", "api", null, "bob", "t1")).hasMessageContaining("进行中");
         assertThatThrownBy(() -> canary.abort("app1", "api", null, "bob", "t1")).hasMessageContaining("进行中");
         assertThatThrownBy(() -> canary.start(start("3"), "bob", "t1")).hasMessageContaining("进行中");
+    }
+
+    @Test
+    void metricsRejectsServiceNotInCanaryAndNormalizesWindow() {
+        live(Map.of("api", svc("1", "gateway-http")));
+        assertThatThrownBy(() -> canary.metrics("app1", "api", "15m", "t1")).hasMessageContaining("不在灰度");
+
+        live(Map.of("api", inCanary(svc("1", "gateway-http"), svc("2", "gateway-http"))));
+        when(metrics.canaryCompare("c1", "demo", "shop-api", "shop-api-canary", "15m", false))
+                .thenReturn(Map.of("stable", Map.of(), "canary", Map.of()));
+
+        var view = canary.metrics("app1", "api", "7d", "t1");
+
+        verify(metrics).canaryCompare("c1", "demo", "shop-api", "shop-api-canary", "15m", false);
+        assertThat(view.window()).isEqualTo("15m");
+        assertThat(view.protocol()).isEqualTo("HTTP");
     }
 }

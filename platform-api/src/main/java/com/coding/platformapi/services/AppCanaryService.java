@@ -7,10 +7,13 @@ import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.platformapi.app.AppCanary;
+import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppPending;
 import com.coding.platformapi.app.AppServiceDesired;
 import com.coding.platformapi.app.AppSnapshot;
 import com.coding.platformapi.k8s.K8sServerGateway;
+import com.coding.platformapi.metrics.MetricsService;
+import com.coding.platformapi.models.AppCanaryMetricsView;
 import com.coding.platformapi.models.AppCanaryRequest;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
@@ -47,13 +50,15 @@ public class AppCanaryService {
     private final PlatformAppServiceMapper services;
     private final AppReleaseService releases;
     private final AppReleasePipeline pipeline;
+    private final MetricsService metrics;
 
     public AppCanaryService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
-                            AppReleaseService releases, AppReleasePipeline pipeline) {
+                            AppReleaseService releases, AppReleasePipeline pipeline, MetricsService metrics) {
         this.apps = apps;
         this.services = services;
         this.releases = releases;
         this.pipeline = pipeline;
+        this.metrics = metrics;
     }
 
     /** 当前线上状态 + 凭据：四个操作的公共前置 */
@@ -160,6 +165,27 @@ public class AppCanaryService {
                 writeRow(row, stable);
             }
         });
+    }
+
+    // ------------------------------------------------------------------ 指标
+
+    private static final List<String> WINDOWS = List.of("5m", "15m", "1h");
+    private static final String DEFAULT_WINDOW = "15m";
+
+    /** 两个版本的网关侧指标；只读，不需要凭据与执行锁。时间窗只收 5m / 15m / 1h，其他按 15m。 */
+    public AppCanaryMetricsView metrics(String appId, String serviceKey, String window, String tenantId) {
+        PlatformApplication app = AppGuard.require(apps, appId, tenantId);
+        Map<String, Object> liveService = releases.liveSnapshot(app).services().get(serviceKey);
+        if (AppCanary.of(liveService) == null) {
+            throw error("服务 " + serviceKey + " 不在灰度中");
+        }
+        String w = WINDOWS.contains(window) ? window : DEFAULT_WINDOW;
+        String protocol = AppServiceDesired.gatewayProtocol(liveService);
+        Map<String, Map<String, Double>> m = metrics.canaryCompare(app.getClusterId(), app.getNamespace(),
+                AppObjectNames.objectName(app.getSlug(), serviceKey),
+                AppObjectNames.objectName(app.getSlug(), AppCanary.nodeKey(serviceKey)), w, "TCP".equals(protocol));
+        return new AppCanaryMetricsView(w, protocol, m.getOrDefault("stable", Map.of()),
+                m.getOrDefault("canary", Map.of()));
     }
 
     // ------------------------------------------------------------------ 内部

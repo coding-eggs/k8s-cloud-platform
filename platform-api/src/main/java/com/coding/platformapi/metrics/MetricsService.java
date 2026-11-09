@@ -22,6 +22,7 @@ import com.coding.platformapi.metrics.labels.MeshEdgeLabels;
 import com.coding.platformapi.metrics.labels.MeshErrorLabels;
 import com.coding.platformapi.metrics.labels.MeshLatencyLabels;
 import com.coding.platformapi.metrics.labels.MetricLabels;
+import com.coding.platformapi.metrics.labels.ServiceNameLabels;
 import com.coding.platformapi.metrics.labels.NamespaceLabels;
 import com.coding.platformapi.metrics.model.PromResult;
 import lombok.RequiredArgsConstructor;
@@ -695,6 +696,59 @@ public class MetricsService {
     }
 
     /** clusterId → 人类可读集群名（= cluster_name 标签值）。 */
+    // ===== 入口灰度对比（即时查询，按 destination_service_name 拆两列）=====
+
+    /**
+     * stable / canary 两个 Service 的网关侧指标即时值。外层 key {@code stable} / {@code canary}；
+     * 内层 HTTP 为 rps / errorRate / p50 / p99，TCP 为 cps / bytes；查不到（含 NaN、总量为 0 的错误率）为 null。
+     */
+    public Map<String, Map<String, Double>> canaryCompare(String clusterId, String namespace, String stableSvc,
+                                                          String canarySvc, String window, boolean tcp) {
+        String cluster = clusterName(clusterId);
+        String names = stableSvc + "|" + canarySvc;   // 对象名是 DNS 标签，没有正则元字符
+        java.util.function.Function<MetricQuery, Map<String, Double>> run = q -> byService(client.query(
+                String.format(q.sql(), cluster, namespace, names, window), null, ServiceNameLabels.class));
+        Map<String, Map<String, Double>> out = new LinkedHashMap<>();
+        if (tcp) {
+            Map<String, Double> cps = run.apply(MetricQuery.CANARY_TCP_CONNECTIONS);
+            Map<String, Double> bytes = run.apply(MetricQuery.CANARY_TCP_BYTES);
+            for (String[] v : new String[][]{{"stable", stableSvc}, {"canary", canarySvc}}) {
+                Map<String, Double> m = new LinkedHashMap<>();
+                m.put("cps", cps.get(v[1]));
+                m.put("bytes", bytes.get(v[1]));
+                out.put(v[0], m);
+            }
+            return out;
+        }
+        Map<String, Double> rps = run.apply(MetricQuery.CANARY_REQUESTS);
+        Map<String, Double> errors = run.apply(MetricQuery.CANARY_ERRORS);
+        Map<String, Double> p50 = run.apply(MetricQuery.CANARY_LATENCY_P50);
+        Map<String, Double> p99 = run.apply(MetricQuery.CANARY_LATENCY_P99);
+        for (String[] v : new String[][]{{"stable", stableSvc}, {"canary", canarySvc}}) {
+            Double total = rps.get(v[1]);
+            Double err = errors.get(v[1]);
+            Map<String, Double> m = new LinkedHashMap<>();
+            m.put("rps", total);
+            // 有流量但没有 5xx 序列 = 0 错误；没有流量 = 无从算起
+            m.put("errorRate", total == null || total <= 0 ? null : (err == null ? 0.0 : err / total));
+            m.put("p50", p50.get(v[1]));
+            m.put("p99", p99.get(v[1]));
+            out.put(v[0], m);
+        }
+        return out;
+    }
+
+    private Map<String, Double> byService(List<PromResult<ServiceNameLabels>> rows) {
+        Map<String, Double> out = new java.util.HashMap<>();
+        for (PromResult<ServiceNameLabels> r : rows == null ? List.<PromResult<ServiceNameLabels>>of() : rows) {
+            Double v = instantValue(r);
+            if (v != null && r.getMetric() != null && r.getMetric().getServiceName() != null) {
+                out.merge(r.getMetric().getServiceName(), v, Double::sum);
+            }
+        }
+        return out;
+    }
+
     private String clusterName(String clusterId) {
         K8sCluster c = clusterMapper.selectByPrimaryKey(clusterId);
         if (c == null || c.getDeletedAt() != null) {

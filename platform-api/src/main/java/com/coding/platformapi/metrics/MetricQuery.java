@@ -1,5 +1,6 @@
 package com.coding.platformapi.metrics;
 
+import com.coding.platformapi.metrics.labels.ServiceNameLabels;
 import com.coding.platformapi.metrics.labels.DeviceLabels;
 import com.coding.platformapi.metrics.labels.MeshEdgeLabels;
 import com.coding.platformapi.metrics.labels.MeshErrorLabels;
@@ -168,6 +169,26 @@ public enum MetricQuery {
      *  ⚠️ 必须按集群过滤：否则「B 集群没采集、A 集群在采集」会被误判成已采集。 */
     MESH_TOPOLOGY_SCRAPED(MetricLabels.class,
             "count(istio_build{cluster_name=\"%s\"})"),
+
+    // ===== 入口灰度对比（位置占位符：%1$s 集群名、%2$s 命名空间、%3$s 服务名正则 stable|canary、%4$s 时间窗）=====
+    // 全部 sum by (destination_service_name)：一条序列 = 一个版本。不加 reporter 过滤（见上面拓扑段的实测注释），
+    //   只要目标 Service 匹配，网关记的那份自然在内。label 名部署后须在真集群核对（spec §10）。
+    /** 请求/秒 */
+    CANARY_REQUESTS(ServiceNameLabels.class,
+            "sum by (destination_service_name) (rate(istio_requests_total{cluster_name=\"%1$s\",destination_service_namespace=\"%2$s\",destination_service_name=~\"%3$s\"}[%4$s]))"),
+    /** 5xx/秒，与 REQUESTS 相除得错误率 */
+    CANARY_ERRORS(ServiceNameLabels.class,
+            "sum by (destination_service_name) (rate(istio_requests_total{cluster_name=\"%1$s\",destination_service_namespace=\"%2$s\",destination_service_name=~\"%3$s\",response_code=~\"5..\"}[%4$s]))"),
+    CANARY_LATENCY_P50(ServiceNameLabels.class,
+            "histogram_quantile(0.5, sum by (le, destination_service_name) (rate(istio_request_duration_milliseconds_bucket{cluster_name=\"%1$s\",destination_service_namespace=\"%2$s\",destination_service_name=~\"%3$s\"}[%4$s])))"),
+    CANARY_LATENCY_P99(ServiceNameLabels.class,
+            "histogram_quantile(0.99, sum by (le, destination_service_name) (rate(istio_request_duration_milliseconds_bucket{cluster_name=\"%1$s\",destination_service_namespace=\"%2$s\",destination_service_name=~\"%3$s\"}[%4$s])))"),
+    /** TCP：新建连接/秒 */
+    CANARY_TCP_CONNECTIONS(ServiceNameLabels.class,
+            "sum by (destination_service_name) (rate(istio_tcp_connections_opened_total{cluster_name=\"%1$s\",destination_service_namespace=\"%2$s\",destination_service_name=~\"%3$s\"}[%4$s]))"),
+    /** TCP：收发字节/秒 */
+    CANARY_TCP_BYTES(ServiceNameLabels.class,
+            "sum by (destination_service_name) (rate(istio_tcp_sent_bytes_total{cluster_name=\"%1$s\",destination_service_namespace=\"%2$s\",destination_service_name=~\"%3$s\"}[%4$s])) + sum by (destination_service_name) (rate(istio_tcp_received_bytes_total{cluster_name=\"%1$s\",destination_service_namespace=\"%2$s\",destination_service_name=~\"%3$s\"}[%4$s]))"),
 
     ;
 
