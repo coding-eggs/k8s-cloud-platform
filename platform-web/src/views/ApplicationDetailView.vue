@@ -419,9 +419,12 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="130">
+          <el-table-column label="状态" min-width="170">
             <template #default="{ row }">
               <StatusBadge :label="STATE_META[row.state as AppServiceState]?.text ?? row.state" :type="STATE_META[row.state as AppServiceState]?.type ?? 'neutral'" />
+              <el-tooltip v-if="row.canary" :content="`灰度版本 ${row.canary.image}，${row.canary.replicas} 副本`" placement="top">
+                <el-tag size="small" type="primary" effect="light" class="app-detail__canary">灰度中 {{ row.canary.weight }}%</el-tag>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column label="待发布" min-width="140">
@@ -613,4 +616,5 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 /* el-dialog 内部节点没有 data-v-*，scoped 打不到；唯一前缀 app-svc-dlg */
 .app-svc-dlg .app-svc-dlg__err { color: var(--el-color-danger); font-size: 12px; }
 .app-svc-dlg .app-svc-dlg__tip { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
+.app-detail__canary { margin-left: 6px; }
 </style>

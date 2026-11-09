@@ -1,5 +1,7 @@
 import http from './http'
 import type {
+  AppCanaryMetrics,
+  AppCanaryRequest,
   AppExecution,
   AppExecutionLog,
   AppDependencyRequest,
@@ -1347,6 +1349,19 @@ export const appReleaseApi = {
   /** 某次发布的过程日志（按时间正序） */
   logs: (appId: string, releaseNo: number, tenantId?: string) =>
     http.post<never, AppExecutionLog[]>('/application/execution/logs', { appId, releaseNo, tenantId }),
+}
+
+/** 入口灰度：四个写操作返回执行 id（异步执行，进度看 execution/active） */
+export const appCanaryApi = {
+  start: (payload: AppCanaryRequest) => http.post<never, number>('/application/canary/start', payload),
+  /** 字段不传 = 不改 */
+  update: (payload: AppCanaryRequest) => http.post<never, number>('/application/canary/update', payload),
+  promote: (payload: { appId: string; serviceKey: string; note?: string; tenantId?: string }) =>
+    http.post<never, number>('/application/canary/promote', payload),
+  abort: (payload: { appId: string; serviceKey: string; note?: string; tenantId?: string }) =>
+    http.post<never, number>('/application/canary/abort', payload),
+  metrics: (payload: { appId: string; serviceKey: string; window: string; tenantId?: string }) =>
+    http.post<never, AppCanaryMetrics>('/application/canary/metrics', payload),
 }
 
 /** OAuth 客户端（平台管理面，仅 admin）。读接口不含任何密钥；创建 / 重置的响应里密钥只出现一次 */

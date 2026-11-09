@@ -49,6 +49,8 @@ const keyLabel = (key: string): string => (key === APP_SETTINGS_KEY ? '应用设
 
 const rowOf = (key: string): AppServiceRow | undefined => props.services.find((s) => s.key === key)
 const isDeleted = (r: AppServiceRow): boolean => r.pending === 'DELETED'
+/** 灰度中的服务锁住：只能在服务页「灰度」页签全量或回退（后端同样拒绝勾选） */
+const inCanary = (key: string): boolean => !!rowOf(key)?.canary
 const desiredTag = (r: AppServiceRow): string => r.desired?.imageTag ?? imageTag(r.image)
 
 /** 只发与期望配置不同的 tag；待删除的服务没有 tag 可改 */
@@ -68,10 +70,11 @@ const tagEdited = (r: AppServiceRow): boolean =>
 function setTag(key: string, v: string): void {
   tags.value[key] = v
   const r = rowOf(key)
-  if (r && tagEdited(r) && !selected.value.includes(key)) selected.value = [...selected.value, key]
+  if (r && tagEdited(r) && !inCanary(key) && !selected.value.includes(key)) selected.value = [...selected.value, key]
 }
 
 function toggle(key: string, on: unknown): void {
+  if (on && inCanary(key)) return
   selected.value = on ? [...new Set([...selected.value, key])] : selected.value.filter((k) => k !== key)
 }
 
@@ -82,7 +85,7 @@ let timer: number | null = null
 
 watch(visible, (v) => {
   if (!v) return
-  selected.value = [...props.pendingKeys]
+  selected.value = props.pendingKeys.filter((k) => !inCanary(k))
   tags.value = Object.fromEntries(props.services.map((s) => [s.key, desiredTag(s)]))
   note.value = ''
   preview.value = null
@@ -171,12 +174,15 @@ async function submit(): Promise<void> {
     <el-table :data="services" size="small" row-key="key">
       <el-table-column width="46">
         <template #default="{ row }">
-          <el-checkbox :model-value="selected.includes(row.key)" @change="(v: unknown) => toggle(row.key, v)" />
+          <el-tooltip :disabled="!row.canary" content="灰度中：先在服务页「灰度」页签全量或回退" placement="top">
+            <span><el-checkbox :model-value="selected.includes(row.key)" :disabled="!!row.canary" @change="(v: unknown) => toggle(row.key, v)" /></span>
+          </el-tooltip>
         </template>
       </el-table-column>
       <el-table-column label="服务" min-width="130">
         <template #default="{ row }">
           <b>{{ row.key }}</b>
+          <el-tag v-if="row.canary" size="small" effect="light" type="primary" class="app-rel-dlg__tag">灰度中 {{ row.canary.weight }}%</el-tag>
           <el-tag
             v-if="row.pending"
             size="small"

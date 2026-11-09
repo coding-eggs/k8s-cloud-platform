@@ -3142,6 +3142,29 @@ export interface AppServiceCanary {
   state: Exclude<AppServiceState, 'NOT_RELEASED'>
 }
 
+/** 开始 / 调整灰度：开始时不传 desired = 复制线上 stable；调整时字段不传 = 不改 */
+export interface AppCanaryRequest {
+  appId: string
+  serviceKey: string
+  tenantId?: string
+  desired?: AppServiceDesired
+  replicas?: number
+  weight?: number
+  /** 仅 HTTP；开始时 HTTP 默认开 */
+  headerEnabled?: boolean
+  headerName?: string
+  headerValue?: string
+  note?: string
+}
+
+/** 灰度面板指标：查不到为 null。HTTP：rps / errorRate（0-1）/ p50 / p99（毫秒）；TCP：cps / bytes（字节/秒） */
+export interface AppCanaryMetrics {
+  window: string
+  protocol: 'HTTP' | 'TCP'
+  stable: Record<string, number | null>
+  canary: Record<string, number | null>
+}
+
 /** programmed / conflicted 为 null = 状态未知（集群读不到或 listener 尚未下发） */
 export interface AppServiceIngress {
   port: number

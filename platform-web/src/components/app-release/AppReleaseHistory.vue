@@ -106,6 +106,10 @@ function externalText(ext?: Record<string, unknown> | null): string {
   if (!ext) return ''
   return Object.entries(ext).map(([k, v]) => `${k}=${String(v)}`).join('  ')
 }
+/** 入口灰度的四种发布；服务名在备注里（后端自动生成，如「灰度 api：权重 10%」） */
+const CANARY_TYPE: Record<string, string> = {
+  CANARY_START: '开始灰度', CANARY_UPDATE: '调整灰度', CANARY_PROMOTE: '灰度全量', CANARY_ABORT: '灰度回退',
+}
 </script>
 
 <template>
@@ -123,6 +127,7 @@ function externalText(ext?: Record<string, unknown> | null): string {
         <template #default="{ row }">
           <template v-if="row.type === 'ROLLBACK'">回滚自 #{{ row.sourceReleaseNo }}</template>
           <template v-else-if="row.type === 'OFFLINE'">下线</template>
+          <template v-else-if="CANARY_TYPE[row.type]">{{ CANARY_TYPE[row.type] }}</template>
           <template v-else>普通发布</template>
         </template>
       </el-table-column>
@@ -173,6 +178,7 @@ function externalText(ext?: Record<string, unknown> | null): string {
             <StatusBadge :label="RELEASE_STATUS[detail.status]?.text ?? detail.status" :type="RELEASE_STATUS[detail.status]?.type ?? 'neutral'" />
             <span v-if="detail.type === 'ROLLBACK'">回滚自 #{{ detail.sourceReleaseNo }}</span>
             <span v-else-if="detail.type === 'OFFLINE'">下线（删除全部集群对象，数据卷保留）</span>
+            <span v-else-if="CANARY_TYPE[detail.type]">{{ CANARY_TYPE[detail.type] }}</span>
             <span>{{ detail.createdBy || '—' }} · {{ fmtDate(detail.createdAt) }}</span>
           </div>
           <p v-if="detail.note" class="app-rel-drawer__note">{{ detail.note }}</p>
