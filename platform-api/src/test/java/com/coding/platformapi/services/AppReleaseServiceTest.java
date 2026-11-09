@@ -1603,6 +1603,7 @@ class AppReleaseServiceTest {
         assertThat(c.replicas()).isEqualTo(2);
         assertThat(c.headerName()).isEqualTo("x-canary");
         assertThat(c.state()).isEqualTo("READY");
+        assertThat(c.external()).isTrue();
         assertThat(rows.stream().filter(x -> x.key().equals("web")).findFirst().orElseThrow().canary()).isNull();
     }
 }

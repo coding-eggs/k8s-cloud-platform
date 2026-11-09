@@ -10,6 +10,7 @@ import com.coding.platformapi.app.AppCanary;
 import com.coding.platformapi.app.AppObjectNames;
 import com.coding.platformapi.app.AppPending;
 import com.coding.platformapi.app.AppServiceDesired;
+import com.coding.platformapi.app.AppSettings;
 import com.coding.platformapi.app.AppSnapshot;
 import com.coding.platformapi.k8s.K8sServerGateway;
 import com.coding.platformapi.metrics.MetricsService;
@@ -27,7 +28,8 @@ import java.util.TreeMap;
 import java.util.regex.Pattern;
 
 /**
- * 入口灰度的四个操作（设计 {@code 2026-11-09-app-canary-release-design.md} §5 / §6）。
+ * 灰度的四个操作（设计 {@code 2026-11-09-app-canary-release-design.md} §5 / §6；
+ * 内部灰度 {@code 2026-11-09-app-internal-canary-design.md} §5：L7 网格时集群内调用也分流，external 管网关流量）。
  *
  * <p>每个操作都是一条普通发布：以线上快照为底，只改目标服务的 {@code canary} 块（或把它并回 stable），
  * 走与普通发布相同的执行路径。线上快照里某服务带 canary 块 = 正在灰度；live_release_no 只在执行成功时切换，
@@ -90,10 +92,11 @@ public class AppCanaryService {
             throw error("服务 " + c.key + " 已在灰度中");
         }
         Map<String, Object> stable = c.liveService;
-        requireEligible(c.key, stable);
+        boolean l7 = AppSettings.isL7(c.live.app());
+        requireEligible(c.key, stable, l7);
         Map<String, Object> desired = req.getDesired() == null ? new LinkedHashMap<>(stable)
                 : AppServiceDesired.normalize(req.getDesired());
-        boolean http = "HTTP".equals(AppServiceDesired.gatewayProtocol(stable));
+        boolean http = "HTTP".equals(AppServiceDesired.serviceProtocol(stable));
         AppCanary.Header header = null;
         boolean headerOn = req.getHeaderEnabled() == null ? http : req.getHeaderEnabled();
         if (headerOn) {
@@ -103,7 +106,8 @@ public class AppCanaryService {
         }
         AppCanary.Spec spec = new AppCanary.Spec(desired,
                 req.getReplicas() == null ? AppCanary.DEFAULT_REPLICAS : req.getReplicas(),
-                req.getWeight() == null ? AppCanary.DEFAULT_WEIGHT : req.getWeight(), header);
+                req.getWeight() == null ? AppCanary.DEFAULT_WEIGHT : req.getWeight(), header,
+                resolveExternal(req.getExternal(), null, stable, l7));
         validate(c.key, stable, spec);
         return launch(c, AppCanary.with(stable, spec), TYPE_START,
                 noteOr(req.getNote(), "灰度 " + c.key + "：权重 " + spec.weight() + "%"), operator, () -> { });
@@ -130,7 +134,8 @@ public class AppCanaryService {
         }
         AppCanary.Spec spec = new AppCanary.Spec(desired,
                 req.getReplicas() == null ? cur.replicas() : req.getReplicas(),
-                req.getWeight() == null ? cur.weight() : req.getWeight(), header);
+                req.getWeight() == null ? cur.weight() : req.getWeight(), header,
+                resolveExternal(req.getExternal(), cur.external(), stable, AppSettings.isL7(c.live.app())));
         validate(c.key, stable, spec);
         return launch(c, AppCanary.with(stable, spec), TYPE_UPDATE,
                 noteOr(req.getNote(), "调整灰度 " + c.key + "：权重 " + spec.weight() + "%"), operator, () -> { });
@@ -203,14 +208,32 @@ public class AppCanaryService {
                 writes);
     }
 
-    /** 能灰度的服务：网关暴露（HTTP / TCP）+ 无状态（与 chart 选 StatefulSet 的判据一致：persistenceEnabled） */
-    private static void requireEligible(String key, Map<String, Object> stable) {
-        if (AppServiceDesired.gatewayProtocol(stable) == null) {
-            throw error("服务 " + key + " 不是网关暴露（网关 HTTP / 网关 TCP），不能灰度");
+    /**
+     * 能灰度的服务：（应用线上设置为 L7 网格 或 网关暴露）+ 无状态（与 chart 选 StatefulSet 的判据一致：persistenceEnabled）。
+     * L7 时集群内调用分流；非 L7 只分网关流量（入口灰度）。
+     */
+    private static void requireEligible(String key, Map<String, Object> stable, boolean l7) {
+        if (!l7 && AppServiceDesired.gatewayProtocol(stable) == null) {
+            throw error("服务 " + key + " 不能灰度：应用未开启 L7 网格（内部调用分流需要），服务也没有网关暴露");
         }
         if (stateful(stable)) {
             throw error("服务 " + key + " 是有状态服务（开启了持久化），不能灰度");
         }
+    }
+
+    /**
+     * 网关流量是否参与（内部灰度设计 §4.1 / §5.1）：无网关暴露恒 false；有网关暴露取请求值、再取当前值、再默认 true；
+     * 非 L7 时只能为 true（否则没有任何流量分到灰度版本）。
+     */
+    static boolean resolveExternal(Boolean requested, Boolean current, Map<String, Object> stable, boolean l7) {
+        if (AppServiceDesired.gatewayProtocol(stable) == null) {
+            return false;
+        }
+        boolean external = requested != null ? requested : current == null || current;
+        if (!external && !l7) {
+            throw error("应用未开启 L7 网格时外部流量必须参与灰度（否则没有任何流量分到灰度版本）");
+        }
+        return external;
     }
 
     private static void validate(String key, Map<String, Object> stable, AppCanary.Spec spec) {
@@ -224,6 +247,9 @@ public class AppCanaryService {
         if (!AppServiceDesired.kindOf(d).equals(AppServiceDesired.kindOf(stable)) || stateful(d)) {
             throw error("灰度版本的服务类型必须与线上一致（无状态服务）");
         }
+        if (!AppServiceDesired.serviceProtocol(d).equals(AppServiceDesired.serviceProtocol(stable))) {
+            throw error("灰度版本的协议必须与线上一致（HTTP / TCP）");
+        }
         if (spec.weight() < 0 || spec.weight() > 100) {
             throw error("灰度权重须为 0-100 的整数");
         }
@@ -231,8 +257,8 @@ public class AppCanaryService {
             throw error("灰度副本数须为 1-100");
         }
         if (spec.header() != null) {
-            if (!"HTTP".equals(AppServiceDesired.gatewayProtocol(stable))) {
-                throw error("服务 " + key + " 是网关 TCP 暴露，TCP 不支持 header 直达");
+            if (!"HTTP".equals(AppServiceDesired.serviceProtocol(stable))) {
+                throw error("服务 " + key + " 是 TCP 服务，不支持 header 直达");
             }
             if (!HEADER_NAME.matcher(spec.header().name()).matches()) {
                 throw error("header 名只能含字母、数字、连字符（至多 64 位）");

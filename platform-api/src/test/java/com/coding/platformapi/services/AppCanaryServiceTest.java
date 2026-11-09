@@ -372,4 +372,98 @@ class AppCanaryServiceTest {
         assertThat(view.window()).isEqualTo("15m");
         assertThat(view.protocol()).isEqualTo("HTTP");
     }
+
+    // ---------- 内部灰度（2026-11-09） ----------
+
+    private static final Map<String, Object> L7 = Map.of("mesh", Map.of("mode", "l7", "waypoint", "wp"));
+
+    private void liveWithApp(Map<String, Map<String, Object>> liveServices, Map<String, Object> appSettings) {
+        app.setLiveReleaseNo(5);
+        PlatformAppRelease r = new PlatformAppRelease();
+        r.setReleaseNo(5);
+        r.setSnapshotJson(new AppSnapshot(liveServices, List.of(), appSettings).toJson());
+        r.setObjectsJson("[]");
+        when(releases.selectByNo("app1", 5)).thenReturn(r);
+    }
+
+    private static AppCanaryRequest copyStable() {
+        AppCanaryRequest r = new AppCanaryRequest();
+        r.setAppId("app1");
+        r.setServiceKey("api");
+        return r;
+    }
+
+    @Test
+    void l7AppCanStartCanaryOnUnexposedService() {
+        liveWithApp(Map.of("api", svc("1", null)), L7);
+        row("api", svc("1", null));
+
+        canary.start(copyStable(), "bob", "t1");
+
+        AppCanary.Spec s = AppCanary.of(AppSnapshot.parse(inserted().getSnapshotJson()).services().get("api"));
+        assertThat(s.external()).isFalse();
+        assertThat(s.header()).isNotNull();
+    }
+
+    @Test
+    void unexposedServiceWithoutL7IsRejected() {
+        live(Map.of("api", svc("1", null)));
+        assertThatThrownBy(() -> canary.start(copyStable(), "bob", "t1")).hasMessageContaining("L7");
+        verify(releases, never()).insert(any());
+    }
+
+    @Test
+    void externalFalseRejectedWithoutL7() {
+        live(Map.of("api", svc("1", "gateway-http")));
+        row("api", svc("1", "gateway-http"));
+        AppCanaryRequest r = copyStable();
+        r.setExternal(false);
+        assertThatThrownBy(() -> canary.start(r, "bob", "t1")).hasMessageContaining("外部流量必须参与");
+    }
+
+    @Test
+    void externalFalseAllowedWithL7AndKeptOnUpdate() {
+        liveWithApp(Map.of("api", svc("1", "gateway-http")), L7);
+        row("api", svc("1", "gateway-http"));
+        AppCanaryRequest r = copyStable();
+        r.setExternal(false);
+        canary.start(r, "bob", "t1");
+        Map<String, Object> started = AppSnapshot.parse(inserted().getSnapshotJson()).services().get("api");
+        assertThat(AppCanary.of(started).external()).isFalse();
+
+        liveWithApp(Map.of("api", started), L7);
+        AppCanaryRequest u = copyStable();
+        u.setWeight(50);
+        canary.update(u, "bob", "t1");
+        ArgumentCaptor<PlatformAppRelease> cap = ArgumentCaptor.forClass(PlatformAppRelease.class);
+        verify(releases, org.mockito.Mockito.times(2)).insert(cap.capture());
+        AppCanary.Spec s = AppCanary.of(AppSnapshot.parse(cap.getAllValues().get(1).getSnapshotJson()).services().get("api"));
+        assertThat(s.external()).isFalse();
+        assertThat(s.weight()).isEqualTo(50);
+    }
+
+    @Test
+    void canaryProtocolMustMatchStable() {
+        liveWithApp(Map.of("api", svc("1", null)), L7);
+        row("api", svc("1", null));
+        AppCanaryRequest r = copyStable();
+        Map<String, Object> d = svc("2", null);
+        d.put("probeType", "tcp");
+        r.setDesired(d);
+        assertThatThrownBy(() -> canary.start(r, "bob", "t1")).hasMessageContaining("协议必须与线上一致");
+    }
+
+    @Test
+    void tcpServiceRejectsHeader() {
+        Map<String, Object> tcp = svc("1", null);
+        tcp.put("probeType", "tcp");
+        liveWithApp(Map.of("api", tcp), L7);
+        row("api", tcp);
+        AppCanaryRequest on = copyStable();
+        on.setHeaderEnabled(true);
+        assertThatThrownBy(() -> canary.start(on, "bob", "t1")).hasMessageContaining("不支持 header 直达");
+
+        canary.start(copyStable(), "bob", "t1");
+        assertThat(AppCanary.of(AppSnapshot.parse(inserted().getSnapshotJson()).services().get("api")).header()).isNull();
+    }
 }

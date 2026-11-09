@@ -36,6 +36,9 @@ public class AppCanaryRequest {
     @Schema(description = "header 值（默认 true）")
     private String headerValue;
 
+    @Schema(description = "网关进来的流量是否参与灰度（仅 L7 网格且有网关暴露时可为 false；开始时默认 true，调整时不传 = 不改）")
+    private Boolean external;
+
     @Schema(description = "发布备注；不填自动生成")
     private String note;
 

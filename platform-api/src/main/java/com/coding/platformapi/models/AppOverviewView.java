@@ -34,7 +34,7 @@ public record AppOverviewView(String appId, String status, Integer liveReleaseNo
      * （READY / PENDING / FAILED / MISSING / UNKNOWN）。
      */
     public record Canary(int weight, String headerName, String headerValue, String image, int replicas,
-                         String state) {
+                         String state, boolean external) {
     }
 
     /**

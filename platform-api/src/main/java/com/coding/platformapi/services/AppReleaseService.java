@@ -865,7 +865,8 @@ public class AppReleaseService {
         return new AppOverviewView.Canary(spec.weight(),
                 spec.header() == null ? null : spec.header().name(),
                 spec.header() == null ? null : spec.header().value(),
-                AppServiceDesired.image(spec.desired()), spec.replicas(), states.getOrDefault(name, "UNKNOWN"));
+                AppServiceDesired.image(spec.desired()), spec.replicas(), states.getOrDefault(name, "UNKNOWN"),
+                spec.external());
     }
 
     private Map<String, String> liveStates(PlatformApplication app, Map<String, Integer> nodePorts) {
