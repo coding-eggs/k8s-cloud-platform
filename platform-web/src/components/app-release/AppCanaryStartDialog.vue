@@ -15,7 +15,14 @@ import AppTagInput from './AppTagInput.vue'
 import AppEnvEditor from './AppEnvEditor.vue'
 import AppConfigFilesEditor from './AppConfigFilesEditor.vue'
 import AppResourcesForm from './AppResourcesForm.vue'
-import { cleanCommandLists, cleanConfigFiles, configFileProblems, dataMountOf } from './desiredFormUtil'
+import AppSchedulingForm from './AppSchedulingForm.vue'
+import AppVolumesForm from './AppVolumesForm.vue'
+import { usePermission } from '@/stores/permission'
+import { useResourceContext } from '@/stores/context'
+import {
+  cleanCommandLists, cleanConfigFiles, cleanScheduling, configFileProblems, dataMountOf,
+  mountProblems, nodeSelectorProblems, tolerationProblems, volumeProblems,
+} from './desiredFormUtil'
 import type { AppDependencyRow, AppServiceDesired } from '@/types'
 
 const props = defineProps<{
@@ -86,6 +93,15 @@ const sameImage = computed(() =>
   form.value.imageRepo === props.stable.imageRepo && form.value.imageTag === props.stable.imageTag)
 const dataMount = computed(() => dataMountOf(form.value))
 const filesInvalid = computed(() => configFileProblems(form.value.configFiles, dataMount.value).some(Boolean))
+/** 调度 / 挂载的软校验（与配置页同一套；权威校验在后端 AppCanaryService → AppServiceDesired） */
+const perm = usePermission()
+const schedulingInvalid = computed(() => nodeSelectorProblems(form.value).some(Boolean)
+  || tolerationProblems(form.value).some(Boolean))
+const volumesInvalid = computed(() => volumeProblems(form.value, !!perm.isAdmin).some(Boolean)
+  || mountProblems(form.value).some(Boolean))
+/** 挂载页签的候选下拉（ConfigMap / Secret / PVC）来自资源域上下文：切过去先把命名空间对齐到应用 */
+const { setNamespace } = useResourceContext()
+watch(tab, (v) => { if (v === 'volumes') setNamespace(props.ctx.namespace) })
 const probeOff = computed(() => form.value.probeEnabled === false)
 const exposeText = computed(() => (!props.exposed ? `不对外（${props.protocol}）` : props.protocol === 'HTTP' ? '网关 HTTP' : '网关 TCP'))
 /** 分流范围说明 */
@@ -102,6 +118,8 @@ function buildDesired(): AppServiceDesired {
   d.imageRepo = (d.imageRepo ?? '').trim()
   d.imageTag = (d.imageTag ?? '').trim()
   cleanCommandLists(d, base)
+  // 调度 / 挂载：空行不提交，否则灰度版本会带上半填的配置（后端同样拒绝）
+  cleanScheduling(d)
   for (const k of Object.keys(d)) {
     const v = d[k]
     if (v === '' || v == null || (Array.isArray(v) && v.length === 0 && k !== 'env')) delete d[k]
@@ -126,6 +144,16 @@ async function submit(): Promise<void> {
   if (filesInvalid.value) {
     error.value = '配置文件有问题，见「配置文件」页签'
     tab.value = 'files'
+    return
+  }
+  if (schedulingInvalid.value) {
+    error.value = '调度有问题，见「调度」页签'
+    tab.value = 'scheduling'
+    return
+  }
+  if (volumesInvalid.value) {
+    error.value = '挂载有问题，见「挂载」页签'
+    tab.value = 'volumes'
     return
   }
   submitting.value = true
@@ -158,7 +186,7 @@ async function submit(): Promise<void> {
   <el-dialog v-model="visible" :title="mode === 'start' ? `开始灰度 · ${serviceKey}` : `修改灰度版本配置 · ${serviceKey}`"
              width="720px" class="app-cny-dlg" destroy-on-close>
     <div class="app-cny-dlg__lead">
-      灰度版本默认复制线上配置，通常只需改镜像 tag；环境变量、配置文件、资源与命令也可以改，其余沿用线上版本。
+      灰度版本默认复制线上配置，通常只需改镜像 tag；环境变量、配置文件、资源与命令、调度与挂载也可以改，其余沿用线上版本。
     </div>
     <el-alert v-if="mode === 'start'" :type="l7 ? 'info' : 'warning'" :closable="false" show-icon :title="scopeText" class="app-cny-dlg__scope" />
     <el-tabs v-model="tab" class="app-cny-dlg__tabs">
@@ -209,13 +237,19 @@ async function submit(): Promise<void> {
           <AppResourcesForm :form="form" />
         </el-form>
       </el-tab-pane>
+      <el-tab-pane label="调度" name="scheduling">
+        <AppSchedulingForm :form="form" :cluster-id="ctx.clusterId" />
+      </el-tab-pane>
+      <el-tab-pane label="挂载" name="volumes">
+        <AppVolumesForm :form="form" />
+      </el-tab-pane>
     </el-tabs>
     <el-alert v-if="probeOff" type="warning" :closable="false" show-icon
               title="探针已关闭：就绪只代表进程已启动，灰度版本可能在没准备好时就接到流量" />
     <el-alert v-if="error" type="error" :closable="false" show-icon :title="error" class="app-cny-dlg__err" />
     <template #footer>
       <el-button @click="visible = false">取消</el-button>
-      <el-button type="primary" :loading="submitting" :disabled="filesInvalid" @click="submit">{{ mode === 'start' ? '开始灰度' : '提交' }}</el-button>
+      <el-button type="primary" :loading="submitting" :disabled="filesInvalid || schedulingInvalid || volumesInvalid" @click="submit">{{ mode === 'start' ? '开始灰度' : '提交' }}</el-button>
     </template>
   </el-dialog>
 </template>

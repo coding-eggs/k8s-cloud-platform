@@ -24,7 +24,7 @@ const volumeNames = computed(() => (props.form.volumes ?? []).map((v) => v.name)
 <template>
   <fieldset class="app-vols" :disabled="disabled" :class="{ 'is-readonly': disabled }">
     <div class="app-vols__hint">
-      先定义卷，再把它挂到容器路径；卷与挂载点靠名称对应。持久化数据卷（会建 PVC）在「高级」页签，这里只挂已有的对象或临时目录。
+      先定义卷，再把它挂到容器路径；卷与挂载点靠名称对应。持久化的数据卷（会建 PVC）不在这里配置，这里只挂已有的对象或临时目录。
     </div>
     <div class="app-vols__block">
       <div class="app-vols__title">卷（volumes）</div>
