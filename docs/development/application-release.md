@@ -232,6 +232,20 @@ live_release_no 只在执行成功时切换，所以失败的操作不改变「�
 服务详情页不放灰度；应用详情页状态旁「灰度中 N%」；发布对话框里灰度中的服务不可勾选；
 发布记录显示四种灰度类型。
 
+### 1.9 取消进行中的发布（`/application/execution/cancel`）
+
+执行在 PENDING / RUNNING 时占着应用（`uk_app_exec_active`），此时只能等它自己走完或失败：健康检查阶段最长等
+`platform.application.timeout-minutes`（默认 30 分钟）。「取消」让使用者立刻停下，不用干等。
+
+- 语义 = **置 INTERRUPTED**（不新增状态）：worker 的 `claim` 只认 PENDING / RUNNING，下一步就不再推进；
+  之后可以「继续」（从当前阶段接着跑，发布号不变），或直接发新版本取代它（`supersedeInterrupted`）。
+- **不回滚**：已经下发到集群的对象、已经切过去的新版本 Pod 都留在原地；正在执行的那一步可能已经把对象发出去。
+  要回到上个版本得自己回滚或再发一次。
+- 竞态：`cancel` 与进度落库都是条件更新（`status in ('PENDING','RUNNING')`）。取消正好落在某一步执行中时，
+  那一步收尾写 0 行、不改回 RUNNING；`finish` 的「执行行 + 线上发布号 + 发布状态」三处写入在同一个事务里，
+  先确认执行行还能写（0 行 = 已被取消 / 取代，整笔不写），崩溃则回滚后下一拍重跑。
+- 权限：`tenant:application:write`（谁能发布谁能取消，迁移 `V2026_11_09_3` 从「创建发布」的绑定复制）。
+
 ## 2. 配置文件
 
 服务页「配置文件」页签：每条一个绝对路径 + 内容。
@@ -272,8 +286,11 @@ key 不能以它结尾。
    可重复执行）。之后再重放 `V2026_11_03_1__application_dependency_update_permission`（修改外部连接的权限行）、
    `V2026_11_06_1__application_release_offline_permission`（下线的权限行）。
    main 上的 `V2026_11_01_1__object_storage_platform_page`、`V2026_11_01_2` 与本批无关，照各自说明重放。
+   **取消发布**：`V2026_11_09_3__application_execution_cancel_permission` 要先重放再部署 platform-api
+   （新端点没有权限行会被 `PermissionCrossCheckRunner` 判为缺口、直接拒启），重放后重新登录或等权限缓存 TTL。
 3. **上线前在真 MySQL 上各跑一次两条条件更新**（单测只覆盖了 mock）：执行表 mapper 的 `reopen`
-   （继续已中断的执行）和 `supersedeInterrupted`（新发布取代已中断的执行）。用一条手工造的
+   （继续已中断的执行）、`supersedeInterrupted`（新发布取代已中断的执行）、`cancel`（取消发布）与
+   `updateProgress`（进度落库，只认 PENDING / RUNNING）。用一条手工造的
    `INTERRUPTED` 执行行跑一遍，确认语法与影响行数后删掉这行。**不要留到上线后**：这两条 SQL 平时不走，
    写错了不会在启动或普通发布时暴露，只会在第一次「继续已中断的执行」或「新发布取代已中断的执行」时
    才报错 —— 那正是用户最需要它们的时候。
@@ -345,6 +362,8 @@ key 不能以它结尾。
 - [ ] 镜像拉取失败时，发布停在 HEALTH，旧 Pod 继续服务。
 - [ ] 平台「发布自己」（或发布中滚动更新 platform-api）：旧 Pod 停机释放租约，新 Pod 几秒内接手并走到成功，不进「已中断」。
 - [ ] Redis 不通时重启 platform-api，执行进入「已中断」，点继续能完成（顺带验证 `reopen` 的 SQL）。
+- [ ] 发布卡在健康检查时点「取消发布」：几秒内变「已中断」、发布/下线按钮恢复可用；点「继续」能从当前阶段跑完；
+      已下发的对象仍在（取消不回滚）。断得准一点：取消瞬间正好在某一步执行中，那一步收尾不能把状态改回「进行中」。
 - [ ] 下线：对象全部删除、PVC 还在；再发布一次（全选）后服务恢复，StatefulSet 挂回原来的卷。
 - [ ] NodePort：留空时概览显示集群分配的端口且可访问；改成固定端口后发布，端口变成固定值；改回「不暴露」后 Service 变 ClusterIP。
 - [ ] 已中断时直接发新版本，旧执行被取代（顺带验证 `supersedeInterrupted` 的 SQL）。

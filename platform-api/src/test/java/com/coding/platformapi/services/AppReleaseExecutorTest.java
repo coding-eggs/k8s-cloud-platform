@@ -28,6 +28,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -91,9 +92,12 @@ class AppReleaseExecutorTest {
         when(precheckProvider.getIfAvailable()).thenReturn(precheck);
         when(rendererProvider.getIfAvailable()).thenReturn(renderer);
         logMapper = mock(PlatformAppExecutionLogMapper.class);
+        // 进度落库走条件更新：乐观返回 1（写进去了）。测试取消竞态时单独改成 0。
+        when(executions.updateProgress(anyLong(), any(), any(), any(), any())).thenReturn(1);
         executor = new AppReleaseExecutor(apps, releases, executions, resources, client,
                 mock(AppDependencyService.class), credentials, leases,
-                precheckProvider, rendererProvider, new AppExecutionJournal(logMapper), 30);
+                precheckProvider, rendererProvider, new AppExecutionJournal(logMapper),
+                mock(PlatformTransactionManager.class), 30);
 
         app = new PlatformApplication();
         app.setId("app_1");
@@ -144,9 +148,18 @@ class AppReleaseExecutorTest {
     }
 
     private PlatformAppExecution lastSaved() {
-        ArgumentCaptor<PlatformAppExecution> c = ArgumentCaptor.forClass(PlatformAppExecution.class);
-        verify(executions, atLeastOnce()).updateById(c.capture());
-        return c.getValue();
+        ArgumentCaptor<String> status = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> stage = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<String> message = ArgumentCaptor.forClass(String.class);
+        ArgumentCaptor<Date> finished = ArgumentCaptor.forClass(Date.class);
+        verify(executions, atLeastOnce()).updateProgress(any(), status.capture(), stage.capture(),
+                message.capture(), finished.capture());
+        PlatformAppExecution e = new PlatformAppExecution();
+        e.setStatus(status.getValue());
+        e.setStage(stage.getValue());
+        e.setMessage(message.getValue());
+        e.setFinishedAt(finished.getValue());
+        return e;
     }
 
     private static PlatformApplicationResource ledger(String kind, String name) {
@@ -552,8 +565,67 @@ class AppReleaseExecutorTest {
         assertThat(credentials.getExecution(7L)).isNull();
 
         InOrder order = inOrder(apps, executions);
+        // 先确认执行行还能写（条件更新赢了），再标记线上版本：被取消 / 取代时绝不改线上发布号
+        order.verify(executions).updateProgress(any(), any(), any(), any(), any());
         order.verify(apps).updateById(any());
-        order.verify(executions).updateById(any());
+    }
+
+    // ---------- 取消 ----------
+
+    @Test
+    void cancelStopsTheReleaseAndKeepsItResumable() {
+        when(executions.selectActiveByApp("app_1")).thenReturn(at("HEALTH"));
+        when(executions.cancel(eq(7L), any())).thenReturn(1);
+
+        executor.cancel("app_1", "alice");
+
+        ArgumentCaptor<String> msg = ArgumentCaptor.forClass(String.class);
+        verify(executions).cancel(eq(7L), msg.capture());
+        assertThat(msg.getValue()).contains("已取消").contains("alice").contains("不回滚");
+        assertThat(credentials.getExecution(7L)).isNull();
+        // 取消不是回滚：不动线上发布号，也不改应用状态
+        verify(apps, never()).updateById(any());
+        verify(releases, never()).updateById(any());
+    }
+
+    @Test
+    void cancelRejectsWhenNothingIsRunning() {
+        when(executions.selectActiveByApp("app_1")).thenReturn(null);
+
+        assertThatThrownBy(() -> executor.cancel("app_1", "alice"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("没有正在进行");
+        verify(executions, never()).cancel(any(), any());
+    }
+
+    @Test
+    void cancelRejectsAnAlreadyInterruptedExecution() {
+        PlatformAppExecution active = at("HEALTH");
+        active.setStatus("INTERRUPTED");
+        when(executions.selectActiveByApp("app_1")).thenReturn(active);
+
+        assertThatThrownBy(() -> executor.cancel("app_1", "alice"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("已经中断");
+        verify(executions, never()).cancel(any(), any());
+    }
+
+    @Test
+    void cancelReportsWhenTheStatusChangedUnderneath() {
+        when(executions.selectActiveByApp("app_1")).thenReturn(at("HEALTH"));
+        when(executions.cancel(eq(7L), any())).thenReturn(0);
+
+        assertThatThrownBy(() -> executor.cancel("app_1", "alice"))
+                .isInstanceOf(CloudPlatformException.class).hasMessageContaining("状态已变化");
+    }
+
+    @Test
+    void finishDoesNotMoveLiveWhenTheExecutionWasCancelledMidStep() {
+        // 收尾这一步刚好被取消：条件更新写 0 行 → 不能把这次发布标记成上线
+        when(executions.updateProgress(anyLong(), any(), any(), any(), any())).thenReturn(0);
+
+        executor.advance(at("DONE"));
+
+        verify(apps, never()).updateById(any());
+        verify(releases, never()).updateById(any());
     }
 
     /** 模拟重启：凭据只在内存里，重启就没了。 */
@@ -640,7 +712,7 @@ class AppReleaseExecutorTest {
         ObjectProvider<AppReleaseRenderer> noneR = mock(ObjectProvider.class);
         AppReleaseExecutor bare = new AppReleaseExecutor(apps, releases, executions, resources, client,
                 mock(AppDependencyService.class), credentials, leases, none, noneR,
-                new AppExecutionJournal(logMapper), 30);
+                new AppExecutionJournal(logMapper), mock(PlatformTransactionManager.class), 30);
 
         bare.advance(at("PRECHECK"));
 
@@ -677,7 +749,7 @@ class AppReleaseExecutorTest {
         executor.resume(7L, "alice");
 
         verify(executions).reopen(eq(7L), eq("PENDING"), any(), any(), any());
-        verify(executions, never()).updateById(any());
+        verify(executions, never()).updateProgress(any(), any(), any(), any(), any());
         assertThat(credentials.getExecution(7L)).isEqualTo("Bearer fresh");
     }
 

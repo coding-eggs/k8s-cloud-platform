@@ -281,6 +281,15 @@ public class ApplicationController {
         return new ResponseData<>();
     }
 
+    @PostMapping("/execution/cancel")
+    @Auditable(action = AuditAction.APPLICATION_RELEASE_CANCEL, target = "#request.appId")
+    @Operation(summary = "取消正在进行的发布",
+            description = "已下发到集群的对象不回滚；之后可以「继续」从当前阶段接着跑，或直接发新版本取代它")
+    public ResponseData<Void> executionCancel(@RequestBody AppReleaseRequest request) {
+        release.cancel(request.getAppId(), operator(), auth.effectiveTenantId(request.getTenantId()));
+        return new ResponseData<>();
+    }
+
     private String operator() {
         var me = auth.current();
         return me != null ? me.getUsername() : "unknown";

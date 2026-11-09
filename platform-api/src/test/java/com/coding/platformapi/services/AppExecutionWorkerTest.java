@@ -12,6 +12,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Duration;
 import java.util.Date;
@@ -59,7 +60,7 @@ class AppExecutionWorkerTest {
 
     private static boolean saved(PlatformAppExecutionMapper mapper) {
         return org.mockito.Mockito.mockingDetails(mapper).getInvocations().stream()
-                .anyMatch(i -> i.getMethod().getName().equals("updateById"));
+                .anyMatch(i -> i.getMethod().getName().equals("updateProgress"));
     }
 
     private static long claimCount(PlatformAppExecutionMapper mapper) {
@@ -286,7 +287,8 @@ class AppExecutionWorkerTest {
                 client, mock(AppDependencyService.class), new ApplicationDeployCredentials(),
                 new AppExecutionLease("restarted"),
                 mock(ObjectProvider.class), mock(ObjectProvider.class),
-                new AppExecutionJournal(mock(PlatformAppExecutionLogMapper.class)), 30);
+                new AppExecutionJournal(mock(PlatformAppExecutionLogMapper.class)),
+                mock(PlatformTransactionManager.class), 30);
         AppExecutionWorker restarted = new AppExecutionWorker(real, executions, new AppExecutionLease("restarted"), 4);
         try {
             PlatformAppExecution orphan = stored(1, "RUNNING");
@@ -296,20 +298,23 @@ class AppExecutionWorkerTest {
             when(executions.claim(eq(1L), any(), any(), any())).thenReturn(0);
             restarted.tick();
             verify(executions, timeout(WAIT)).claim(eq(1L), any(), any(), any());
-            verify(executions, never()).updateById(any());
+            verify(executions, never()).updateProgress(any(), any(), any(), any(), any());
 
             // 过期后
             when(executions.claim(eq(1L), any(), any(), any())).thenReturn(1);
+            when(executions.updateProgress(any(), any(), any(), any(), any())).thenReturn(1);
             // 上一轮可能还没退出 in-flight，多拍几次才贴近定时任务的真实节奏
             for (int i = 0; i < 100 && !saved(executions); i++) {
                 restarted.tick();
                 Thread.sleep(20);
             }
 
-            ArgumentCaptor<PlatformAppExecution> saved = ArgumentCaptor.forClass(PlatformAppExecution.class);
-            verify(executions, timeout(WAIT).atLeastOnce()).updateById(saved.capture());
-            assertThat(saved.getValue().getStatus()).isEqualTo("INTERRUPTED");
-            assertThat(saved.getValue().getStage()).isEqualTo("HEALTH");
+            ArgumentCaptor<String> status = ArgumentCaptor.forClass(String.class);
+            ArgumentCaptor<String> stage = ArgumentCaptor.forClass(String.class);
+            verify(executions, timeout(WAIT).atLeastOnce())
+                    .updateProgress(eq(1L), status.capture(), stage.capture(), any(), any());
+            assertThat(status.getValue()).isEqualTo("INTERRUPTED");
+            assertThat(stage.getValue()).isEqualTo("HEALTH");
             verify(client, never()).status(any());
         } finally {
             restarted.shutdown();

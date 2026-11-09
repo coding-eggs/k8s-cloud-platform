@@ -29,6 +29,8 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.JavaType;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.json.JsonMapper;
@@ -96,6 +98,7 @@ public class AppReleaseExecutor {
     private final ObjectProvider<AppReleasePrecheck> precheck;
     private final ObjectProvider<AppReleaseRenderer> renderer;
     private final AppExecutionJournal journal;
+    private final TransactionTemplate tx;
     private final long timeoutMinutes;
 
     public AppReleaseExecutor(PlatformApplicationMapper apps,
@@ -109,6 +112,7 @@ public class AppReleaseExecutor {
                               ObjectProvider<AppReleasePrecheck> precheck,
                               ObjectProvider<AppReleaseRenderer> renderer,
                               AppExecutionJournal journal,
+                              PlatformTransactionManager transactionManager,
                               @Value("${platform.application.timeout-minutes:30}") long timeoutMinutes) {
         this.apps = apps;
         this.releases = releases;
@@ -121,6 +125,7 @@ public class AppReleaseExecutor {
         this.precheck = precheck;
         this.renderer = renderer;
         this.journal = journal;
+        this.tx = new TransactionTemplate(transactionManager);
         this.timeoutMinutes = timeoutMinutes;
     }
 
@@ -190,6 +195,32 @@ public class AppReleaseExecutor {
         journal.info(execution, execution.getStage(), (operator == null ? "" : operator + " ")
                 + (FAILED.equals(execution.getStatus()) ? "重新执行" : "点了继续") + "，从「"
                 + stageName(execution.getStage()) + "」接着跑");
+    }
+
+    /**
+     * 用户取消正在推进的发布：置 INTERRUPTED、清租约。worker 的 claim 只认 PENDING / RUNNING，
+     * 下一步就不再推进；正在执行的那一步可能已经把对象发出去，**不回滚**。
+     * 之后可以「继续」（从当前阶段接着跑），或直接发一个新版本取代它。
+     *
+     * <p>归属校验由调用方负责。
+     */
+    public void cancel(String appId, String operator) {
+        PlatformAppExecution active = executions.selectActiveByApp(appId);
+        if (active == null) {
+            throw reject("没有正在进行的发布");
+        }
+        if (!PENDING.equals(active.getStatus()) && !RUNNING.equals(active.getStatus())) {
+            throw reject("这次发布已经中断，等「继续」或直接发新版本");
+        }
+        String who = operator == null || operator.isBlank() ? "用户" : operator;
+        if (executions.cancel(active.getId(), "已取消（" + who + "）；已下发到集群的对象不回滚") == 0) {
+            throw reject("执行状态已变化，请刷新后重试");
+        }
+        credentials.forgetExecution(active.getId());
+        log.info("发布执行 {} 被 {} 取消，阶段 {}，发布号 {}", active.getId(), who,
+                active.getStage(), active.getReleaseNo());
+        journal.warn(active, active.getStage(), who + " 取消了发布 #" + active.getReleaseNo()
+                + "（停在「" + stageName(active.getStage()) + "」）；已下发的对象不回滚");
     }
 
     private void step(PlatformAppExecution execution) {
@@ -530,20 +561,35 @@ public class AppReleaseExecutor {
         return OFFLINE_TYPE.equals(release.getType());
     }
 
-    /** 执行记录最后写：中途崩溃时它仍在 DONE，下一拍重跑，前面的写入都幂等。 */
+    /**
+     * 收尾：执行行、线上发布号、发布状态三件事在一个事务里写。
+     *
+     * <p>顺序是「先确认执行行还能写，再标线上」：用户取消 / 新发布取代刚好落在这一步时，
+     * 条件更新写 0 行，整笔事务什么都不改 —— 绝不能出现「执行已取消、线上发布号却跳了」。
+     * 反过来若中途崩溃，事务回滚，执行行仍是 RUNNING / DONE，下一拍重跑，三处写入都幂等。
+     */
     private String finish(PlatformAppExecution execution) {
-        PlatformApplication patch = new PlatformApplication();
-        patch.setId(execution.getAppId());
-        patch.setLiveReleaseNo(execution.getReleaseNo());
-        patch.setStatus(isOffline(requireRelease(execution)) ? "OFFLINE" : "READY");
-        patch.setUpdatedAt(new Date());
-        apps.updateById(patch);
-        markRelease(execution, "DEPLOYED");
-
+        boolean offline = isOffline(requireRelease(execution));
         execution.setStatus(SUCCESS);
         execution.setFinishedAt(new Date());
-        save(execution);
-        if (isOffline(requireRelease(execution))) {
+        Boolean done = tx.execute(status -> {
+            if (!save(execution)) {
+                return false;   // 已被取消 / 取代：一行都不写
+            }
+            PlatformApplication patch = new PlatformApplication();
+            patch.setId(execution.getAppId());
+            patch.setLiveReleaseNo(execution.getReleaseNo());
+            patch.setStatus(offline ? "OFFLINE" : "READY");
+            patch.setUpdatedAt(new Date());
+            apps.updateById(patch);
+            markRelease(execution, "DEPLOYED");
+            return true;
+        });
+        if (!Boolean.TRUE.equals(done)) {
+            journal.warn(execution, "DONE", "收尾时发现执行已被取消或取代，未标记线上版本");
+            return null;
+        }
+        if (offline) {
             // 对象已清掉：释放网关端口、同步 ListenerSet（实现自己吞异常，不改变下线结论）
             AppReleasePrecheck hook = precheck.getIfAvailable();
             if (hook != null) {
@@ -557,7 +603,7 @@ public class AppReleaseExecutor {
             }
         }
         credentials.forgetExecution(execution.getId());
-        journal.info(execution, "DONE", isOffline(requireRelease(execution))
+        journal.info(execution, "DONE", offline
                 ? "下线完成" : "发布完成，线上版本 #" + execution.getReleaseNo());
         return null;
     }
@@ -583,7 +629,9 @@ public class AppReleaseExecutor {
     private void interrupt(PlatformAppExecution execution, String message) {
         execution.setStatus(INTERRUPTED);
         execution.setMessage(message);
-        save(execution);
+        if (!save(execution)) {
+            return;   // 已被用户取消 / 取代：保留那边的状态与原因，不覆盖
+        }
         credentials.forgetExecution(execution.getId());
         journal.warn(execution, execution.getStage(), "在「" + stageName(execution.getStage()) + "」中断：" + message);
     }
@@ -594,7 +642,9 @@ public class AppReleaseExecutor {
         execution.setStatus(FAILED);
         execution.setMessage(clip(message));
         execution.setFinishedAt(new Date());
-        save(execution);
+        if (!save(execution)) {
+            return;   // 已被取消 / 取代：这步的异常不该再改发布与应用状态
+        }
         credentials.forgetExecution(execution.getId());
         journal.error(execution, execution.getStage(), "在「" + stageName(execution.getStage()) + "」失败：" + message);
         markRelease(execution, "FAILED");
@@ -606,15 +656,17 @@ public class AppReleaseExecutor {
         apps.updateById(patch);
     }
 
-    /** 只写进度字段，不带 lease_until：入参里的旧租约不能写回去，租约归 worker 管。 */
-    private void save(PlatformAppExecution execution) {
-        PlatformAppExecution patch = new PlatformAppExecution();
-        patch.setId(execution.getId());
-        patch.setStatus(execution.getStatus());
-        patch.setStage(execution.getStage());
-        patch.setMessage(execution.getMessage());
-        patch.setFinishedAt(execution.getFinishedAt());
-        executions.updateById(patch);
+    /**
+     * 只写进度字段，不带 lease_until：入参里的旧租约不能写回去，租约归 worker 管。
+     *
+     * <p>条件更新（只认 PENDING / RUNNING）：用户中途取消会把这一行置成 INTERRUPTED，
+     * 在途那一步收尾时这里写 0 行 —— 否则会把取消覆盖回 RUNNING，中断被悄悄吃掉。
+     *
+     * @return false = 这行已经不是活动执行（被取消 / 取代 / 已结束），调用方不要继续推进
+     */
+    private boolean save(PlatformAppExecution execution) {
+        return executions.updateProgress(execution.getId(), execution.getStatus(), execution.getStage(),
+                execution.getMessage(), execution.getFinishedAt()) > 0;
     }
 
     private void markRelease(PlatformAppExecution execution, String status) {

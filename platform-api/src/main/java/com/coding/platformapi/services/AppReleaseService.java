@@ -569,6 +569,12 @@ public class AppReleaseService {
         executor.resume(executionId, operator);
     }
 
+    /** 取消正在进行的发布。归属校验在这里，executor.cancel 自己不查租户。 */
+    public void cancel(String appId, String operator, String tenantId) {
+        PlatformApplication app = AppGuard.require(apps, appId, tenantId);
+        executor.cancel(app.getId(), operator);
+    }
+
     public AppOverviewView overview(String appId, String tenantId) {
         PlatformApplication app = AppGuard.require(apps, appId, tenantId);
         AppSnapshot live = liveSnapshot(app);

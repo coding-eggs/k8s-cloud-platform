@@ -58,7 +58,7 @@ class AppReleasePipelineTest {
         app.setSlug("shop");
         when(apps.selectById("app1")).thenReturn(app);
         when(dependencies.notReady(any())).thenReturn(List.of());
-        when(dependencies.connectionsOf(any(), anyString(), anyString())).thenReturn(Map.of());
+        when(dependencies.connectionsOf(any(), anyString(), anyString(), anyString())).thenReturn(Map.of());
         when(ports.currentPool("c1")).thenReturn(POOL);
     }
 

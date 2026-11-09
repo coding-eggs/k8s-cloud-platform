@@ -36,6 +36,36 @@
        and `status` = 'INTERRUPTED'
   </update>
 
+  <!--
+    用户取消进行中的发布：置 INTERRUPTED（worker 的 claim 只认 PENDING / RUNNING，下一步就不再推进），
+    不写 finished_at（INTERRUPTED 仍是活动执行，等「继续」或新发布取代）。
+    条件更新：执行刚好结束 / 已被别人改过时返回 0，调用方据此提示「状态已变化」。
+  -->
+  <update id="cancel">
+    update platform_app_execution
+       set `status` = 'INTERRUPTED',
+           message = #{message,jdbcType=VARCHAR},
+           lease_until = null
+     where id = #{id,jdbcType=BIGINT}
+       and `status` in ('PENDING', 'RUNNING')
+  </update>
+
+  <!--
+    推进进度落库：只写「还是活动执行」的行。用户中途取消后，在途那一步收尾时写回 0 行，
+    status 保持 INTERRUPTED —— 否则会把取消覆盖回 RUNNING，中断被悄悄吃掉。
+  -->
+  <update id="updateProgress">
+    update platform_app_execution
+    <set>
+      `status` = #{status,jdbcType=VARCHAR},
+      <if test="stage != null">stage = #{stage,jdbcType=VARCHAR},</if>
+      <if test="message != null">message = #{message,jdbcType=VARCHAR},</if>
+      <if test="finishedAt != null">finished_at = #{finishedAt,jdbcType=TIMESTAMP},</if>
+    </set>
+    where id = #{id,jdbcType=BIGINT}
+      and `status` in ('PENDING', 'RUNNING')
+  </update>
+
   <update id="reopen">
     update platform_app_execution
        set `status` = #{status,jdbcType=VARCHAR},

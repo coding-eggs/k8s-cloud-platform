@@ -18,6 +18,19 @@ public interface PlatformAppExecutionMapper {
     int supersedeInterrupted(@Param("id") Long id, @Param("message") String message,
                              @Param("finishedAt") Date finishedAt);
 
+    /**
+     * 用户取消进行中的发布：仅 PENDING / RUNNING 可取消，置 INTERRUPTED 并清租约。
+     * 返回 0 = 刚好结束或已被别人改过，调用方提示「状态已变化」。
+     */
+    int cancel(@Param("id") Long id, @Param("message") String message);
+
+    /**
+     * 推进进度落库（取代直接 updateById）：只写仍是 PENDING / RUNNING 的行。
+     * 被取消后，在途那一步的收尾写回 0 行，不会把取消覆盖回 RUNNING。
+     */
+    int updateProgress(@Param("id") Long id, @Param("status") String status, @Param("stage") String stage,
+                       @Param("message") String message, @Param("finishedAt") Date finishedAt);
+
 
     /** 全部活动执行（PENDING / RUNNING / INTERRUPTED），按 id 升序 */
     List<PlatformAppExecution> selectActive();

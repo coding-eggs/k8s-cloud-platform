@@ -1346,6 +1346,9 @@ export const appReleaseApi = {
     http.post<never, AppExecution | null>('/application/execution/active', { appId, tenantId }),
   resume: (executionId: number, tenantId?: string) =>
     http.post<never, void>('/application/execution/resume', { executionId, tenantId }),
+  /** 取消正在进行的发布（已下发的对象不回滚；之后可继续或发新版本） */
+  cancel: (appId: string, tenantId?: string) =>
+    http.post<never, void>('/application/execution/cancel', { appId, tenantId }),
   /** 某次发布的过程日志（按时间正序） */
   logs: (appId: string, releaseNo: number, tenantId?: string) =>
     http.post<never, AppExecutionLog[]>('/application/execution/logs', { appId, releaseNo, tenantId }),

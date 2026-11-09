@@ -9,11 +9,13 @@
  * 动作与后端规则对齐：
  * - 继续 / 重新执行 = 同一个 `execution/resume`；INTERRUPTED 叫「继续」，FAILED 叫「重新执行」（从失败阶段接着跑，发布号不变）。
  *   后端只允许最新发布的那条执行继续，旧的会被拒绝，原文提示。
+ * - 取消 = `execution/cancel`，只在 PENDING / RUNNING 时给：把执行置为「已中断」，worker 下一步就不再推进。
+ *   **不回滚**已经下发到集群的对象（正在执行的那一步可能已经把对象发出去了），之后可「继续」或发新版本。
  * - 回滚：只在有线上版本可回时给出，回到线上版本（失败发布本身比线上新，所以合法）。
  * - 失败不会自动回滚，这里不暗示它做过什么。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { appReleaseApi } from '@/api'
 import StatusBadge from '@/components/StatusBadge.vue'
 import AppExecutionLog from './AppExecutionLog.vue'
@@ -109,6 +111,37 @@ async function resume(): Promise<void> {
     acting.value = false
   }
 }
+
+/** 取消进行中的发布：二次确认（不回滚已下发的对象），成功后状态变「已中断」 */
+async function cancel(): Promise<void> {
+  const e = exec.value
+  if (!e) return
+  const stage = stageLabel(e.stage) ?? e.stage ?? '当前阶段'
+  try {
+    await ElMessageBox.confirm(
+      `${verb.value} #${e.releaseNo} 会停在「${stage}」。已经下发到集群的对象不会回滚，` +
+      '之后可以点「继续」接着跑，或直接发一个新版本。',
+      `取消这次${verb.value}？`,
+      { type: 'warning', confirmButtonText: '取消' + verb.value, cancelButtonText: '再想想',
+        confirmButtonClass: 'el-button--danger' },
+    )
+  } catch {
+    return   // 用户放弃
+  }
+  acting.value = true
+  error.value = ''
+  try {
+    await appReleaseApi.cancel(props.appId, props.tenantId)
+    ElMessage.success(`已取消${verb.value}`)
+    logTick.value++
+    emit('changed')
+  } catch (err) {
+    error.value = errMsg(err, '取消失败')
+    emit('changed')
+  } finally {
+    acting.value = false
+  }
+}
 </script>
 
 <template>
@@ -122,6 +155,9 @@ async function resume(): Promise<void> {
         <el-button type="primary" :loading="acting" @click="resume">{{ interrupted ? '继续' : '重新执行' }}</el-button>
         <el-button v-if="liveNo" :disabled="acting" @click="emit('rollback')">回滚到线上版本 #{{ liveNo }}</el-button>
       </template>
+      <el-button v-if="canWrite && running" type="danger" plain :loading="acting" @click="cancel">
+        取消{{ verb }}
+      </el-button>
     </div>
 
     <el-steps :active="stageIndex" :process-status="stepStatus" finish-status="success" align-center class="app-exec__steps">
@@ -147,7 +183,7 @@ async function resume(): Promise<void> {
       :description="exec.message || undefined"
     >
       <div class="app-exec__hint">
-        常见原因是平台服务重启或登录凭据失效。点「继续」会用你当前的登录身份接着跑；
+        可能是平台服务重启、登录凭据失效，或有人取消了这次发布。点「继续」会用你当前的登录身份接着跑；
         也可以直接发起新的发布，它会取代这次中断的执行。
       </div>
     </el-alert>

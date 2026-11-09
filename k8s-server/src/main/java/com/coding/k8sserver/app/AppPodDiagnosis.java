@@ -5,6 +5,8 @@ import io.fabric8.kubernetes.api.model.Event;
 import io.fabric8.kubernetes.api.model.LabelSelector;
 import io.fabric8.kubernetes.api.model.Pod;
 import io.fabric8.kubernetes.api.model.PodCondition;
+import io.fabric8.kubernetes.api.model.apps.ReplicaSet;
+import io.fabric8.kubernetes.api.model.apps.ReplicaSetCondition;
 import io.fabric8.kubernetes.client.KubernetesClient;
 import lombok.extern.slf4j.Slf4j;
 
@@ -20,6 +22,9 @@ import java.util.Objects;
  * <p>只看未就绪的 Pod（滚动更新时旧 Pod 还就绪，不必列），最多 {@link #MAX_PODS} 个；
  * 状态本身说不清时（容器在跑但没就绪 / 原因只是 ContainerCreating）再查一次该 Pod 最近的 Warning 事件。
  * 任何异常都吞掉返回空：诊断是锦上添花，不能让状态查询失败。
+ *
+ * <p>Deployment 另看一眼它新一代的 ReplicaSet：Pod 建不出来时（最常见是命名空间配额不足）
+ * 集合里根本看不到那个 Pod，只报「可用副本 0/1」会让人以为是配置没生效。
  */
 @Slf4j
 final class AppPodDiagnosis {
@@ -31,6 +36,14 @@ final class AppPodDiagnosis {
     }
 
     static List<String> diagnose(KubernetesClient client, String namespace, LabelSelector selector) {
+        return diagnose(client, namespace, selector, null);
+    }
+
+    /**
+     * @param deployment Deployment 名：给了就顺带看它的 ReplicaSet 有没有 FailedCreate（配额 / 准入拦下）
+     */
+    static List<String> diagnose(KubernetesClient client, String namespace, LabelSelector selector,
+                                 String deployment) {
         try {
             Map<String, String> labels = selector == null ? null : selector.getMatchLabels();
             if (labels == null || labels.isEmpty()) {
@@ -38,9 +51,14 @@ final class AppPodDiagnosis {
             }
             List<Pod> pods = client.pods().inNamespace(namespace).withLabels(labels).list().getItems();
             List<String> out = new ArrayList<>();
+            String failed = deployment == null ? null : replicaSetProblem(client, namespace, labels, deployment);
             if (pods.isEmpty()) {
-                out.add("还没有 Pod（控制器尚未创建，或被配额 / 准入拦下，可在工作负载事件里查看）");
+                out.add(failed != null ? failed
+                        : "还没有 Pod（控制器尚未创建，或被配额 / 准入拦下，可在工作负载事件里查看）");
                 return out;
+            }
+            if (failed != null) {
+                out.add(failed);   // 新副本建不出来时，这比旧 Pod 的崩溃更该先说
             }
             pods.stream()
                     .filter(p -> !ready(p) && p.getMetadata().getDeletionTimestamp() == null)
@@ -68,6 +86,69 @@ final class AppPodDiagnosis {
         return p.getStatus() != null && p.getStatus().getConditions() != null
                 && p.getStatus().getConditions().stream()
                 .anyMatch(c -> "Ready".equals(c.getType()) && "True".equals(c.getStatus()));
+    }
+
+    /**
+     * 这个 Deployment 的 ReplicaSet 里报 FailedCreate 的（最新一个）：Pod 压根没被创建出来时，
+     * 只有这里说得出原因（配额不足、准入拒绝）。查不到返回 null。
+     */
+    private static String replicaSetProblem(KubernetesClient client, String namespace,
+                                            Map<String, String> labels, String deployment) {
+        try {
+            List<ReplicaSet> sets = client.apps().replicaSets().inNamespace(namespace).withLabels(labels)
+                    .list().getItems().stream()
+                    .filter(rs -> ownedBy(rs, deployment))
+                    .toList();
+            return replicaSetProblem(sets);
+        } catch (RuntimeException e) {
+            log.debug("ReplicaSet 诊断失败 {}/{}：{}", namespace, deployment, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 纯函数：给一组 ReplicaSet，说出最新的那条创建失败（没有则 null）。 */
+    static String replicaSetProblem(List<ReplicaSet> sets) {
+        ReplicaSet newest = null;
+        String message = null;
+        for (ReplicaSet rs : sets) {
+            String failure = failureMessage(rs);
+            if (failure == null) {
+                continue;
+            }
+            String created = String.valueOf(rs.getMetadata().getCreationTimestamp());
+            if (newest == null || created.compareTo(String.valueOf(newest.getMetadata().getCreationTimestamp())) > 0) {
+                newest = rs;
+                message = failure;
+            }
+        }
+        if (newest == null) {
+            return null;
+        }
+        String hint = message.contains("exceeded quota")
+                ? "（命名空间配额不足：调高配额或释放已用资源后控制器会自己重试，最长约 15 分钟）"
+                : "";
+        return clip("ReplicaSet " + newest.getMetadata().getName() + " 创建 Pod 失败：" + message + hint);
+    }
+
+    private static String failureMessage(ReplicaSet rs) {
+        if (rs.getStatus() == null || rs.getStatus().getConditions() == null) {
+            return null;
+        }
+        for (ReplicaSetCondition c : rs.getStatus().getConditions()) {
+            if ("ReplicaFailure".equals(c.getType()) && "True".equals(c.getStatus())
+                    && c.getMessage() != null && !c.getMessage().isBlank()) {
+                return c.getMessage().trim();
+            }
+        }
+        return null;
+    }
+
+    private static boolean ownedBy(ReplicaSet rs, String deployment) {
+        if (rs.getMetadata() == null || rs.getMetadata().getOwnerReferences() == null) {
+            return false;
+        }
+        return rs.getMetadata().getOwnerReferences().stream()
+                .anyMatch(o -> "Deployment".equals(o.getKind()) && deployment.equals(o.getName()));
     }
 
     /** 一个未就绪 Pod 的现状（纯函数，单测直接断言）；说不清返回空串。 */

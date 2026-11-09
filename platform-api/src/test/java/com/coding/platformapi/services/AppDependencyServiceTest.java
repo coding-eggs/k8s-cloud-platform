@@ -420,6 +420,21 @@ class AppDependencyServiceTest {
         assertThat(info.getSecretNamespace()).isEqualTo("middleware");
     }
 
+    /**
+     * 渲染侧的依赖来自发布快照，{@code AppSnapshot.parse} 不还原 appId——副本名必须由调用方显式给，
+     * 否则和对账侧（数据库行）算出两个名字（2026-11-09 实报 CreateContainerConfigError 的根因）。
+     */
+    @Test
+    void connectionsOfUsesThePassedAppIdNotTheSnapshotRow() {
+        PlatformAppDependency fromSnapshot = depRow("cache", "BOUND", "mwi_2");
+        fromSnapshot.setAppId(null);
+        when(middleware.connection("mwi_2", "t1")).thenReturn(conn("middleware", "cache-credentials"));
+
+        Map<String, ConnInfo> got = service.connectionsOf(List.of(fromSnapshot), "t1", "app1", "demo");
+
+        assertThat(got.get("cache").getSecretName()).isEqualTo("mwdep-app1-cache-cache-credentials");
+    }
+
     @Test
     void connectionsKeepSecretNameInSameNamespace() {
         PlatformAppDependency dep = depRow("db", "BOUND", "mwi_1");

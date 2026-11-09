@@ -277,6 +277,9 @@ public final class AuditAction {
     /** 下线：删掉应用的全部集群对象（PVC 保留），记一条 OFFLINE 发布 */
     public static final String APPLICATION_RELEASE_OFFLINE = "application:release-offline";
 
+    /** 取消正在进行的发布（已下发的对象不回滚；之后可继续或发新版本） */
+    public static final String APPLICATION_RELEASE_CANCEL = "application:release-cancel";
+
     /** 入口灰度：开始 / 调整权重与配置 / 全量 / 回退（服务 key 记在 target 里） */
     public static final String APPLICATION_CANARY_START = "application:canary-start";
 

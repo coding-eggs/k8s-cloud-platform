@@ -149,22 +149,26 @@ public class AppDependencyService {
 
     public Map<String, ConnInfo> connections(String appId, String tenantId) {
         PlatformApplication app = apps.selectById(appId);
-        return connectionsOf(list(appId), tenantId, app == null ? null : app.getNamespace());
+        return connectionsOf(list(appId), tenantId, appId, app == null ? null : app.getNamespace());
     }
 
     /**
-     * 依赖 key → 连接信息。{@code appNamespace} 用于判断实例是否在别的命名空间：跨命名空间的凭据
-     * Secret 不能直接引用，这里把 {@code secretName} 改写成「复制到应用命名空间后的名字」。
-     * 任何一个依赖取不到连接信息都抛错并点名：静默跳过会让引用变成「不存在」这种误导的报错。
+     * 依赖 key → 连接信息。{@code appId} / {@code appNamespace} 用于判断实例是否在别的命名空间：
+     * 跨命名空间的凭据 Secret 不能直接引用，这里把 {@code secretName} 改写成「复制到应用命名空间后的名字」。
+     *
+     * <p>appId 必须由调用方给：渲染侧的依赖来自发布快照（{@code AppSnapshot} 不存 appId），
+     * 和对账侧（数据库行）必须是同一个值，否则两边算出两个不同的副本名。
+     *
+     * <p>任何一个依赖取不到连接信息都抛错并点名：静默跳过会让引用变成「不存在」这种误导的报错。
      */
     public Map<String, ConnInfo> connectionsOf(List<PlatformAppDependency> deps, String tenantId,
-                                               String appNamespace) {
+                                               String appId, String appNamespace) {
         Map<String, ConnInfo> out = new LinkedHashMap<>();
         for (PlatformAppDependency dep : deps) {
             ConnInfo info;
             try {
                 info = EXTERNAL.equals(dep.getType())
-                        ? externalInfo(dep) : middlewareInfo(dep, tenantId, appNamespace);
+                        ? externalInfo(dep) : middlewareInfo(dep, tenantId, appId, appNamespace);
             } catch (CloudPlatformException e) {
                 throw e;
             } catch (RuntimeException e) {
@@ -231,7 +235,7 @@ public class AppDependencyService {
         }
     }
 
-    private ConnInfo middlewareInfo(PlatformAppDependency dep, String tenantId, String appNamespace) {
+    private ConnInfo middlewareInfo(PlatformAppDependency dep, String tenantId, String appId, String appNamespace) {
         if (dep.getInstanceId() == null || dep.getInstanceId().isBlank()) {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "依赖 " + dep.getDepKey() + " 还没有关联的中间件实例");
@@ -245,7 +249,7 @@ public class AppDependencyService {
         }
         // 跨命名空间：secretKeyRef 不能跨 ns，引用的是复制到应用命名空间的那份（发布/初始化前同步）
         info.setSecretNamespace(dto.getNamespace());
-        info.setSecretName(mirrorSecretName(dep.getAppId(), dep.getDepKey(), info.getSecretName()));
+        info.setSecretName(mirrorSecretName(appId, dep.getDepKey(), info.getSecretName()));
         return info;
     }
 
@@ -253,10 +257,12 @@ public class AppDependencyService {
      * 跨命名空间依赖的凭据副本名：{@code mwdep-<应用>-<依赖名>-<源 Secret>}。
      *
      * <p>带应用和依赖名，同一命名空间里两个应用绑同一个实例（或不同命名空间的同名实例）都不会撞车；
-     * 超长时退化成短哈希（Secret 名上限 253）。应用 id 里的 {@code _} 不能出现在 Secret 名里，换成 {@code -}。
+     * 超长时退化成短哈希（Secret 名上限 253）。应用 id 里不在 {@code [a-z0-9.-]} 的字符（如 {@code _}）
+     * 不能出现在 Secret 名里，换成 {@code -}。
      */
     static String mirrorSecretName(String appId, String depKey, String sourceName) {
-        String app = appId == null || appId.isBlank() ? "app" : appId.toLowerCase(java.util.Locale.ROOT).replace('_', '-');
+        String app = appId == null || appId.isBlank()
+                ? "app" : appId.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9.-]", "-");
         String name = "mwdep-" + app + "-" + depKey + "-" + sourceName;
         if (name.length() <= 253) {
             return name;
@@ -724,7 +730,7 @@ public class AppDependencyService {
         if (authorization == null || authorization.isBlank()) {
             throw error("缺少登录凭据，无法发起初始化");
         }
-        ConnInfo info = middlewareInfo(row, app.getTenantId(), app.getNamespace());
+        ConnInfo info = middlewareInfo(row, app.getTenantId(), app.getId(), app.getNamespace());
         String indexPath = req.getInitPath() == null ? "" : req.getInitPath().trim();
         if ("elasticsearch".equals(inst.getCode()) && !INDEX_PATH.matcher(indexPath).matches()) {
             throw error("Elasticsearch 初始化需要填写目标路径（以 / 开头，例如 /my-index 或 /_index_template/x）");

@@ -97,7 +97,8 @@ public class AppStatusService {
                 s.setState(deploymentState(want, have, updated, total, observed));
                 s.setMessage("可用副本 " + have + "/" + want + "，已更新 " + updated + "/" + want);
                 if (!"READY".equals(s.getState())) {
-                    s.setPodIssues(AppPodDiagnosis.diagnose(client, ref.getNamespace(), d.getSpec().getSelector()));
+                    s.setPodIssues(AppPodDiagnosis.diagnose(client, ref.getNamespace(), d.getSpec().getSelector(),
+                            ref.getName()));
                 }
             }
             case "StatefulSet" -> {

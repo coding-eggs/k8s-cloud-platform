@@ -390,7 +390,7 @@ public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRendere
 
     private Context context(PlatformApplication app, AppSnapshot snapshot) {
         Map<String, ConnInfo> conns = dependencies.connectionsOf(referencedDependencies(snapshot),
-                app.getTenantId(), app.getNamespace());
+                app.getTenantId(), app.getId(), app.getNamespace());
         Map<String, ServiceAddr> addrs = snapshot.services().entrySet().stream()
                 .filter(e -> AppServiceDesired.port(e.getValue()) != null)
                 .collect(Collectors.toMap(Map.Entry::getKey,
