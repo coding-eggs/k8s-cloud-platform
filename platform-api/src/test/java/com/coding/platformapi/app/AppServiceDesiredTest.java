@@ -352,4 +352,13 @@ class AppServiceDesiredTest {
         bad.put("probeType", "grpc");
         rejects(bad).hasMessageContaining("探针类型");
     }
+
+    @Test
+    void serviceProtocol() {
+        assertThat(AppServiceDesired.serviceProtocol(Map.of("expose", "gateway-tcp"))).isEqualTo("TCP");
+        assertThat(AppServiceDesired.serviceProtocol(Map.of("probeType", "tcp"))).isEqualTo("TCP");
+        assertThat(AppServiceDesired.serviceProtocol(Map.of("expose", "gateway-http"))).isEqualTo("HTTP");
+        assertThat(AppServiceDesired.serviceProtocol(Map.of("port", 8080))).isEqualTo("HTTP");
+        assertThat(AppServiceDesired.serviceProtocol(null)).isEqualTo("HTTP");
+    }
 }

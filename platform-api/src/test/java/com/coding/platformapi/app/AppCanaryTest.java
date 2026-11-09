@@ -79,4 +79,18 @@ class AppCanaryTest {
         assertThat(AppCanary.activeKeys(new AppSnapshot(services, List.of()))).containsExactly("api", "web");
         assertThat(AppCanary.nodeKey("api")).isEqualTo("api-canary");
     }
+
+    @Test
+    void externalDefaultsToTrueForOldBlocks() {
+        Map<String, Object> svc = new LinkedHashMap<>(Map.of("imageTag", "1"));
+        svc.put("canary", Map.of("desired", Map.of("imageTag", "2"), "replicas", 1, "weight", 10));
+        assertThat(AppCanary.of(svc).external()).isTrue();
+    }
+
+    @Test
+    void externalRoundTrips() {
+        Map<String, Object> out = AppCanary.with(Map.of("imageTag", "1"),
+                new AppCanary.Spec(Map.of("imageTag", "2"), 1, 10, null, false));
+        assertThat(AppCanary.of(out).external()).isFalse();
+    }
 }

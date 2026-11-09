@@ -277,6 +277,19 @@ public final class AppServiceDesired {
         return EXPOSE_GATEWAY_TCP.equals(expose) ? "TCP" : null;
     }
 
+    /**
+     * 服务协议（内部灰度设计 §4.4，前端 releaseUtil.serviceProtocol 同口径）：网关 TCP 暴露 → TCP；否则 TCP 探针 → TCP；否则 HTTP。
+     */
+    public static String serviceProtocol(Map<String, Object> desired) {
+        if (desired == null) {
+            return "HTTP";
+        }
+        if (EXPOSE_GATEWAY_TCP.equals(desired.get("expose"))) {
+            return "TCP";
+        }
+        return "tcp".equals(desired.get("probeType")) ? "TCP" : "HTTP";
+    }
+
     public static Integer nodePort(Map<String, Object> desired) {
         return desired != null && EXPOSE_NODEPORT.equals(desired.get("expose"))
                 && desired.get("nodePort") instanceof Number n ? n.intValue() : null;

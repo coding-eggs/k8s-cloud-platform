@@ -97,4 +97,12 @@ class AppSettingsTest {
         assertThat(AppSnapshot.parse(withApp.toJson()).app()).isEqualTo(Map.of("tracing", true));
         assertThat(AppSnapshot.parse(empty.toJson()).app()).isEmpty();
     }
+
+    @Test
+    void isL7() {
+        assertThat(AppSettings.isL7(Map.of("mesh", Map.of("mode", "l7", "waypoint", "wp")))).isTrue();
+        assertThat(AppSettings.isL7(Map.of("mesh", Map.of("mode", "l4")))).isFalse();
+        assertThat(AppSettings.isL7(Map.of())).isFalse();
+        assertThat(AppSettings.isL7(null)).isFalse();
+    }
 }

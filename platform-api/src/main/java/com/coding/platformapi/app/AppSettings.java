@@ -145,6 +145,11 @@ public final class AppSettings {
                 ? String.valueOf(mesh.get("mode")) : null;
     }
 
+    /** 应用级网格为 L7 且选了 waypoint：内部灰度分流的前提（内部灰度设计 §3） */
+    public static boolean isL7(Map<String, Object> settings) {
+        return "l7".equals(meshMode(settings)) && waypoint(settings) != null;
+    }
+
     /** L7 选的 waypoint 名；其余模式返回 null */
     public static String waypoint(Map<String, Object> settings) {
         return "l7".equals(meshMode(settings)) && settings.get("mesh") instanceof Map<?, ?> mesh
