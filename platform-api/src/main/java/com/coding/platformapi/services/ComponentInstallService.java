@@ -12,6 +12,7 @@ import com.coding.data.models.system.PlatformComponentOperation;
 import com.coding.platformapi.components.ComponentRecipe;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
 import com.coding.platformapi.components.DeepMerge;
+import com.coding.platformapi.components.HboneWindows;
 import com.coding.platformapi.components.IngressPortPool;
 import com.coding.platformapi.components.OtelObjects;
 import com.coding.platformapi.components.OtelRecipe;
@@ -259,6 +260,7 @@ public class ComponentInstallService {
         validateTempoPersistence(merged, last);
         validateCsiNfsStorageClass(req.getClusterId(), merged);
         validateIngressPortPool(req.getClusterId(), merged);
+        validateHboneWindows(merged);
         // 对象存储的 PVC / 副本数落在嵌套结构里（volume.dataDirs 是 list），由表单参数拼进来
         if (seaweed != null) {
             merged = applySeaweedValues(merged, seaweed);
@@ -350,6 +352,18 @@ public class ComponentInstallService {
         for (ReleaseSpec r : releases) {
             // mergeValues 之后有效 values 放在 contractValues 槽位里
             String problem = ThanosRetention.violation(r.contractValues());
+            if (problem != null) {
+                throw new CloudPlatformException(EnumResponseType.ERROR, problem);
+            }
+        }
+    }
+
+    /** 网格 HBONE 缓冲窗口：配错会让服务在看视频这类场景下卡死（2026-11-12 实测），下发前拒 */
+    private static void validateHboneWindows(List<ReleaseSpec> releases) {
+        for (ReleaseSpec r : releases) {
+            // mergeValues 之后有效 values 放在 contractValues 槽位里
+            String problem = HboneWindows.violation(
+                    r.releaseName(), r.contractValues());
             if (problem != null) {
                 throw new CloudPlatformException(EnumResponseType.ERROR, problem);
             }
@@ -525,9 +539,19 @@ public class ComponentInstallService {
             if (value == null || (value instanceof String s && s.isBlank())) {
                 continue;
             }
+            // 容器环境变量只能是字符串：chart 写成 value: "{{ $val }}"，数字到了 Helm 是 float64，
+            // 大数会被渲染成 1.048576e+06（进程读不懂）。整数原样转成字符串
+            if (isEnvKey(key) && value instanceof Number n && n.doubleValue() == Math.rint(n.doubleValue())) {
+                value = String.valueOf(n.longValue());
+            }
             putPath(out, key, value);
         }
         return out;
+    }
+
+    /** values 里的容器环境变量（{@code env.X} / {@code pilot.env.X}） */
+    private static boolean isEnvKey(String key) {
+        return key.startsWith("env.") || key.contains(".env.");
     }
 
     @SuppressWarnings("unchecked")

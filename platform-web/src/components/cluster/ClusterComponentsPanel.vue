@@ -24,6 +24,9 @@ import type {
 } from '@/types'
 import { clusterApi } from '@/api'
 import HarborStorageFields from './HarborStorageFields.vue'
+import {
+  bytesToMiB, miBToBytes, fieldProblem, crossFieldProblem, groupHint as hboneGroupHint,
+} from '@/utils/hboneWindows'
 
 const router = useRouter()
 
@@ -748,6 +751,13 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
       values[`${f.key}.from`] = range.from ?? undefined
       values[`${f.key}.to`] = range.to ?? undefined
       initial[f.key] = JSON.stringify(toPortRange(values[`${f.key}.from`], values[`${f.key}.to`]))
+    } else if (f.type === 'windowMiB') {
+      // 网格缓冲窗口：values 里是字节数字符串，表单按 MiB；初始快照存原字符串，没改就不提交
+      values[f.key] = bytesToMiB(start)
+      initial[f.key] = JSON.stringify(start == null ? start : String(start))
+    } else if (f.type === 'intString') {
+      values[f.key] = start == null || start === '' ? undefined : Number(start)
+      initial[f.key] = JSON.stringify(start == null ? start : String(start))
     } else {
       values[f.key] = start
       initial[f.key] = JSON.stringify(start)
@@ -1127,11 +1137,32 @@ function confirmApply(): void {
         }
       }
       editable[f.key] = value
+    } else if (f.type === 'windowMiB' || f.type === 'intString') {
+      const problem = fieldProblem(f.type, f.label, d.values[f.key])
+      if (problem) {
+        ElMessage.error(problem)
+        return
+      }
+      // 回到 values 的形态：字节数 / 整数的**字符串**（容器环境变量，数字会被 Helm 写成科学计数法）
+      const n = Number(d.values[f.key])
+      const value = f.type === 'windowMiB' ? miBToBytes(n) : String(n)
+      if (JSON.stringify(value) === d.initial[f.key]) continue
+      editable[f.key] = value
     } else {
       const value = typeof d.values[f.key] === 'string' ? d.values[f.key].trim() : d.values[f.key]
       if (JSON.stringify(value) === d.initial[f.key]) continue
       editable[f.key] = value
     }
+  }
+  // 网格缓冲窗口的字段间约束（后端还会再拒一次，这里是即时反馈）
+  const hboneValues: Record<string, unknown> = {}
+  for (const f of d.fields) {
+    if (f.type === 'windowMiB' || f.type === 'intString') hboneValues[f.key] = d.values[f.key]
+  }
+  const hboneProblem = crossFieldProblem(hboneValues)
+  if (hboneProblem) {
+    ElMessage.error(hboneProblem)
+    return
   }
   // collector gateway 的四格资源：前端先校验格式（后端还会再校验一次）
   if (d.showOtel) {
@@ -1508,6 +1539,7 @@ function copyImage(text: string): void {
       <!-- 组件字段：按后端下发的 group 分节，避免所有输入框平铺在一起 -->
       <template v-for="g in genericGroups" :key="g">
         <div class="cc-section-title">{{ g }}</div>
+        <div v-if="hboneGroupHint(g)" class="cc-form-hint cc-section-hint">{{ hboneGroupHint(g) }}</div>
         <div v-for="f in fieldsOf(g)" :key="f.key" class="cc-form-row">
           <span class="cc-form-label">{{ f.label }}</span>
           <div class="cc-form-control">
@@ -1596,6 +1628,13 @@ function copyImage(text: string): void {
             </el-select>
             <el-switch v-else-if="f.type === 'boolean'" v-model="applyDialog.values[f.key]" />
             <el-input-number v-else-if="f.type === 'number'" v-model="applyDialog.values[f.key]" :min="0" />
+            <div v-else-if="f.type === 'windowMiB'" class="cc-inline-unit">
+              <el-input-number v-model="applyDialog.values[f.key]" :min="1" :max="2047" :step="1"
+                               :precision="0" controls-position="right" />
+              <span class="cc-unit">MiB</span>
+            </div>
+            <el-input-number v-else-if="f.type === 'intString'" v-model="applyDialog.values[f.key]"
+                             :min="1" :max="1000" :step="1" :precision="0" controls-position="right" />
             <!-- 存储类：候选来自集群的 StorageClass；清空 = 跟随集群默认存储类（不提交该键） -->
             <el-select v-else-if="f.type === 'storageClass'" v-model="applyDialog.values[f.key]"
                        filterable allow-create clearable style="width: 100%"
@@ -2468,6 +2507,10 @@ function copyImage(text: string): void {
 .cc-sf-input { width: 140px; }
 .cc-sf-endpoint { max-width: 420px; }
 .cc-form-hint { margin-top: 4px; font-size: 12px; color: var(--text-3); }
+/* 分组说明：紧贴小节标题、在字段之前 */
+.cc-section-hint { margin: -4px 0 12px; line-height: 1.6; }
+.cc-inline-unit { display: flex; align-items: center; gap: 8px; }
+.cc-unit { font-size: 13px; color: var(--text-3); }
 .cc-resources { display: flex; flex-direction: column; gap: 8px; }
 .cc-resource-line { display: flex; align-items: center; gap: 8px; }
 .cc-resource-label { flex: 0 0 64px; font-size: 12px; color: var(--text-3); }

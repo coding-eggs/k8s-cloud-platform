@@ -1459,9 +1459,11 @@ export interface K8sEditableField {
    * resources = requests/limits × cpu/memory 四格资源输入；
    * select = 枚举下拉（候选值见 options）；ports = Service 端口列表表格；
    * duration = 时长输入（30d / 12h）；
+   * windowMiB = 网格缓冲窗口（values 里是字节数字符串，表单按 MiB 数字框）；
+   * intString = 整数框（values 里是字符串，容器环境变量）；
    * json = 多行 JSON 文本域（其余按 defaultValue 的 JS 类型）
    */
-  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size' | 'resources' | 'select' | 'ports' | 'duration' | 'portRange'
+  type: 'string' | 'number' | 'boolean' | 'json' | 'storageClass' | 'size' | 'resources' | 'select' | 'ports' | 'duration' | 'portRange' | 'windowMiB' | 'intString'
   /** 分组标题；前端按组渲染小节 */
   group?: string
   /** type=select 的候选值 */

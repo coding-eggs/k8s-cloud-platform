@@ -9,6 +9,7 @@ import com.coding.common.components.cache.RedisJsonCache;
 import com.coding.platformapi.components.ClusterComponentCatalog;
 import com.coding.platformapi.components.ComponentDef;
 import com.coding.platformapi.components.ComponentProbe;
+import com.coding.platformapi.components.HboneWindows;
 import com.coding.platformapi.components.ComponentRecipe;
 import com.coding.platformapi.components.ComponentRecipeCatalog;
 import com.coding.platformapi.components.OtelRecipe;
@@ -637,6 +638,14 @@ public class ClusterComponentService {
         if (key.endsWith(".retention.resolutionRaw") || key.endsWith(".retention.resolution5m")
                 || key.endsWith(".retention.resolution1h")) {
             return "duration";
+        }
+        // 网格 HBONE 缓冲窗口：values 里是字节数字符串，表单按 MiB 数字框展示（前端负责换算）
+        if (HboneWindows.isWindowKey(key)) {
+            return "windowMiB";
+        }
+        // 每连接请求数：values 里同样是字符串（env），表单是整数框
+        if (HboneWindows.ZTUNNEL_STREAMS_KEY.equals(key)) {
+            return "intString";
         }
         // 枚举字段（候选值集中声明在 recipe 目录里）→ 下拉
         if (!ComponentRecipeCatalog.optionsOf(key).isEmpty()) {

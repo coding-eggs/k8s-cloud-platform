@@ -607,32 +607,46 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
-    void istioZtunnelConnectionWindowOutlastsAllPausedStreams() {
-        // 默认 16MiB 连接窗口只够 4 条暂停的 4MiB 流，第 4 条就卡死同连接的所有请求（2026-11-12 实测）。
-        // 不变量：每连接流数 × 流窗口(默认 4MiB) < 连接窗口
-        var ztunnel = catalog.recipeOf("istio", "BUSINESS").releases().stream()
-                .filter(r -> r.releaseName().equals("ztunnel")).findFirst().orElseThrow();
+    void istioHboneWindowsAreEditableAndDefaultsPassTheirOwnRules() {
+        // 2026-11-12：HBONE 窗口从契约值改成可编辑（用户要求）；默认值本身必须满足 HboneWindows 的约束，
+        // 而且必须是字符串（chart 把 env 写成 value: "{{ $val }}"，数字会被渲染成科学计数法）
+        var releases = catalog.recipeOf("istio", "BUSINESS").releases();
+        var istiod = releases.stream().filter(r -> r.releaseName().equals("istiod")).findFirst().orElseThrow();
+        var ztunnel = releases.stream().filter(r -> r.releaseName().equals("ztunnel")).findFirst().orElseThrow();
+
+        assertThat(istiod.editableValues())
+                .containsEntry(HboneWindows.ISTIOD_STREAM_KEY, String.valueOf(HboneWindows.MIB))
+                .containsEntry(HboneWindows.ISTIOD_CONNECTION_KEY, String.valueOf(256 * HboneWindows.MIB));
+        assertThat(ztunnel.editableValues())
+                .containsEntry(HboneWindows.ZTUNNEL_STREAMS_KEY, "16")
+                .containsEntry(HboneWindows.ZTUNNEL_STREAM_KEY, String.valueOf(4 * HboneWindows.MIB))
+                .containsEntry(HboneWindows.ZTUNNEL_CONNECTION_KEY, String.valueOf(128 * HboneWindows.MIB));
+        // 不能再留在契约值里：契约值最后压，会把用户改的值盖掉
         @SuppressWarnings("unchecked")
-        Map<String, Object> env = (Map<String, Object>) ztunnel.contractValues().get("env");
-        long streams = Long.parseLong((String) env.get("POOL_MAX_STREAMS_PER_CONNECTION"));
-        long connWindow = Long.parseLong((String) env.get("HTTP2_CONNECTION_WINDOW_SIZE"));
-        assertThat(streams * 4L * 1024 * 1024).isLessThan(connWindow);
+        Map<String, Object> pilotEnv = (Map<String, Object>) ((Map<String, Object>)
+                istiod.contractValues().get("pilot")).get("env");
+        assertThat(pilotEnv).doesNotContainKeys("PILOT_HBONE_INITIAL_STREAM_WINDOW_SIZE",
+                "PILOT_HBONE_INITIAL_CONNECTION_WINDOW_SIZE");
+        assertThat(ztunnel.contractValues()).doesNotContainKey("env");
+
+        assertThat(HboneWindows.violation("istiod", nested(istiod.editableValues()))).isNull();
+        assertThat(HboneWindows.violation("ztunnel", nested(ztunnel.editableValues()))).isNull();
     }
 
-    @Test
-    void istioIstiodShrinksHboneStreamWindowAgainstLeakedConnectStreams() {
-        // Envoy 中断后泄漏的 CONNECT 流各钉住一个流窗口（istio#62641）：流窗口小、连接窗口大，
-        // 才能容得下大量泄漏流而不卡死同连接的请求（2026-11-12 实测）
-        var istiod = catalog.recipeOf("istio", "BUSINESS").releases().stream()
-                .filter(r -> r.releaseName().equals("istiod")).findFirst().orElseThrow();
-        @SuppressWarnings("unchecked")
-        Map<String, Object> pilot = (Map<String, Object>) istiod.contractValues().get("pilot");
-        @SuppressWarnings("unchecked")
-        Map<String, Object> env = (Map<String, Object>) pilot.get("env");
-        long stream = Long.parseLong((String) env.get("PILOT_HBONE_INITIAL_STREAM_WINDOW_SIZE"));
-        long conn = Long.parseLong((String) env.get("PILOT_HBONE_INITIAL_CONNECTION_WINDOW_SIZE"));
-        assertThat(stream).isLessThanOrEqualTo(1024 * 1024);
-        assertThat(conn).isGreaterThanOrEqualTo(stream * 100);
+    /** 把路径形式的 editableValues 展开成嵌套 values（与安装侧同一约定） */
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> nested(Map<String, Object> flat) {
+        Map<String, Object> root = new java.util.LinkedHashMap<>();
+        flat.forEach((path, value) -> {
+            String[] parts = path.split("\\.");
+            Map<String, Object> cursor = root;
+            for (int i = 0; i < parts.length - 1; i++) {
+                cursor = (Map<String, Object>) cursor.computeIfAbsent(parts[i],
+                        k -> new java.util.LinkedHashMap<String, Object>());
+            }
+            cursor.put(parts[parts.length - 1], value);
+        });
+        return root;
     }
 
     @Test

@@ -154,6 +154,57 @@ class ComponentInstallServiceTest {
     }
 
     @Test
+    void istioHboneWindowsThatCanStallConnectionsAreRejectedBeforeHelm() {
+        // 2026-11-12：100 × 4MiB > 16MiB（Istio 默认）就是 movie 看视频卡死全站的配置，不能下发
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+
+        assertThatThrownBy(() -> service().apply(new ComponentApplyRequest("c1", "istio", "EDIT", null,
+                Map.of(com.coding.platformapi.components.HboneWindows.ZTUNNEL_STREAMS_KEY, "100",
+                        com.coding.platformapi.components.HboneWindows.ZTUNNEL_CONNECTION_KEY,
+                        String.valueOf(16 * 1024 * 1024))), "admin"))
+                .hasMessageContaining("必须小于整条连接的缓冲上限");
+        verify(mapper, never()).insert(any());
+        verify(client, never()).applyComponent(anyString(), anyString(), anyString(), any());
+    }
+
+    @Test
+    void istioHboneWindowsReachHelmAsStringsEvenWhenSentAsNumbers() {
+        // chart 把 env 写成 value: "{{ $val }}"：数字到 Helm 是 float64，268435456 会变成 2.68435456e+08
+        when(clusterService.requireProfile("c1")).thenReturn("BUSINESS");
+        when(mapper.countRunning("c1", "istio")).thenReturn(0);
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        when(client.ensureExternalGateway(anyString(), anyString(), anyString(), anyString(), any(),
+                org.mockito.ArgumentMatchers.<Map<String, String>>any()))
+                .thenReturn(true);
+
+        service().apply(new ComponentApplyRequest("c1", "istio", "EDIT", null,
+                Map.of(com.coding.platformapi.components.HboneWindows.ISTIOD_CONNECTION_KEY, 512L * 1024 * 1024,
+                        com.coding.platformapi.components.HboneWindows.ZTUNNEL_STREAMS_KEY, 8)), "admin");
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(5000)).applyComponent(eq("c1"), eq("istio"), eq("EDIT"), specs.capture());
+        ReleaseInstallSpecDTO istiod = specs.getValue().stream()
+                .filter(r -> "istiod".equals(r.getReleaseName())).findFirst().orElseThrow();
+        ReleaseInstallSpecDTO ztunnel = specs.getValue().stream()
+                .filter(r -> "ztunnel".equals(r.getReleaseName())).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pilotEnv = (Map<String, Object>)
+                ((Map<String, Object>) istiod.getValues().get("pilot")).get("env");
+        assertThat(pilotEnv)
+                .containsEntry("PILOT_HBONE_INITIAL_CONNECTION_WINDOW_SIZE", "536870912")
+                .containsEntry("PILOT_HBONE_INITIAL_STREAM_WINDOW_SIZE", "1048576")
+                .containsEntry("PILOT_ENABLE_AMBIENT", "true");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> ztunnelEnv = (Map<String, Object>) ztunnel.getValues().get("env");
+        assertThat(ztunnelEnv)
+                .containsEntry("POOL_MAX_STREAMS_PER_CONNECTION", "8")
+                .containsEntry("HTTP2_STREAM_WINDOW_SIZE", "4194304")
+                .containsEntry("HTTP2_CONNECTION_WINDOW_SIZE", "134217728");
+    }
+
+    @Test
     void replayingAnOlderSnapshotFillsTheMissingPortListeners() {
         // 功能上线前装的 istio：快照里的端口行没有 listener。重放要按默认行补齐，
         // 否则 external-gateway CR 不会生成（用户会看到"重放了但没变化"）

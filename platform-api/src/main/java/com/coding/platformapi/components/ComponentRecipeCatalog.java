@@ -165,6 +165,33 @@ public class ComponentRecipeCatalog {
 
     // ==================== istio（含 Gateway API CRD） ====================
 
+    /** istiod 可编辑项：副本 / 扩缩容 / 资源 + 网关与 waypoint 的 HBONE 窗口（有序：表单按此排列） */
+    private static Map<String, Object> istiodEditable() {
+        Map<String, Object> editable = new LinkedHashMap<>();
+        editable.put("replicaCount", 1);
+        editable.put("autoscaleEnabled", true);
+        editable.put("resources", Map.of(
+                "requests", Map.of("cpu", "100m", "memory", "256Mi"),
+                "limits", Map.of("cpu", "1", "memory", "1Gi")));
+        // HBONE 窗口（作用于 waypoint 与入口 gateway 的 connect_originate）：Envoy 在客户端中断下载后
+        // 不关 CONNECT 流、挂满 1 小时 idle timeout（istio/istio#62641、#60074），每条泄漏流钉住一个流窗口；
+        // Envoy 默认窗口下几次中断就卡死整条连接（2026-11-12 实测：movie 看视频一会儿全站不可访问）。
+        // 流窗口压到 1MiB、连接窗口放到 256MiB：泄漏仍在但挤不死别的请求。上游修复进版后可调回。
+        // env 值必须是字符串：chart 写成 value: "{{ $val }}"，数字会被 Helm 渲染成 1.048576e+06
+        editable.put(HboneWindows.ISTIOD_STREAM_KEY, String.valueOf(HboneWindows.MIB));
+        editable.put(HboneWindows.ISTIOD_CONNECTION_KEY, String.valueOf(256 * HboneWindows.MIB));
+        return editable;
+    }
+
+    /** ztunnel 可编辑项：每连接流数 / 流窗口 / 连接窗口（有序；env 值必须是字符串，原因同上） */
+    private static Map<String, Object> ztunnelEditable() {
+        Map<String, Object> editable = new LinkedHashMap<>();
+        editable.put(HboneWindows.ZTUNNEL_STREAMS_KEY, "16");
+        editable.put(HboneWindows.ZTUNNEL_STREAM_KEY, String.valueOf(4 * HboneWindows.MIB));
+        editable.put(HboneWindows.ZTUNNEL_CONNECTION_KEY, String.valueOf(128 * HboneWindows.MIB));
+        return editable;
+    }
+
     /**
      * 默认按 **ambient** 模式部署：Gateway API CRD → base → istiod → cni（ambient）→ ztunnel → 对外入口 gateway。
      * 六个 release 是一个安装单元，入口名固定 {@code external-gateway}（集群对外拓扑依赖它）。
@@ -226,17 +253,9 @@ public class ComponentRecipeCatalog {
                             // 19530），1.31 起 TCP listener 已转正、该开关不再需要；留着是为了回退 1.30 时仍可用。
                             // ⚠️ 1.30 即使开了也没用：它只监听 v1alpha2 的 TCPRoute，而平台写的是 v1（issue #60744，
                             // 修在 1.31）。这才是升 1.31 的真正原因。
-                            // HBONE 窗口（作用于 waypoint 与入口 gateway 的 connect_originate）：Envoy 在客户端
-                            // 中断下载后不关 CONNECT 流、挂满 1 小时 idle timeout（istio/istio#62641、#60074），
-                            // 每条泄漏流钉住一个流窗口；Envoy 默认窗口下几次中断就卡死整条连接（2026-11-12 实测：
-                            // movie 看视频一会儿全站不可访问）。流窗口压到 1MiB、连接窗口放到 256MiB，
-                            // 泄漏仍在但挤不死别的请求。上游修复进版后（升级 Istio）可去掉。
                             "pilot", Map.of("env", Map.of(
                                     "PILOT_ENABLE_AMBIENT", "true",
-                                    "PILOT_ENABLE_ALPHA_GATEWAY_API", "true",
-                                    "PILOT_HBONE_INITIAL_STREAM_WINDOW_SIZE", String.valueOf(1024 * 1024),
-                                    "PILOT_HBONE_INITIAL_CONNECTION_WINDOW_SIZE",
-                                    String.valueOf(256 * 1024 * 1024))),
+                                    "PILOT_ENABLE_ALPHA_GATEWAY_API", "true")),
                             // 批次二：网格侧 tracing 的 provider（ingress/waypoint 的 Telemetry 引用它）。
                             // collector 不在时 Envoy 只丢 span，不影响流量
                             "meshConfig", Map.of(
@@ -249,11 +268,7 @@ public class ComponentRecipeCatalog {
                                                     "service", "platform-otel-gateway-collector.monitor"
                                                             + ".svc.cluster.local",
                                                     "port", 4317))))),
-                    Map.of("replicaCount", 1,
-                            "autoscaleEnabled", true,
-                            "resources", Map.of(
-                                    "requests", Map.of("cpu", "100m", "memory", "256Mi"),
-                                    "limits", Map.of("cpu", "1", "memory", "1Gi"))))
+                    istiodEditable())
                     .asPrimary().withAppVersion("1.31.3"),
             new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.31.3",
                     Map.of("ambient", Map.of("enabled", true)), Map.of()).withAppVersion("1.31.3"),
@@ -262,11 +277,9 @@ public class ComponentRecipeCatalog {
             // 同连接上的其它请求全部挂起（2026-11-12 真集群实测：movie 看视频一会儿全站不可访问）。
             // 调成「每连接流数 × 流窗口 < 连接窗口」：16 × 4MiB = 64MiB < 128MiB，暂停的流再多也挤不死别人。
             // ztunnel 没设内存 limit，窗口只在数据真积压时占内存。
-            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.31.3",
-                    Map.of("env", Map.of(
-                            "POOL_MAX_STREAMS_PER_CONNECTION", "16",
-                            "HTTP2_CONNECTION_WINDOW_SIZE", String.valueOf(128 * 1024 * 1024))),
-                    Map.of())
+            // 可编辑（2026-11-12 用户要求），取值约束见 HboneWindows
+            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.31.3", Map.of(),
+                    ztunnelEditable())
                     .withAppVersion("1.31.3"),
             new ReleaseSpec("external-gateway", "istio-system", "istio-gateway", "1.31.3",
                     Map.of("name", "external-gateway"),
@@ -836,7 +849,12 @@ public class ComponentRecipeCatalog {
             Map.entry("tempo.resources", "Tempo"),
             // Tempo 的持久化（StatefulSet volumeClaimTemplates；只在首次安装时可选）
             Map.entry("persistence.storageClassName", "存储类"),
-            Map.entry("persistence.size", "容量"));
+            Map.entry("persistence.size", "容量"),
+            Map.entry(HboneWindows.ISTIOD_STREAM_KEY, "单个请求的缓冲上限"),
+            Map.entry(HboneWindows.ISTIOD_CONNECTION_KEY, "整条连接的缓冲上限"),
+            Map.entry(HboneWindows.ZTUNNEL_STREAMS_KEY, "每条连接最多同时承载的请求数"),
+            Map.entry(HboneWindows.ZTUNNEL_STREAM_KEY, "单个请求的缓冲上限"),
+            Map.entry(HboneWindows.ZTUNNEL_CONNECTION_KEY, "整条连接的缓冲上限"));
 
     /**
      * 可编辑字段的分组（前端按组渲染小节标题，顺序 = 字段首次出现顺序）。
@@ -884,7 +902,12 @@ public class ComponentRecipeCatalog {
             Map.entry("master.resources", "资源限制"),
             Map.entry("tempo.resources", "资源限制"),
             Map.entry("persistence.storageClassName", "Tempo 存储（持久化）"),
-            Map.entry("persistence.size", "Tempo 存储（持久化）"));
+            Map.entry("persistence.size", "Tempo 存储（持久化）"),
+            Map.entry(HboneWindows.ISTIOD_STREAM_KEY, HboneWindows.ENVOY_GROUP),
+            Map.entry(HboneWindows.ISTIOD_CONNECTION_KEY, HboneWindows.ENVOY_GROUP),
+            Map.entry(HboneWindows.ZTUNNEL_STREAMS_KEY, HboneWindows.ZTUNNEL_GROUP),
+            Map.entry(HboneWindows.ZTUNNEL_STREAM_KEY, HboneWindows.ZTUNNEL_GROUP),
+            Map.entry(HboneWindows.ZTUNNEL_CONNECTION_KEY, HboneWindows.ZTUNNEL_GROUP));
 
     public static String groupOf(String key) {
         return EDITABLE_GROUPS.getOrDefault(key, "其他配置");
