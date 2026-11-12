@@ -607,6 +607,35 @@ class ComponentRecipeCatalogTest {
     }
 
     @Test
+    void istioZtunnelConnectionWindowOutlastsAllPausedStreams() {
+        // 默认 16MiB 连接窗口只够 4 条暂停的 4MiB 流，第 4 条就卡死同连接的所有请求（2026-11-12 实测）。
+        // 不变量：每连接流数 × 流窗口(默认 4MiB) < 连接窗口
+        var ztunnel = catalog.recipeOf("istio", "BUSINESS").releases().stream()
+                .filter(r -> r.releaseName().equals("ztunnel")).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> env = (Map<String, Object>) ztunnel.contractValues().get("env");
+        long streams = Long.parseLong((String) env.get("POOL_MAX_STREAMS_PER_CONNECTION"));
+        long connWindow = Long.parseLong((String) env.get("HTTP2_CONNECTION_WINDOW_SIZE"));
+        assertThat(streams * 4L * 1024 * 1024).isLessThan(connWindow);
+    }
+
+    @Test
+    void istioIstiodShrinksHboneStreamWindowAgainstLeakedConnectStreams() {
+        // Envoy 中断后泄漏的 CONNECT 流各钉住一个流窗口（istio#62641）：流窗口小、连接窗口大，
+        // 才能容得下大量泄漏流而不卡死同连接的请求（2026-11-12 实测）
+        var istiod = catalog.recipeOf("istio", "BUSINESS").releases().stream()
+                .filter(r -> r.releaseName().equals("istiod")).findFirst().orElseThrow();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> pilot = (Map<String, Object>) istiod.contractValues().get("pilot");
+        @SuppressWarnings("unchecked")
+        Map<String, Object> env = (Map<String, Object>) pilot.get("env");
+        long stream = Long.parseLong((String) env.get("PILOT_HBONE_INITIAL_STREAM_WINDOW_SIZE"));
+        long conn = Long.parseLong((String) env.get("PILOT_HBONE_INITIAL_CONNECTION_WINDOW_SIZE"));
+        assertThat(stream).isLessThanOrEqualTo(1024 * 1024);
+        assertThat(conn).isGreaterThanOrEqualTo(stream * 100);
+    }
+
+    @Test
     void istioIstiodEnablesAlphaGatewayApiForTcpRoutes() {
         // TCPRoute / TLSRoute / UDPRoute 在 Istio 里属于 alpha：不开这个开关，Gateway 里的 TCP listener
         // 会被 istiod 判 UnsupportedProtocol（Accepted=False），Envoy 根本不监听那个端口，

@@ -226,9 +226,17 @@ public class ComponentRecipeCatalog {
                             // 19530），1.31 起 TCP listener 已转正、该开关不再需要；留着是为了回退 1.30 时仍可用。
                             // ⚠️ 1.30 即使开了也没用：它只监听 v1alpha2 的 TCPRoute，而平台写的是 v1（issue #60744，
                             // 修在 1.31）。这才是升 1.31 的真正原因。
+                            // HBONE 窗口（作用于 waypoint 与入口 gateway 的 connect_originate）：Envoy 在客户端
+                            // 中断下载后不关 CONNECT 流、挂满 1 小时 idle timeout（istio/istio#62641、#60074），
+                            // 每条泄漏流钉住一个流窗口；Envoy 默认窗口下几次中断就卡死整条连接（2026-11-12 实测：
+                            // movie 看视频一会儿全站不可访问）。流窗口压到 1MiB、连接窗口放到 256MiB，
+                            // 泄漏仍在但挤不死别的请求。上游修复进版后（升级 Istio）可去掉。
                             "pilot", Map.of("env", Map.of(
                                     "PILOT_ENABLE_AMBIENT", "true",
-                                    "PILOT_ENABLE_ALPHA_GATEWAY_API", "true")),
+                                    "PILOT_ENABLE_ALPHA_GATEWAY_API", "true",
+                                    "PILOT_HBONE_INITIAL_STREAM_WINDOW_SIZE", String.valueOf(1024 * 1024),
+                                    "PILOT_HBONE_INITIAL_CONNECTION_WINDOW_SIZE",
+                                    String.valueOf(256 * 1024 * 1024))),
                             // 批次二：网格侧 tracing 的 provider（ingress/waypoint 的 Telemetry 引用它）。
                             // collector 不在时 Envoy 只丢 span，不影响流量
                             "meshConfig", Map.of(
@@ -249,7 +257,16 @@ public class ComponentRecipeCatalog {
                     .asPrimary().withAppVersion("1.31.3"),
             new ReleaseSpec("istio-cni", "istio-system", "istio-cni", "1.31.3",
                     Map.of("ambient", Map.of("enabled", true)), Map.of()).withAppVersion("1.31.3"),
-            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.31.3", Map.of(), Map.of())
+            // HBONE 是 HTTP/2 多路复用：接收方停读（播放器缓冲够了暂停）的流会钉住连接级窗口。
+            // 默认 4MiB 流窗口 / 16MiB 连接窗口 / 每连接 100 流 → 第 4 条暂停的流就把整条连接卡死，
+            // 同连接上的其它请求全部挂起（2026-11-12 真集群实测：movie 看视频一会儿全站不可访问）。
+            // 调成「每连接流数 × 流窗口 < 连接窗口」：16 × 4MiB = 64MiB < 128MiB，暂停的流再多也挤不死别人。
+            // ztunnel 没设内存 limit，窗口只在数据真积压时占内存。
+            new ReleaseSpec("ztunnel", "istio-system", "istio-ztunnel", "1.31.3",
+                    Map.of("env", Map.of(
+                            "POOL_MAX_STREAMS_PER_CONNECTION", "16",
+                            "HTTP2_CONNECTION_WINDOW_SIZE", String.valueOf(128 * 1024 * 1024))),
+                    Map.of())
                     .withAppVersion("1.31.3"),
             new ReleaseSpec("external-gateway", "istio-system", "istio-gateway", "1.31.3",
                     Map.of("name", "external-gateway"),
