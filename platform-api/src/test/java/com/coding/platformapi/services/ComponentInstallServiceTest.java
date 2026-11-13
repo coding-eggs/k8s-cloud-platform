@@ -2021,6 +2021,30 @@ class ComponentInstallServiceTest {
                 org.mockito.ArgumentMatchers.eq(true));
     }
 
+    /**
+     * gateway 让出 443 后，Harbor 自己用 NodePort 443 + HTTPS 占住 443：地址里不能再出现 {@code :443}，
+     * 否则镜像路径会变成 {@code harbor.example.com:443/...}（与既有引用不一致）。
+     */
+    @Test
+    void harborHttpsOnNodePort443OmitsTheDefaultPort() {
+        HarborInstallRequest install = new HarborInstallRequest("nodePort", "harbor.example.com", 30002, 80);
+        install.setHttps(true);
+        install.setHttpsPort(443);
+        install.setHttpsNodePort(443);
+        install.setTlsCert(CRT_PEM);
+        install.setTlsKey(KEY_PEM);
+
+        String values = capturedHarborValues(install);
+
+        assertThat(values).contains("externalURL=https://harbor.example.com");
+        assertThat(values).doesNotContain("harbor.example.com:443");
+        // chart 的 Service 端口与 NodePort 都是 443，由 Harbor 自己的 nginx 终止 TLS
+        assertThat(values).contains("port=443").contains("nodePort=443");
+        // 不走网关：证书写到 harbor 命名空间，而不是 istio-system
+        verify(client, timeout(3000)).applyTlsSecret("c1", "harbor", "harbor-tls", CRT_PEM, KEY_PEM);
+        verify(harborRegistry, timeout(3000)).ensureAll("c1", "harbor.example.com", true, true);
+    }
+
     @Test
     void harborHttpsRejectsAnIpHost() {
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
@@ -2058,6 +2082,8 @@ class ComponentInstallServiceTest {
 
         String values = capturedHarborValues(install);
         assertThat(values).contains("httpProxy=http://192.168.31.239:7890")
+                // HTTPS 代理留空 = 与 HTTP 代理同一个地址（Go 的 https 请求不会回退到 HTTP_PROXY）
+                .contains("httpsProxy=http://192.168.31.239:7890")
                 .contains("192.168.0.0/16");   // noProxy 留空时自动补内网
 
         ArgumentCaptor<PlatformComponentOperation> op = ArgumentCaptor.forClass(PlatformComponentOperation.class);

@@ -842,8 +842,10 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     httpsNodePort: harborMerged.httpsNodePort ?? 30443,
     tlsCert: '',   // 回填时永远是空：证书不回显，留空 = 沿用集群里已有的那份
     tlsKey: '',
-    httpProxy: harborMerged.httpProxy ?? '',
-    httpsProxy: harborMerged.httpsProxy ?? '',
+    // 出网代理只暴露一个输入框：HTTP_PROXY / HTTPS_PROXY 用同一个地址。
+    // 老快照里可能只有 httpsProxy（或两者不同），回填时优先 httpProxy，否则取 httpsProxy。
+    httpProxy: harborMerged.httpProxy || harborMerged.httpsProxy || '',
+    httpsProxy: '',
     noProxy: harborMerged.noProxy ?? '',
   }
   applyDialog.value = {
@@ -1207,9 +1209,9 @@ function confirmApply(): void {
     // 对象存储：安装时整组下发；编辑时只发改动过的（没改的由后端沿用上次快照）
     seaweed: d.showSeaweed && (d.action === 'INSTALL' || JSON.stringify(d.seaweed) !== d.initialSeaweed)
       ? { ...d.seaweed } : undefined,
-    // Harbor：安装时整组下发；编辑时只发改动过的
+    // Harbor：安装时整组下发；编辑时只发改动过的。出网代理只填一个，HTTPS_PROXY 跟随它
     harbor: d.showHarbor && (d.action === 'INSTALL' || JSON.stringify(d.harbor) !== d.initialHarbor)
-      ? { ...d.harbor, host: d.harbor.host.trim() } : undefined,
+      ? { ...d.harbor, host: d.harbor.host.trim(), httpsProxy: d.harbor.httpProxy } : undefined,
     // 镜像来源：harbor 组件永远官方（后端也会强制）；自举类组件（calico）同理，不给改写
     imageSource: d.showHarbor || !d.imageMirroring ? 'OFFICIAL' : d.imageSource,
   })
@@ -1788,40 +1790,53 @@ function copyImage(text: string): void {
           <el-input v-model="applyDialog.harbor.httpProxy" spellcheck="false"
                     placeholder="http://192.168.31.239:7890（留空 = 不走代理）" />
           <div class="cc-form-hint">
+            一个地址同时写进 <code>HTTP_PROXY</code> 和 <code>HTTPS_PROXY</code>。
             镜像复制与漏洞扫描是 <b>Harbor 在集群里</b>发起的：节点够不到上游（典型是 docker.io）时，
             填这里让 core / jobservice / trivy 走代理。填了它就没法断网装了 —— 断网场景请先把镜像搬完。
+            <br>只影响 <b>Harbor 自己出网</b>，不影响节点/客户端拉取 Harbor 的镜像。
           </div>
         </div>
       </div>
-      <template v-if="applyDialog.showHarbor && applyDialog.harbor.httpProxy">
-        <div class="cc-form-row">
-          <span class="cc-form-label">HTTPS 代理</span>
-          <div class="cc-form-control">
-            <el-input v-model="applyDialog.harbor.httpsProxy" spellcheck="false"
-                      placeholder="留空 = 与上面同一个地址" />
-          </div>
+      <div v-if="applyDialog.showHarbor && applyDialog.harbor.httpProxy"
+           class="cc-form-row">
+        <span class="cc-form-label">不走代理</span>
+        <div class="cc-form-control">
+          <el-input v-model="applyDialog.harbor.noProxy" spellcheck="false"
+                    placeholder="留空 = 集群内 + 内网自动补全" />
         </div>
-        <div class="cc-form-row">
-          <span class="cc-form-label">不走代理</span>
-          <div class="cc-form-control">
-            <el-input v-model="applyDialog.harbor.noProxy" spellcheck="false"
-                      placeholder="留空 = 集群内 + 内网自动补全" />
-          </div>
-        </div>
-      </template>
-      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'nodePort'"
+      </div>
+      <!-- NodePort 模式：只保留一个 NodePort 输入框；HTTPS 时它就是 HTTPS NodePort -->
+      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'nodePort'
+                 && !applyDialog.harbor.https"
            class="cc-form-row">
         <span class="cc-form-label">NodePort</span>
         <div class="cc-form-control">
           <el-input-number v-model="applyDialog.harbor.nodePort" :min="1" :max="65535"
                            controls-position="right" />
           <div class="cc-form-hint">
-            默认 30002（K8s 默认 NodePort 范围 30000-32767）。实际访问地址是
-            <code>http://&lt;节点地址&gt;:&lt;NodePort&gt;</code>
+            默认 30002。实际访问地址是 <code>http://&lt;节点地址&gt;:&lt;NodePort&gt;</code>
           </div>
         </div>
       </div>
-      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'loadBalancer'"
+      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'nodePort'
+                 && applyDialog.harbor.https"
+           class="cc-form-row">
+        <span class="cc-form-label">NodePort</span>
+        <div class="cc-form-control">
+          <el-input-number v-model="applyDialog.harbor.httpsNodePort" :min="1" :max="65535"
+                           controls-position="right" />
+          <div class="cc-form-hint">
+            这里是 <b>HTTPS</b> 的 NodePort（默认 30443），实际访问地址是
+            <code>https://&lt;域名&gt;:&lt;NodePort&gt;</code>。想让 <code>https://&lt;域名&gt;</code>
+            直接走 443，就填 443（apiserver 的 NodePort 范围要包含 443）—— 前提是 external-gateway
+            的端口表里<b>已经删掉</b> 443。TLS 由 Harbor 自己的 nginx 终止；HTTP 端口在 TLS 模式下
+            不提供服务，不在这里展示
+          </div>
+        </div>
+      </div>
+      <!-- LoadBalancer 模式：Service 端口就是客户端访问的端口，HTTP/HTTPS 只展示当前生效的那一个 -->
+      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'loadBalancer'
+                 && !applyDialog.harbor.https"
            class="cc-form-row">
         <span class="cc-form-label">Service 端口</span>
         <div class="cc-form-control">
@@ -1829,6 +1844,18 @@ function copyImage(text: string): void {
                            controls-position="right" />
           <div class="cc-form-hint">
             默认 80。集群需有 LoadBalancer 实现，否则 EXTERNAL-IP 一直 pending
+          </div>
+        </div>
+      </div>
+      <div v-if="applyDialog.showHarbor && applyDialog.harbor.exposeMode === 'loadBalancer'
+                 && applyDialog.harbor.https"
+           class="cc-form-row">
+        <span class="cc-form-label">Service 端口</span>
+        <div class="cc-form-control">
+          <el-input-number v-model="applyDialog.harbor.httpsPort" :min="1" :max="65535"
+                           controls-position="right" />
+          <div class="cc-form-hint">
+            这里是 <b>HTTPS</b> 的 Service 端口（默认 443）；80/443 是默认端口时，平台拼出的访问地址不带端口
           </div>
         </div>
       </div>

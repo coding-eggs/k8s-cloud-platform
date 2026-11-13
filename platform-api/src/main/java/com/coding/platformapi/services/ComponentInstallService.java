@@ -1540,14 +1540,19 @@ public class ComponentInstallService {
 
     /**
      * 平台访问 Harbor 的完整 authority（host[:port]）：
-     * route 用域名；loadBalancer 端口非 80 时带端口；nodePort 恒带 NodePort。
+     * route 用域名；loadBalancer / nodePort 的 80、443 是默认端口，不写进 authority
+     * （NodePort 也可以把 443/80 当 nodePort 用 —— 例如 gateway 让出 443 后让 Harbor 自己占 443）。
      */
     static String harborAuthority(HarborInstallRequest harbor) {
         String host = harbor.getHost();
         boolean https = Boolean.TRUE.equals(harbor.getHttps());
         if ("nodePort".equals(harbor.getExposeMode())) {
             Integer nodePort = https ? harbor.getHttpsNodePort() : harbor.getNodePort();
-            return host + ":" + nodePort;
+            if (nodePort == null) {
+                return host;
+            }
+            return (https && nodePort == 443) || (!https && nodePort == 80)
+                    ? host : host + ":" + nodePort;
         }
         if ("loadBalancer".equals(harbor.getExposeMode())) {
             Integer port = https ? harbor.getHttpsPort() : harbor.getPort();
@@ -1579,6 +1584,11 @@ public class ComponentInstallService {
         Map<String, Object> proxy = new LinkedHashMap<>();
         if (httpProxy != null) {
             proxy.put("httpProxy", httpProxy);
+        }
+        // 表单承诺「HTTPS 代理留空 = 与上面同一个地址」：Go 的 https 请求不会自动回退到 HTTP_PROXY，
+        // 不在这里补的话，只填一个代理地址时复制/扫描仍然连不上上游（docker.io 等）
+        if (httpsProxy == null) {
+            httpsProxy = httpProxy;
         }
         if (httpsProxy != null) {
             proxy.put("httpsProxy", httpsProxy);
