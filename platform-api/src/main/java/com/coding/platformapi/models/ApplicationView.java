@@ -12,6 +12,9 @@ public class ApplicationView {
 
     private String clusterId;
 
+    /** 集群名（列表跨集群展示用；集群已删除时为 null，前端退回 clusterId） */
+    private String clusterName;
+
     private String namespace;
 
     private String name;

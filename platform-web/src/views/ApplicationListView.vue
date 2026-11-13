@@ -7,22 +7,37 @@ import { applicationApi } from '@/api'
 import { useApplicationContext } from '@/composables/useApplicationContext'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
-import type { ApplicationOptions, ApplicationView } from '@/types'
+import type { ApplicationOptions, ApplicationTarget, ApplicationView } from '@/types'
 import { useQueryFilter } from '@/composables/useQueryFilter'
 
 const router = useRouter()
 const perm = usePermission()
 const canWrite = computed(() => perm.has(apiCodes.applicationWrite))
 
-// 集群/租户都跟随顶栏级联（context: 'full'），页面不再自己维护一份
-const { tenantId, clusterId, ensure } = useApplicationContext()
+// 应用按**租户**展示（2026-11-13 用户定）：不挂顶栏集群/命名空间级联，列表跨集群列出本租户全部应用，
+// 「集群」「命名空间」作为列标出；新建时在表单里一次选定集群 + 命名空间。租户仍取自上下文（token / 代管）
+const { tenantId, ensure } = useApplicationContext()
 const apps = ref<ApplicationView[]>([])
 const loading = ref(false)
-const options = ref<ApplicationOptions>({ namespaces: [] })
+const options = ref<ApplicationOptions>({ namespaces: [], targets: [] })
 
 const dialogVisible = ref(false)
 const creating = ref(false)
-const form = ref({ name: '', namespace: '', displayName: '', description: '' })
+/** target = `${clusterId}/${namespace}`（下拉的值；提交时拆开） */
+const form = ref({ name: '', target: '', displayName: '', description: '' })
+const targetKey = (t: ApplicationTarget) => `${t.clusterId}/${t.namespace}`
+const selectedTarget = computed(() =>
+  (options.value.targets ?? []).find((t) => targetKey(t) === form.value.target))
+/** 下拉按集群分组 */
+const targetGroups = computed(() => {
+  const groups = new Map<string, { label: string; items: ApplicationTarget[] }>()
+  for (const t of options.value.targets ?? []) {
+    const g = groups.get(t.clusterId) ?? { label: t.clusterName, items: [] }
+    g.items.push(t)
+    groups.set(t.clusterId, g)
+  }
+  return [...groups.values()]
+})
 
 // 台账状态（发布执行器写入）：没发布过 → 未发布；线上服务的逐个健康在应用页现读
 const statusMeta: Record<string, { text: string; type: 'info' | 'primary' | 'success' | 'danger' }> = {
@@ -40,17 +55,13 @@ const shown = computed(() =>
   statusFilter.value ? apps.value.filter((a) => a.status === statusFilter.value) : apps.value,
 )
 
-const canCreate = computed(() => !!clusterId.value && !!form.value.name.trim()
-  && !!form.value.namespace)
+const canCreate = computed(() => !!form.value.name.trim() && !!selectedTarget.value)
 
 async function load() {
-  if (!clusterId.value) {
-    apps.value = []
-    return
-  }
   loading.value = true
   try {
-    apps.value = await applicationApi.list(clusterId.value, tenantId.value)
+    // 不带集群 = 本租户全部集群
+    apps.value = await applicationApi.list(undefined, tenantId.value)
   } finally {
     loading.value = false
   }
@@ -58,38 +69,34 @@ async function load() {
 
 async function openCreate() {
   if (!tenantId.value) {
-    ElMessage.warning('请先在顶栏选择租户：应用归属租户')
+    ElMessage.warning('当前没有租户上下文，无法新建应用（应用归属租户）')
     return
   }
-  const cid = clusterId.value
-  if (!cid) {
-    ElMessage.warning('请先在顶栏选择集群')
+  form.value = { name: '', target: '', displayName: '', description: '' }
+  options.value = await applicationApi.options(undefined, tenantId.value)
+  const targets = options.value.targets ?? []
+  if (!targets.length) {
+    ElMessage.warning('本租户还没有分配任何命名空间，无法新建应用')
     return
   }
-  form.value = { name: '', namespace: '', displayName: '', description: '' }
-  options.value = await applicationApi.options(cid, tenantId.value)
-  const only = options.value.namespaces[0]
-  if (options.value.namespaces.length === 1 && only) {
-    form.value.namespace = only
+  const only = targets[0]
+  if (targets.length === 1 && only) {
+    form.value.target = targetKey(only)
   }
   dialogVisible.value = true
 }
 
 async function create() {
   if (!canCreate.value) {
-    ElMessage.warning('请填写应用名并选择命名空间')
+    ElMessage.warning('请填写应用名并选择集群与命名空间')
     return
   }
-  const cid = clusterId.value
-  if (!cid) {
-    ElMessage.warning('请先在顶栏选择集群')
-    return
-  }
+  const target = selectedTarget.value!
   creating.value = true
   try {
     const created = await applicationApi.create({
-      clusterId: cid,
-      namespace: form.value.namespace,
+      clusterId: target.clusterId,
+      namespace: target.namespace,
       name: form.value.name.trim(),
       displayName: form.value.displayName || undefined,
       description: form.value.description || undefined,
@@ -117,7 +124,7 @@ function openApp(row: ApplicationView) {
   router.push(`/applications/${row.id}`)
 }
 
-watch([tenantId, clusterId], () => {
+watch(tenantId, () => {
   load()
 })
 
@@ -128,7 +135,7 @@ onMounted(async () => {
 
 // 命令面板（Ctrl+K）页内功能：路由 meta.actions 的落点，条件与页面上对应按钮的禁用条件一致
 usePaletteAction({
-  create: { run: () => void openCreate(), ready: () => !!clusterId.value && canWrite.value },
+  create: { run: () => void openCreate(), ready: () => canWrite.value },
 })
 </script>
 
@@ -140,8 +147,8 @@ usePaletteAction({
         <p class="page__hint">应用是平台上可发布的单位：配置服务与依赖，按服务勾选发布，随时回滚。</p>
       </div>
       <div class="page__actions">
-        <!-- 集群/租户由顶栏级联决定，页面不再放自己的集群下拉 -->
-        <el-button type="primary" :disabled="!clusterId || !canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openCreate">新建应用</el-button>
+        <!-- 应用按租户展示：集群与命名空间在新建表单里选 -->
+        <el-button type="primary" :disabled="!canWrite" :title="canWrite ? '' : '没有应用写权限'" @click="openCreate">新建应用</el-button>
       </div>
     </div>
 
@@ -161,6 +168,9 @@ usePaletteAction({
         <template #default="{ row }">
           <el-link type="primary" @click="openApp(row)">{{ row.displayName || row.name }}</el-link>
         </template>
+      </el-table-column>
+      <el-table-column label="集群" width="160">
+        <template #default="{ row }">{{ row.clusterName || row.clusterId }}</template>
       </el-table-column>
       <el-table-column prop="namespace" label="命名空间" width="180" />
       <el-table-column label="状态" width="110">
@@ -190,9 +200,13 @@ usePaletteAction({
         <el-form-item label="应用名" required>
           <el-input v-model="form.name" placeholder="例如 order-service（决定资源名前缀）" maxlength="60" />
         </el-form-item>
-        <el-form-item label="命名空间" required>
-          <el-select v-model="form.namespace" placeholder="选择本租户已分配的命名空间" style="width: 100%">
-            <el-option v-for="ns in options.namespaces" :key="ns" :label="ns" :value="ns" />
+        <el-form-item label="部署位置" required>
+          <el-select v-model="form.target" placeholder="选择集群 / 命名空间（本租户已分配的）" filterable
+                     style="width: 100%">
+            <el-option-group v-for="g in targetGroups" :key="g.label" :label="g.label">
+              <el-option v-for="t in g.items" :key="targetKey(t)" :value="targetKey(t)"
+                         :label="`${t.clusterName} / ${t.namespace}`" />
+            </el-option-group>
           </el-select>
         </el-form-item>
         <el-form-item label="显示名">

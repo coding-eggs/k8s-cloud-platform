@@ -25,7 +25,6 @@ import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.UUID;
 
 /**
@@ -45,6 +44,7 @@ public class ApplicationService {
     private final PlatformAppExecutionMapper appExecutions;
     private final IngressPortService ingressPorts;
     private final IngressListenerSync ingressListeners;
+    private final ClusterService clusters;
 
     public ApplicationService(PlatformApplicationMapper apps,
                               PlatformApplicationResourceMapper resources,
@@ -54,7 +54,9 @@ public class ApplicationService {
                               AppDependencyService appDependencies,
                               PlatformAppExecutionMapper appExecutions,
                               IngressPortService ingressPorts,
-                              IngressListenerSync ingressListeners) {
+                              IngressListenerSync ingressListeners,
+                              ClusterService clusters) {
+        this.clusters = clusters;
         this.ingressPorts = ingressPorts;
         this.ingressListeners = ingressListeners;
         this.apps = apps;
@@ -108,8 +110,23 @@ public class ApplicationService {
     }
 
     public List<ApplicationView> list(String clusterId, String tenantId) {
-        // 管理员（tenantId 为 null）= 看全部；mapper 里按需拼 tenant 条件
-        return apps.selectByTenant(tenantId, clusterId).stream().map(this::view).toList();
+        // 管理员（tenantId 为 null）= 看全部；mapper 里按需拼 tenant 条件。
+        // clusterId 为空 = 本租户所有集群（应用页按租户展示，不跟顶栏集群走）
+        Map<String, String> names = clusterNames();
+        return apps.selectByTenant(tenantId, clusterId).stream().map(row -> {
+            ApplicationView v = view(row);
+            v.setClusterName(names.get(row.getClusterId()));
+            return v;
+        }).toList();
+    }
+
+    /** clusterId → 集群名（一次查全表；集群数量很小） */
+    private Map<String, String> clusterNames() {
+        Map<String, String> out = new java.util.HashMap<>();
+        for (ClusterService.ClusterOption c : clusters.options()) {
+            out.put(c.clusterId(), c.clusterName());
+        }
+        return out;
     }
 
     /**
@@ -163,11 +180,31 @@ public class ApplicationService {
     /** 新建应用表单的可选项：命名空间与中间件商店同源（分配表），避免两处口径不一致。 */
     public ApplicationOptionsView options(String clusterId, String tenantId) {
         ApplicationOptionsView out = new ApplicationOptionsView();
-        out.setNamespaces(allocations.listByCluster(clusterId).stream()
+        List<PlatformTenantNamespace> rows = isBlank(clusterId)
+                ? (tenantId == null ? allocations.listAll() : allocations.listByTenant(tenantId))
+                : allocations.listByCluster(clusterId);
+        List<PlatformTenantNamespace> mine = rows.stream()
                 .filter(a -> tenantId == null || tenantId.equals(a.getTenantId()))
-                .map(PlatformTenantNamespace::getNamespace)
-                .filter(Objects::nonNull)
+                .filter(a -> a.getNamespace() != null && a.getClusterId() != null)
+                .toList();
+        out.setNamespaces(mine.stream().map(PlatformTenantNamespace::getNamespace)
                 .distinct().sorted().toList());
+        Map<String, String> names = clusterNames();
+        Map<String, ApplicationOptionsView.Target> unique = new LinkedHashMap<>();
+        for (PlatformTenantNamespace a : mine) {
+            ApplicationOptionsView.Target t = new ApplicationOptionsView.Target();
+            t.setClusterId(a.getClusterId());
+            // 集群已删除但分配表还有残留：不给选（建了也发布不出去）
+            t.setClusterName(names.get(a.getClusterId()));
+            t.setNamespace(a.getNamespace());
+            if (t.getClusterName() != null) {
+                unique.putIfAbsent(a.getClusterId() + "/" + a.getNamespace(), t);
+            }
+        }
+        out.setTargets(unique.values().stream()
+                .sorted(java.util.Comparator.comparing(ApplicationOptionsView.Target::getClusterName)
+                        .thenComparing(ApplicationOptionsView.Target::getNamespace))
+                .toList());
         return out;
     }
 

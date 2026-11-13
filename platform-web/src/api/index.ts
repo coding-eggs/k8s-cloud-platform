@@ -1279,7 +1279,8 @@ export const middlewareApi = {
 /** 应用台账（/application/list、get、create、delete、options） */
 export const applicationApi = {
   /** `silent` 用于附带性查询（资源页「所属应用」）：失败不弹红条 */
-  list: (clusterId: string, tenantId?: string, silent = false) =>
+  /** clusterId 为空 = 本租户全部集群（应用页按租户展示） */
+  list: (clusterId: string | undefined, tenantId?: string, silent = false) =>
     http.post<never, ApplicationView[]>('/application/list', { clusterId, tenantId },
       silent ? { silent403: true } : undefined),
   get: (appId: string, tenantId?: string) =>
@@ -1290,7 +1291,8 @@ export const applicationApi = {
   }) => http.post<never, ApplicationView>('/application/create', payload),
   remove: (appId: string, tenantId?: string) =>
     http.post<never, void>('/application/delete', { appId, tenantId }),
-  options: (clusterId: string, tenantId?: string) =>
+  /** clusterId 为空 = 本租户全部集群的「集群 + 命名空间」组合（见 targets） */
+  options: (clusterId: string | undefined, tenantId?: string) =>
     http.post<never, ApplicationOptions>('/application/options', { clusterId, tenantId }),
 }
 

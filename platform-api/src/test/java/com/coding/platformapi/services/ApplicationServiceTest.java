@@ -10,6 +10,7 @@ import com.coding.data.models.system.PlatformApplicationResource;
 import com.coding.platformapi.k8s.K8sAppClient;
 import com.coding.platformapi.models.ApplicationCreateRequest;
 import com.coding.platformapi.models.ApplicationDeleteRequest;
+import com.coding.platformapi.models.ApplicationView;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
@@ -35,6 +36,7 @@ class ApplicationServiceTest {
     private AppDependencyService appDependencies;
     private com.coding.data.mapper.system.PlatformAppExecutionMapper appExecutions;
     private ApplicationService service;
+    private ClusterService clusterService;
 
     @BeforeEach
     void setUp() {
@@ -47,8 +49,12 @@ class ApplicationServiceTest {
         appExecutions = mock(com.coding.data.mapper.system.PlatformAppExecutionMapper.class);
         ports = mock(IngressPortService.class);
         listeners = mock(IngressListenerSync.class);
+        clusterService = mock(ClusterService.class);
+        when(clusterService.options()).thenReturn(List.of(
+                new ClusterService.ClusterOption("c1", "coding-cluster", 1, null),
+                new ClusterService.ClusterOption("c2", "work-cluster", 1, null)));
         service = new ApplicationService(apps, resources, allocations, namespaceGuard, client, appDependencies,
-                appExecutions, ports, listeners);
+                appExecutions, ports, listeners, clusterService);
     }
 
     private static ApplicationCreateRequest req() {
@@ -215,5 +221,39 @@ class ApplicationServiceTest {
         service.delete(req, "admin", null);
 
         verify(ports).releaseApp("app_1");
+    }
+
+    @Test
+    void listWithoutClusterCoversAllClustersOfTheTenantAndCarriesClusterNames() {
+        // 2026-11-13：应用页按租户展示、不挂顶栏 —— 不传集群就是本租户全部集群，列表要能标出集群名
+        PlatformApplication a = new PlatformApplication();
+        a.setId("a1"); a.setClusterId("c1"); a.setNamespace("movie"); a.setName("movie");
+        PlatformApplication b = new PlatformApplication();
+        b.setId("a2"); b.setClusterId("gone"); b.setNamespace("demo"); b.setName("demo");
+        when(apps.selectByTenant("t1", null)).thenReturn(List.of(a, b));
+
+        var out = service.list(null, "t1");
+
+        assertThat(out).extracting(ApplicationView::getClusterName).containsExactly("coding-cluster", null);
+        assertThat(out).extracting(ApplicationView::getNamespace).containsExactly("movie", "demo");
+    }
+
+    @Test
+    void optionsWithoutClusterListEveryAllocatedClusterNamespacePairOfTheTenant() {
+        when(allocations.listByTenant("t1")).thenReturn(List.of(
+                alloc("t1", "c2", "web"), alloc("t1", "c1", "movie"), alloc("t1", "c1", "api"),
+                alloc("t1", "c1", "movie"), alloc("t1", "deleted-cluster", "old")));
+
+        var out = service.options(null, "t1");
+
+        assertThat(out.getTargets()).extracting(t -> t.getClusterName() + "/" + t.getNamespace())
+                .containsExactly("coding-cluster/api", "coding-cluster/movie", "work-cluster/web");
+        assertThat(out.getTargets().get(0).getClusterId()).isEqualTo("c1");
+    }
+
+    private static com.coding.data.models.auth.PlatformTenantNamespace alloc(String tenant, String cluster, String ns) {
+        var row = new com.coding.data.models.auth.PlatformTenantNamespace();
+        row.setTenantId(tenant); row.setClusterId(cluster); row.setNamespace(ns);
+        return row;
     }
 }

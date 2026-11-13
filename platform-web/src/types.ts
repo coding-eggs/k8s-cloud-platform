@@ -1273,6 +1273,7 @@ export interface K8sHarborInstall {
   tlsKey?: string
   /** 出网代理（http://host:port）：复制/扫描是 Harbor 在集群里发起的，节点够不到上游时必填 */
   httpProxy?: string
+  /** HTTPS_PROXY：表单不单独暴露，提交时跟随 httpProxy；保留给 API 调用方 */
   httpsProxy?: string
   /** 不走代理的地址（逗号分隔）；留空 = 平台补「集群内 + 内网」 */
   noProxy?: string
@@ -2999,6 +3000,8 @@ export interface AppObjectRef {
 export interface ApplicationView {
   id: string
   clusterId: string
+  /** 集群名（集群已删除时为空，展示退回 clusterId） */
+  clusterName?: string | null
   namespace: string
   name: string
   slug: string
@@ -3342,6 +3345,14 @@ export interface AppServiceView {
 
 export interface ApplicationOptions {
   namespaces: string[]
+  /** 本租户可选的「集群 + 命名空间」组合（不传 clusterId 时覆盖全部集群） */
+  targets?: ApplicationTarget[]
+}
+
+export interface ApplicationTarget {
+  clusterId: string
+  clusterName: string
+  namespace: string
 }
 
 /** 中间件实例里的一个账号（用户页签） */
