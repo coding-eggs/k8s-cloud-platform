@@ -52,6 +52,10 @@ public class PipelineService {
     /** 预览/保存校验要拿连接的 endpoint（**不解密**，见 previewConnections） */
     private final CredentialService credentials;
     private final PipelineCapabilityService capability;
+    /** 租户级列表：按分配表的「集群 + 命名空间」对收窄（本表没有 tenant_id） */
+    private final com.coding.data.mapper.auth.PlatformTenantNamespaceMapper allocations;
+    /** 列表要带集群名（集群数量很小，一次查全表） */
+    private final ClusterService clusters;
 
     /**
      * 这个集群**能不能跑 CI**，外加**构建缓存**的状态（spec §9）。
@@ -102,10 +106,51 @@ public class PipelineService {
         return k8s.render(canvasJson, previewConnections(canvasJson));
     }
 
+    /**
+     * 流水线列表。三种口径：
+     * <ol>
+     *   <li>给了 clusterId + namespace → 命名空间级（原行为，编辑器/运行页仍可能这么调）；</li>
+     *   <li>没给位置、有租户 → **租户级**：按分配表里该租户的全部「集群 + 命名空间」对查，
+     *       列表页跨集群展示用；只按 ns 名查会跨集群串数据，所以按对查；</li>
+     *   <li>没给位置、没有租户（平台侧未戴帽）→ 全量。</li>
+     * </ol>
+     */
     public List<PipelineDTO> list(PipelineDTO query) {
-        access.assertAccessible(query.getClusterId(), query.getNamespace());
-        return mapper.listByNamespace(query.getClusterId(), query.getNamespace())
-                .stream().map(this::toDto).toList();
+        String clusterId = query.getClusterId();
+        String namespace = query.getNamespace();
+        String tenantId = auth.effectiveTenantId(query.getTenantId());
+
+        List<PlatformPipeline> rows;
+        if (!isBlank(clusterId) && !isBlank(namespace)) {
+            access.assertAccessible(clusterId, namespace);
+            rows = mapper.listByNamespace(clusterId, namespace);
+        } else if (!isBlank(tenantId)) {
+            List<com.coding.data.models.auth.PlatformTenantNamespace> pairs =
+                    allocations.listByTenant(tenantId).stream()
+                            .filter(a -> a.getClusterId() != null && a.getNamespace() != null)
+                            .filter(a -> isBlank(clusterId) || clusterId.equals(a.getClusterId()))
+                            .toList();
+            rows = pairs.isEmpty() ? List.of() : mapper.listByPairs(pairs);
+        } else {
+            rows = mapper.listAll();
+        }
+
+        java.util.Map<String, String> names = clusterNames();
+        return rows.stream().map(p -> {
+            PipelineDTO d = toDto(p);
+            // 集群已删除 → null，前端退回 clusterId，不伪造
+            d.setClusterName(names.get(p.getClusterId()));
+            return d;
+        }).toList();
+    }
+
+    /** clusterId → 集群名（一次查全表；集群数量很小） */
+    private java.util.Map<String, String> clusterNames() {
+        java.util.Map<String, String> out = new java.util.HashMap<>();
+        for (ClusterService.ClusterOption c : clusters.options()) {
+            out.put(c.clusterId(), c.clusterName());
+        }
+        return out;
     }
 
     public PipelineDTO get(String id) {
@@ -217,5 +262,9 @@ public class PipelineService {
         d.setCreatedAt(p.getCreatedAt());
         d.setUpdatedAt(p.getUpdatedAt());
         return d;
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

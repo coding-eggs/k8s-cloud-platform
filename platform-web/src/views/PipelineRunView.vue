@@ -21,7 +21,7 @@ import { pipelineApi } from '@/api'
 import type { Pipeline, PipelineRun } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
-import { useResourceContext } from '@/stores/context'
+import { useApplicationContext } from '@/composables/useApplicationContext'
 import { fmtDate } from '@/utils/format'
 import PipelineRunDialog from '@/components/pipeline/PipelineRunDialog.vue'
 
@@ -29,9 +29,9 @@ const route = useRoute()
 const router = useRouter()
 const perm = usePermission()
 
-/** 生效租户：走 k8s-server 的那几个端点都要它（平台管理员代管轨必须显式给） */
-const { state: resourceContext } = useResourceContext()
-const effectiveTenantId = computed(() => resourceContext.tenantId ?? undefined)
+/** 生效租户：走 k8s-server 的那几个端点都要它（平台管理员代管轨必须显式给）；顶栏已去掉，租户走上下文 */
+const { tenantId: ctxTenantId, ensure } = useApplicationContext()
+const effectiveTenantId = computed(() => ctxTenantId.value)
 
 const pipelineId = computed(() => (route.query.id as string) || '')
 const pipeline = ref<Pipeline | null>(null)
@@ -80,7 +80,10 @@ async function load(): Promise<void> {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await ensure()
+  await load()
+})
 
 /** 点运行名 → 详情页。**带上流水线 id**：详情页的「← 运行历史」要靠它回到这里 */
 function openRun(r: PipelineRun): void {

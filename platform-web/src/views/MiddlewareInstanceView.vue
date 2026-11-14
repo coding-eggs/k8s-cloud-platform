@@ -19,12 +19,12 @@ import type { K8sCluster, MiddlewareCatalogItem, MiddlewareInstance } from '@/ty
 
 const perm = usePermission()
 const router = useRouter()
-// 租户/集群作用域直接取顶栏（资源上下文）：列表可见范围、代操作身份、按哪个集群/命名空间查都跟着它
-const { tenantId, clusterId: ctxClusterId, namespace: ctxNamespace,
-  ensure: ensureTenant } = useMiddlewareTenant()
+// 实例按**租户**跨集群展示（2026-11-14）：顶栏级联已去掉，租户仍取自上下文（token / 代管轨）
+const { tenantId, ensure: ensureTenant } = useMiddlewareTenant()
 
 const clusters = ref<K8sCluster[]>([])
-const clusterId = ref('')
+/** 只用来取 catalog（类型名 / 筛选选项）；实例查询本身按租户跨集群 */
+const catalogClusterId = ref('')
 const catalog = ref<MiddlewareCatalogItem[]>([])
 const instances = ref<MiddlewareInstance[]>([])
 /** 类型过滤（空 = 全部）：按类型查，避免一次把所有类型的实时状态都拉一遍 */
@@ -39,7 +39,7 @@ const STATUS_FILTERS = [
 ]
 const shownInstances = computed(() =>
   statusFilter.value ? instances.value.filter((i) => middlewareBucket(i.status) === statusFilter.value) : instances.value)
-/** 首轮加载完成前不响应顶栏变化（onMounted 自己会按上下文加载一次） */
+/** 首轮加载完成前不响应租户变化（onMounted 自己会按上下文加载一次） */
 const ready = ref(false)
 
 const STATUS_TAG: Record<string, { label: string; type: 'success' | 'warning' | 'danger' | 'info' }> = {
@@ -57,34 +57,23 @@ function nameOf(itemCode: string): string {
 // ---------------- 列表 ----------------
 async function loadClusters(): Promise<void> {
   clusters.value = await loadMiddlewareClusters(perm.isAdmin)
-  // 顶栏已经选了集群就用它（中间件的「当前集群」跟顶栏是同一个值）
-  const preferred = ctxClusterId.value
-  if (preferred && clusters.value.some((c) => c.clusterId === preferred)) {
-    clusterId.value = preferred
-    return
-  }
+  // catalog 只用来把 code 翻成名字、以及「类型」下拉的选项：取第一个可用集群即可（清单是静态的）
   const firstEnabled = clusters.value.find((c) => c.enabled === 1)
-  clusterId.value = firstEnabled?.clusterId ?? clusters.value[0]?.clusterId ?? ''
+  catalogClusterId.value = firstEnabled?.clusterId ?? clusters.value[0]?.clusterId ?? ''
 }
 
-/** 目录只用来把 code 翻成名字、以及「类型」下拉的选项，跟着集群走 */
 async function loadCatalog(): Promise<void> {
-  if (!clusterId.value) {
+  if (!catalogClusterId.value) {
     catalog.value = []
     return
   }
-  catalog.value = (await middlewareApi.catalog(clusterId.value, tenantId.value)) ?? []
+  catalog.value = (await middlewareApi.catalog(catalogClusterId.value, tenantId.value)) ?? []
 }
 
 async function loadInstances(): Promise<void> {
-  if (!clusterId.value) {
-    instances.value = []
-    return
-  }
-  // 命名空间只跟顶栏（页面上不再单独给下拉）：顶栏选到哪层就查哪层，没选就是全部
+  // 不传集群 = 本租户全部集群（列表页不挂顶栏）
   instances.value = (await middlewareApi.instanceList(
-    clusterId.value, code.value || undefined, tenantId.value,
-    ctxNamespace.value || undefined)) ?? []
+    undefined, code.value || undefined, tenantId.value)) ?? []
 }
 
 async function refresh(): Promise<void> {
@@ -177,21 +166,18 @@ function poll(operationId: number): void {
 }
 
 onMounted(async () => {
-  // 先等顶栏的租户上下文（ensureDefaults 会落到第一个可用租户），再按它查列表
+  // 先等上下文里的租户（ensureDefaults 会落到第一个可用租户），再按它查列表
   await ensureTenant()
   await loadClusters()
   await refresh()
   ready.value = true
 })
 
-// 顶栏切租户/集群/命名空间：先清掉旧视角的数据，再按新上下文重查。
-// ready 之前不响应：首轮 onMounted 自己会加载，否则 watch 会在集群列表还没到手时白查一次
-watch([tenantId, ctxClusterId, ctxNamespace], async ([, cid]) => {
+// 换租户：先清掉旧视角的数据，再按新租户重查（集群/命名空间不再跟顶栏）
+watch(tenantId, async () => {
   if (!ready.value) return
   instances.value = []
-  if (cid && clusters.value.some((c) => c.clusterId === cid)) {
-    clusterId.value = cid
-  }
+  await loadClusters()
   await refresh()
 })
 
@@ -208,7 +194,7 @@ onBeforeUnmount(() => {
         <p class="ph-desc">已创建的中间件实例：查看详情、修改规格、取连接方式、删除</p>
       </div>
       <div class="ph-actions">
-        <el-button :disabled="!clusterId" @click="refresh">刷新</el-button>
+        <el-button @click="refresh">刷新</el-button>
         <el-button type="primary" @click="router.push('/apps')">去商店创建</el-button>
       </div>
     </div>
@@ -225,7 +211,8 @@ onBeforeUnmount(() => {
       </el-select>
     </div>
 
-    <el-table :data="shownInstances" class="panel" :empty-text="statusFilter && instances.length ? '没有该状态的实例' : '这个集群还没有中间件实例'">
+    <el-table :data="shownInstances" class="panel"
+              :empty-text="statusFilter && instances.length ? '没有该状态的实例' : '还没有中间件实例'">
       <el-table-column label="类型" width="140">
         <template #default="{ row }">{{ nameOf(row.code) }}</template>
       </el-table-column>
@@ -235,6 +222,10 @@ onBeforeUnmount(() => {
             {{ row.displayName || row.name }}
           </el-button>
         </template>
+      </el-table-column>
+      <!-- 列表按租户跨集群：集群名拿不到（集群已删除）时退回 id -->
+      <el-table-column label="集群" width="160">
+        <template #default="{ row }">{{ row.clusterName || row.clusterId || '—' }}</template>
       </el-table-column>
       <el-table-column prop="namespace" label="命名空间" width="140" />
       <el-table-column prop="mode" label="形态" width="120" />

@@ -46,6 +46,9 @@ public class PlatformMiddlewareInstance {
     /** 来源应用名（非列：查询时按 appId 补，实例页展示用） */
     private String appName;
 
+    /** 集群名（非列：列表跨集群展示用，查询时补；集群已删除时为 null） */
+    private String clusterName;
+
     private String createdBy;
 
     private Date createdAt;

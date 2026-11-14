@@ -33,6 +33,16 @@ public interface PlatformPipelineMapper {
     List<PlatformPipeline> listByNamespace(@Param("clusterId") String clusterId,
                                            @Param("namespace") String namespace);
 
+    /**
+     * 租户级列表：按「集群 + 命名空间」对查（租户边界由分配表决定，本表没有 tenant_id）。
+     *
+     * <p>⚠️ **不能只按命名空间名查**：不同集群可以有同名命名空间，按名字查会把别的集群的流水线带出来。
+     */
+    List<PlatformPipeline> listByPairs(@Param("pairs") List<com.coding.data.models.auth.PlatformTenantNamespace> pairs);
+
+    /** 平台侧（无租户帽、未指定位置）看全部 */
+    List<PlatformPipeline> listAll();
+
     /** 概览计数；clusterId 为 null = 全部集群，namespaces 为 null = 不限、空集合 = 无结果 */
     List<StatusCount> countLatestRunStatus(@Param("clusterId") String clusterId,
                                            @Param("namespaces") Collection<String> namespaces);

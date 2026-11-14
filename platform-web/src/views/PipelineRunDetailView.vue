@@ -25,7 +25,7 @@ import { pipelineApi } from '@/api'
 import type { Pipeline, PipelineCanvas, PipelineCanvasEdge, PipelineCanvasNode, PipelineRetryPlan, PipelineRun, PipelineStepRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
-import { useResourceContext } from '@/stores/context'
+import { useApplicationContext } from '@/composables/useApplicationContext'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { fmtDate } from '@/utils/format'
 import YamlBlock from '@/components/YamlBlock.vue'
@@ -37,9 +37,9 @@ const perm = usePermission()
 /** 节点清单（图标 / 类型名 / 配色）—— 详情里画的是同一套卡片 */
 const { load: loadNodeTypes } = usePipelineNodeTypes()
 
-/** 生效租户：走 k8s-server 的那几个端点都要它（平台管理员代管轨必须显式给） */
-const { state: resourceContext } = useResourceContext()
-const effectiveTenantId = computed(() => resourceContext.tenantId ?? undefined)
+/** 生效租户：走 k8s-server 的那几个端点都要它（平台管理员代管轨必须显式给）；顶栏已去掉，租户走上下文 */
+const { tenantId: ctxTenantId, ensure } = useApplicationContext()
+const effectiveTenantId = computed(() => ctxTenantId.value)
 
 const runName = computed(() => (route.query.name as string) || '')
 const pipelineId = computed(() => (route.query.id as string) || '')
@@ -468,7 +468,10 @@ watch(runName, async () => {
   await init()
 })
 
-onMounted(init)
+onMounted(async () => {
+  await ensure()
+  await init()
+})
 
 onUnmounted(() => {
   stopPolling()

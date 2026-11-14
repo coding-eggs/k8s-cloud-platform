@@ -124,16 +124,17 @@ const router = createRouter({
         { path: 'applications/:id', name: 'application-detail', component: () => import('@/views/ApplicationDetailView.vue'), meta: { title: '应用', domain: 'app', nav: 'hidden', requiresPerm: [pageCodes.application] } },
         { path: 'applications/:id/services/:key', name: 'application-service', component: () => import('@/views/ApplicationServiceView.vue'), meta: { title: '服务配置', domain: 'app', nav: 'hidden', requiresPerm: [pageCodes.application] } },
         { path: 'apps', name: 'apps', component: () => import('@/views/MiddlewareStoreView.vue'), meta: { title: '中间件', domain: 'app', icon: 'Grid', order: 2, context: 'full', requiresPerm: [pageCodes.app], keywords: ['middleware', 'mysql', 'redis', 'kafka', 'elasticsearch', 'es', 'mongodb', 'postgresql', 'nacos', 'milvus', 'rabbitmq', 'operator', '商店', 'store'], actions: [{ key: 'operator', title: 'Operator 管理', keywords: ['安装 operator'], adminOnly: true }] } },
-        // 实例列表与商店共用 pageCodes.app：商店管清单与 Operator，这条管已建实例
-        { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', domain: 'app', icon: 'Files', order: 3, context: 'full', requiresPerm: [pageCodes.app], keywords: ['middleware', 'instance', '实例', 'mysql', 'redis', 'kafka', 'es'] } },
+        // 实例列表与商店共用 pageCodes.app：商店管清单与 Operator，这条管已建实例。
+        // 实例列表按租户跨集群展示（2026-11-14），不挂顶栏级联
+        { path: 'apps/instances', name: 'middleware-instances', component: () => import('@/views/MiddlewareInstanceView.vue'), meta: { title: '中间件实例', domain: 'app', icon: 'Files', order: 3, requiresPerm: [pageCodes.app], keywords: ['middleware', 'instance', '实例', 'mysql', 'redis', 'kafka', 'es'] } },
         { path: 'apps/:id', name: 'middleware-detail', component: () => import('@/views/MiddlewareDetailView.vue'), meta: { title: '中间件详情', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.app] } },
 
         // —— 同一「应用」域的后半段：从源码到制品（流水线 → 凭据 → 镜像仓库） ——
-        { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', domain: 'app', icon: 'Operation', order: 4, context: 'full', requiresPerm: [pageCodes.pipeline], keywords: ['pipeline', 'ci', 'cd', 'tekton', 'build', '构建', '持续集成'], actions: [{ key: 'create', title: '新建流水线', keywords: ['new pipeline'] }] } },
-        { path: 'pipelines/editor', name: 'pipeline-editor', component: () => import('@/views/PipelineEditorView.vue'), meta: { title: '流水线编辑', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
-        { path: 'pipelines/runs', name: 'pipeline-runs', component: () => import('@/views/PipelineRunView.vue'), meta: { title: '流水线运行', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
+        { path: 'pipelines', name: 'pipelines', component: () => import('@/views/PipelineListView.vue'), meta: { title: '流水线', domain: 'app', icon: 'Operation', order: 4, requiresPerm: [pageCodes.pipeline], keywords: ['pipeline', 'ci', 'cd', 'tekton', 'build', '构建', '持续集成'], actions: [{ key: 'create', title: '新建流水线', keywords: ['new pipeline'] }] } },
+        { path: 'pipelines/editor', name: 'pipeline-editor', component: () => import('@/views/PipelineEditorView.vue'), meta: { title: '流水线编辑', domain: 'app', nav: 'hidden', requiresPerm: [pageCodes.pipeline] } },
+        { path: 'pipelines/runs', name: 'pipeline-runs', component: () => import('@/views/PipelineRunView.vue'), meta: { title: '流水线运行', domain: 'app', nav: 'hidden', requiresPerm: [pageCodes.pipeline] } },
         // 一次运行的详情：单独一页（原先挤在列表右侧 560px 那一栏里，DAG 与日志都没法看）
-        { path: 'pipelines/run', name: 'pipeline-run-detail', component: () => import('@/views/PipelineRunDetailView.vue'), meta: { title: '运行详情', domain: 'app', nav: 'hidden', context: 'full', requiresPerm: [pageCodes.pipeline] } },
+        { path: 'pipelines/run', name: 'pipeline-run-detail', component: () => import('@/views/PipelineRunDetailView.vue'), meta: { title: '运行详情', domain: 'app', nav: 'hidden', requiresPerm: [pageCodes.pipeline] } },
         { path: 'registries', name: 'registries', component: () => import('@/views/RegistryView.vue'), meta: { title: '镜像仓库', domain: 'app', icon: 'Collection', order: 6, requiresPerm: [pageCodes.registry], keywords: ['registry', 'harbor', 'image', 'docker', '镜像'] } },
 
         // ============ 租户视图 · 资源 ============

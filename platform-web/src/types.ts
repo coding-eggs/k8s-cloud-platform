@@ -2629,6 +2629,8 @@ export interface PageResult<T> {
 export interface Pipeline {
   id?: string
   clusterId?: string
+  /** 集群名（列表跨集群展示用；集群已删除时为空，展示退回 clusterId） */
+  clusterName?: string | null
   namespace?: string
   name: string
   description?: string | null
@@ -2946,6 +2948,8 @@ export interface MiddlewareBusinessMetric {
 export interface MiddlewareInstance {
   id: string
   clusterId: string
+  /** 集群名（列表跨集群展示用；集群已删除时为空，展示退回 clusterId） */
+  clusterName?: string | null
   namespace: string
   code: string
   mode: string

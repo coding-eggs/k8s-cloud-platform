@@ -8,7 +8,7 @@
  * 2. **没连线的两个节点是并发**，不是"没连上" —— 顶栏显式提示这件事，否则用户会以为画错了。
  * 3. **画布 JSON 是唯一真相源**：集群里不留 Pipeline 对象，每次运行才渲染成 PipelineSpec。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { MarkerType, VueFlow, useVueFlow } from '@vue-flow/core'
@@ -21,11 +21,13 @@ import '@vue-flow/minimap/dist/style.css'
 import type { Connection, Edge, EdgeChange, MouseTouchEvent, Node, NodeChange } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
-import { pipelineApi } from '@/api'
-import type { PipelineCanvas, PipelineCanvasNode, PipelineConnection, PipelineNodeType, PipelineRunControlPatch } from '@/types'
+import { pipelineApi, resourceContextApi } from '@/api'
+import type { PipelineCanvas, PipelineCanvasNode, PipelineConnection, PipelineNodeType,
+  PipelineRetryWorkspaces, PipelineRunControlPatch } from '@/types'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { usePipelineCapability } from '@/composables/usePipelineCapability'
 import { usePermission } from '@/stores/permission'
+import { useApplicationContext } from '@/composables/useApplicationContext'
 import { apiCodes } from '@/apiCodes'
 import YamlBlock from '@/components/YamlBlock.vue'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
@@ -110,13 +112,144 @@ const saving = ref(false)
 const canManage = computed(() => perm.has(apiCodes.pipelineManage))
 const canRun = computed(() => perm.has(apiCodes.pipelineRun))
 
-/** 生效租户：同样来自进来时带的上下文（平台管理员代管轨触发运行必须显式给） */
-const effectiveTenantId = computed(() => (route.query.tenantId as string) || undefined)
+/** 生效租户：优先用列表带过来的（平台管理员代管轨必须显式给），否则落到上下文里的租户 */
+const appCtx = useApplicationContext()
+const effectiveTenantId = computed(() => (route.query.tenantId as string) || appCtx.tenantId.value)
 
-/** 集群来自创建流水线时带过来的上下文（编辑器不进顶栏级联） */
+/**
+ * 流水线的「位置」。顶栏级联已去掉（2026-11-14）：**新建时在这里选集群 + 命名空间**，
+ * 已存在的流水线只读展示；候选就是本租户在分配表里的全部「集群 + 命名空间」组合。
+ */
+interface PipelineTarget {
+  clusterId: string
+  clusterName: string
+  namespace: string
+}
+const targets = ref<PipelineTarget[]>([])
+const targetKey = (t: PipelineTarget) => `${t.clusterId}/${t.namespace}`
+const targetValue = computed({
+  get: () => (form.value.clusterId && form.value.namespace
+    ? `${form.value.clusterId}/${form.value.namespace}` : ''),
+  set: (v: string) => {
+    const t = targets.value.find((x) => targetKey(x) === v)
+    form.value.clusterId = t?.clusterId ?? ''
+    form.value.namespace = t?.namespace ?? ''
+  },
+})
+/** 下拉按集群分组 */
+const targetGroups = computed(() => {
+  const groups = new Map<string, { label: string; items: PipelineTarget[] }>()
+  for (const t of targets.value) {
+    const g = groups.get(t.clusterId) ?? { label: t.clusterName, items: [] }
+    g.items.push(t)
+    groups.set(t.clusterId, g)
+  }
+  return [...groups.values()]
+})
+
+async function loadTargets(): Promise<void> {
+  try {
+    const ctx = await resourceContextApi.get()
+    const tenant = (ctx?.tenants ?? []).find((t) => t.tenantId === effectiveTenantId.value)
+    const out: PipelineTarget[] = []
+    for (const c of tenant?.clusters ?? []) {
+      for (const ns of c.namespaces ?? []) {
+        out.push({ clusterId: c.clusterId, clusterName: c.clusterName, namespace: ns })
+      }
+    }
+    targets.value = out
+  } catch {
+    targets.value = []
+  }
+}
+
+/** 集群 + 命名空间决定能力探测与构建缓存（缓存是命名空间级的资源状态） */
 const capClusterId = computed(() => form.value.clusterId || '')
+const capNamespace = computed(() => form.value.namespace || '')
 /** 页面级门控（三态：`false` 才禁用 —— `null` = 不知道，不拦；真正的拦截在后端） */
-const { available: capAvailable, reason: capReason } = usePipelineCapability(capClusterId)
+const { available: capAvailable, reason: capReason, cache: cacheStatus,
+        load: reloadCapability, clearCache } = usePipelineCapability(
+  capClusterId, capNamespace, effectiveTenantId)
+
+// ---- 构建缓存 / 待重试工作区（命名空间级；2026-11-14 从列表页挪到这里） ----
+
+const showCache = ref(false)
+const clearing = ref(false)
+
+/** 「不知道」与「未启用」要分开说：前者是没探到，后者是集群真的给不了共享卷 */
+const cacheLabel = computed(() => {
+  if (!cacheStatus.value) return '构建缓存：状态未知'
+  return cacheStatus.value.ready
+    ? `构建缓存：已启用 ${cacheStatus.value.capacity}`
+    : '构建缓存：未启用'
+})
+
+async function doClearCache(): Promise<void> {
+  await ElMessageBox.confirm(
+    `清掉「${form.value.namespace}」的构建缓存？\n\n`
+      + '删掉的是那块卷本身，下次运行会自动重建一块空的 —— '
+      + '那一次构建要把依赖重新下载一遍（会明显变慢）。',
+    '确认清缓存',
+    { type: 'warning', confirmButtonText: '清掉', cancelButtonText: '算了' },
+  )
+  clearing.value = true
+  try {
+    await clearCache()
+    ElMessage.success('已清掉，下次运行会重建一块空的')
+  } catch {
+    /* 拦截器已提示（还挂着 Pod 的卷删不掉，后端会拒） */
+  } finally {
+    clearing.value = false
+  }
+}
+
+const retryWs = ref<PipelineRetryWorkspaces | null>(null)
+
+async function loadRetryWorkspaces(): Promise<void> {
+  if (!form.value.clusterId || !form.value.namespace) {
+    retryWs.value = null
+    return
+  }
+  try {
+    retryWs.value = await pipelineApi.retryWorkspaces(
+      form.value.clusterId, form.value.namespace, effectiveTenantId.value)
+  } catch {
+    retryWs.value = null
+  }
+}
+
+function fmtBytes(bytes: number): string {
+  if (!bytes) return '0'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let v = bytes
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
+async function doClearRetryWorkspaces(): Promise<void> {
+  await ElMessageBox.confirm(
+    `清理「${form.value.namespace}」里全部待重试工作区？清掉之后，那些运行**不能再从断点继续**，只能整条重跑。`,
+    '确认清理',
+    { type: 'warning', confirmButtonText: '清理', cancelButtonText: '算了' },
+  )
+  try {
+    await pipelineApi.clearRetryWorkspaces(
+      form.value.clusterId, form.value.namespace, effectiveTenantId.value)
+    ElMessage.success('已清理')
+    await loadRetryWorkspaces()
+  } catch {
+    /* 拦截器已提示 */
+  }
+}
+
+/** 位置变了（新建时选目标 / 载入已有流水线）：待重试工作区跟着换 */
+watch([capClusterId, capNamespace], () => {
+  void loadRetryWorkspaces()
+})
 
 /** 画布上的节点（后端形状），用于保存与预览 */
 function toCanvasNodes(): PipelineCanvasNode[] {
@@ -167,6 +300,9 @@ const selectedNode = computed(() => {
 // ---- 载入 ----
 
 onMounted(async () => {
+  // 顶栏没了：租户与「可选位置」都要自己拿（ensure 会落到第一个可用租户，与列表页一致）
+  await appCtx.ensure()
+  await loadTargets()
   await loadNodeTypes()
   gitConnections.value = await pipelineApi.gitConnections().catch(() => [])
   registryConnections.value = await pipelineApi.registryConnections().catch(() => [])
@@ -562,6 +698,10 @@ async function save(): Promise<string | null> {
     ElMessage.warning('流水线名必填')
     return null
   }
+  if (!form.value.clusterId || !form.value.namespace) {
+    ElMessage.warning('请先选择流水线的集群与命名空间')
+    return null
+  }
   saving.value = true
   try {
     const body = { ...form.value, canvasJson: canvasJson() }
@@ -616,7 +756,25 @@ async function removePipeline() {
       <el-button link type="primary" @click="router.push('/pipelines')">← 流水线</el-button>
       <el-input v-model="form.name" placeholder="流水线名（小写字母/数字/连字符）" style="width: 220px" />
       <el-input v-model="form.description" placeholder="描述（可选）" style="width: 260px" />
-      <span class="loc">{{ form.clusterId }} / {{ form.namespace }}</span>
+      <!-- 顶栏级联已去掉：新建时在这里选位置；已有流水线只读展示 -->
+      <el-select v-if="isNew" v-model="targetValue" filterable
+                 placeholder="选择集群 / 命名空间" style="width: 250px">
+        <el-option-group v-for="g in targetGroups" :key="g.label" :label="g.label">
+          <el-option v-for="t in g.items" :key="targetKey(t)" :value="targetKey(t)"
+                     :label="`${t.clusterName} / ${t.namespace}`" />
+        </el-option-group>
+      </el-select>
+      <span v-else class="loc">{{ form.clusterId }} / {{ form.namespace }}</span>
+      <!-- 构建缓存：作用域正好是「这个集群 + 命名空间」，与缓存卷一一对应 -->
+      <el-button v-if="capClusterId && capNamespace" size="small" plain
+                 :type="cacheStatus?.ready ? 'success' : 'info'" @click="showCache = true">
+        {{ cacheLabel }}
+      </el-button>
+      <!-- 待重试工作区：失败运行留下的卷；清掉之后那些运行不能再从断点继续 -->
+      <span v-if="capClusterId && capNamespace && retryWs && retryWs.count > 0" class="retry-ws">
+        待重试工作区 {{ retryWs.count }} 块 / {{ fmtBytes(retryWs.totalBytes) }}
+        <el-button link type="warning" size="small" @click="doClearRetryWorkspaces">全部清理</el-button>
+      </span>
       <div class="spacer" />
       <el-button @click="doPreview">预览 YAML</el-button>
       <el-button v-if="canManage" :loading="saving" @click="save()">保存</el-button>
@@ -739,6 +897,45 @@ async function removePipeline() {
       title="触发运行"
       @confirm="confirmRun"
     />
+
+    <!-- 构建缓存（2026-11-14 从列表页挪来：它是命名空间级的，跟着这条流水线的位置走） -->
+    <el-dialog v-model="showCache" title="构建缓存" width="520px">
+      <div class="cache-row">
+        <span class="cache-key">状态</span>
+        <el-tag v-if="cacheStatus?.ready" type="success" size="small">已启用</el-tag>
+        <el-tag v-else-if="cacheStatus" type="info" size="small">未启用</el-tag>
+        <span v-else class="dim">状态未知（没探到）</span>
+      </div>
+      <div v-if="cacheStatus" class="cache-row">
+        <span class="cache-key">容量</span><span>{{ cacheStatus.capacity }}</span>
+      </div>
+      <div v-if="cacheStatus" class="cache-row">
+        <span class="cache-key">卷名</span><span class="mono">{{ cacheStatus.claimName }}</span>
+      </div>
+      <!-- 集群前提与卷的状态**分开显示**：「卷没问题却用不了」最容易让人以为平台坏了 -->
+      <div v-if="cacheStatus?.prerequisite" class="cache-row">
+        <span class="cache-key">集群前提</span>
+        <el-tag :type="cacheStatus.prerequisiteOk ? 'success' : 'warning'" size="small">
+          {{ cacheStatus.prerequisite }}
+        </el-tag>
+      </div>
+      <div v-if="cacheStatus && !cacheStatus.ready && cacheStatus.reason" class="cache-why">
+        {{ cacheStatus.reason }}
+      </div>
+
+      <div class="cache-note">
+        构建节点（Java / Node / Go / Python，以及开了开关的命令节点）的依赖缓存在这里，
+        <b>跨运行保留</b> —— 第二次构建不必再下一遍依赖。<br />
+        清除会删掉那块卷本身，下次运行自动重建一块空的：<b>那一次构建会明显变慢</b>。
+      </div>
+
+      <template #footer>
+        <el-button @click="showCache = false">关闭</el-button>
+        <el-button v-if="canManage && cacheStatus?.exists" type="danger" plain
+                   :loading="clearing" @click="doClearCache">清掉缓存</el-button>
+        <el-button v-if="canManage" size="small" @click="reloadCapability">重新探测</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -752,10 +949,49 @@ async function removePipeline() {
   display: flex;
   gap: 8px;
   align-items: center;
+  flex-wrap: wrap;
   padding: 8px 0;
 }
 .loc {
   font-size: 12px;
+  color: var(--text-3);
+}
+.retry-ws {
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+/* 构建缓存对话框里的几行（键值对齐 + 卷名等宽） */
+.cache-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.cache-key {
+  width: 48px;
+  color: var(--text-3);
+}
+.mono {
+  font-family: monospace;
+}
+.cache-why {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--el-color-info-light-9);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.cache-note {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.7;
+}
+.dim {
   color: var(--text-3);
 }
 .spacer {

@@ -30,6 +30,10 @@ public class PipelineDTO extends BaseResources {
     @Schema(description = "画布 JSON：{nodes:[{id,type,config}], edges:[{from,to}]}")
     private String canvasJson;
 
+    /** 集群名（列表跨集群展示用；集群已删除时为 null，前端退回 clusterId） */
+    @Schema(description = "只读")
+    private String clusterName;
+
     @Schema(description = "只读")
     private String createdBy;
 

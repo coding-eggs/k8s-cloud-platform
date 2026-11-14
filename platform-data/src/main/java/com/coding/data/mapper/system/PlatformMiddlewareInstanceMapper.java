@@ -24,6 +24,13 @@ public interface PlatformMiddlewareInstanceMapper {
     List<PlatformMiddlewareInstance> selectByCluster(@Param("clusterId") String clusterId,
                                                      @Param("code") String code);
 
+    /** 租户级列表：跨集群（列表页不挂顶栏）；code 为空 = 该租户全部 */
+    List<PlatformMiddlewareInstance> selectByTenant(@Param("tenantId") String tenantId,
+                                                    @Param("code") String code);
+
+    /** 平台侧（无租户帽）且未指定集群：全部租户的实例 */
+    List<PlatformMiddlewareInstance> selectAll(@Param("code") String code);
+
     /** 清掉应用来源（app_id / app_node_id）：实例转交中间件模块管理。updateById 不能置空列，所以单独一条。 */
     int clearApp(@Param("id") String id);
 

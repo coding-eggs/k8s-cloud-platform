@@ -96,6 +96,9 @@ public class MiddlewareService {
     /** 删实例时一并清理对外暴露（路由 / NodePort Service / 网关端口） */
     private final MiddlewareExposeService expose;
 
+    /** 列表跨集群展示要带集群名（集群数量很小，一次查全表） */
+    private final ClusterService clusters;
+
     public MiddlewareService(PlatformMiddlewareInstanceMapper instances,
                              PlatformMiddlewareOperationMapper operations,
                              PlatformMiddlewareOperatorMapper operators,
@@ -110,7 +113,8 @@ public class MiddlewareService {
                              ClusterComponentService components,
                              ApplicationReferenceGuard referenceGuard,
                              com.coding.platformapi.images.ImageRegistryService imageRegistry,
-                             MiddlewareExposeService expose) {
+                             MiddlewareExposeService expose,
+                             ClusterService clusters) {
         this.expose = expose;
         this.instances = instances;
         this.operations = operations;
@@ -126,6 +130,7 @@ public class MiddlewareService {
         this.components = components;
         this.referenceGuard = referenceGuard;
         this.imageRegistry = imageRegistry;
+        this.clusters = clusters;
     }
 
     // ==================== 目录 ====================
@@ -219,23 +224,55 @@ public class MiddlewareService {
 
     // ==================== 实例 ====================
 
+    /**
+     * 实例列表。三种口径：
+     * <ol>
+     *   <li>给了 clusterId → 该集群（原行为；应用依赖、集群详情等调用方仍这么用）；</li>
+     *   <li>没给集群、有租户 → **租户级**：跨集群列出该租户的全部实例（列表页不挂顶栏）；</li>
+     *   <li>没给集群、也没有租户（平台侧未戴帽）→ 全部租户。</li>
+     * </ol>
+     */
     public List<PlatformMiddlewareInstance> list(String clusterId, String code, String tenantId, String namespace) {
-        requireCluster(clusterId);
-        List<PlatformMiddlewareInstance> rows = instances.selectByCluster(clusterId, code).stream()
-                .filter(i -> tenantId == null || tenantId.equals(i.getTenantId()))
-                .filter(i -> isBlank(namespace) || namespace.equals(i.getNamespace()))
-                .toList();
+        List<PlatformMiddlewareInstance> rows;
+        if (!isBlank(clusterId)) {
+            rows = instances.selectByCluster(clusterId, code).stream()
+                    .filter(i -> tenantId == null || tenantId.equals(i.getTenantId()))
+                    .filter(i -> isBlank(namespace) || namespace.equals(i.getNamespace()))
+                    .toList();
+        } else if (!isBlank(tenantId)) {
+            rows = instances.selectByTenant(tenantId, code).stream()
+                    .filter(i -> isBlank(namespace) || namespace.equals(i.getNamespace()))
+                    .toList();
+        } else {
+            rows = instances.selectAll(code).stream()
+                    .filter(i -> isBlank(namespace) || namespace.equals(i.getNamespace()))
+                    .toList();
+        }
         // 台账里的状态是"提交时"的快照；列表按 k8s 实时状态覆盖（不写库，读失败则保留台账值）。
-        // 按 (code, namespace) 分组批量查，避免每行一次往返。
+        // 按 (集群, code, namespace) 分组批量查，避免每行一次往返。
+        // ⚠️ 分组必须带 clusterId：跨集群后不同集群的同名命名空间会被并成一组，回查会拿错集群。
         rows.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
-                        r -> r.getCode() + "|" + r.getNamespace(),
+                        r -> r.getClusterId() + "|" + r.getCode() + "|" + r.getNamespace(),
                         java.util.LinkedHashMap::new,
                         java.util.stream.Collectors.toList()))
                 .values()
                 .forEach(this::refreshGroup);
         fillAppNames(rows);
+        fillClusterNames(rows);
         return rows;
+    }
+
+    /** 集群名（非列）：集群已删除 → null，前端退回 clusterId，不伪造 */
+    private void fillClusterNames(List<PlatformMiddlewareInstance> rows) {
+        if (rows.isEmpty()) {
+            return;
+        }
+        java.util.Map<String, String> names = new java.util.HashMap<>();
+        for (ClusterService.ClusterOption c : clusters.options()) {
+            names.put(c.clusterId(), c.clusterName());
+        }
+        rows.forEach(r -> r.setClusterName(names.get(r.getClusterId())));
     }
 
     /** 总览用：一个实例的「所在 ns + 租户 + 实时状态」（状态口径同 {@link #list}）。 */

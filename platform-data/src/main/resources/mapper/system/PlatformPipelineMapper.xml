@@ -60,6 +60,28 @@
     order by name
   </select>
 
+  <!-- 租户级：按「集群 + 命名空间」对查；只按 ns 名查会跨集群串数据 -->
+  <select id="listByPairs" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline
+    where
+    <choose>
+      <when test="pairs != null and pairs.size() > 0">
+        <foreach collection="pairs" item="p" open="(" separator=" or " close=")">
+          (cluster_id = #{p.clusterId,jdbcType=VARCHAR} and namespace = #{p.namespace,jdbcType=VARCHAR})
+        </foreach>
+      </when>
+      <otherwise>1 = 0</otherwise>
+    </choose>
+    order by name
+  </select>
+
+  <select id="listAll" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_pipeline
+    order by name
+  </select>
+
   <resultMap id="StatusCountMap" type="com.coding.data.models.system.StatusCount">
     <result column="status" property="status" jdbcType="VARCHAR"/>
     <result column="cnt" property="count" jdbcType="BIGINT"/>

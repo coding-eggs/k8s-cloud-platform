@@ -63,14 +63,17 @@ class MiddlewareServiceTest {
 
     private final ApplicationReferenceGuard referenceGuard = mock(ApplicationReferenceGuard.class);
 
+    private final ClusterService clusterService = mock(ClusterService.class);
+
     private final MiddlewareService service = new MiddlewareService(
             instances, operations, operators, client, catalog,
             JsonMapper.builder().build(), k8s, allocations, cache, metricsService,
             objectStorage, components, referenceGuard, imageRegistry,
-            org.mockito.Mockito.mock(MiddlewareExposeService.class));
+            org.mockito.Mockito.mock(MiddlewareExposeService.class), clusterService);
 
     @BeforeEach
     void noImageRegistryByDefault() {
+        when(clusterService.options()).thenReturn(List.of());
         when(imageRegistry.resolve(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(com.coding.platformapi.images.ImageRegistry.OFFICIAL);
     }
@@ -629,6 +632,30 @@ class MiddlewareServiceTest {
 
         // 读不到实时状态 ≠ 台账里的 READY：不能悄悄按「正常」计数
         assertThat(service.liveStatuses("c1")).extracting(MiddlewareService.LiveStatus::status).containsExactly("UNKNOWN");
+    }
+
+    @Test
+    void listWithoutClusterIsTenantWideAcrossClusters() {
+        // 2026-11-14：中间件实例列表不挂顶栏 —— 不传集群 = 本租户全部集群，列表要能标出集群名
+        when(clusterService.options()).thenReturn(List.of(
+                new ClusterService.ClusterOption("c1", "coding-cluster", 1, null),
+                new ClusterService.ClusterOption("c2", "work-cluster", 1, null)));
+        PlatformMiddlewareInstance movie = new PlatformMiddlewareInstance();
+        movie.setId("mwi_1");
+        movie.setClusterId("c1");
+        movie.setTenantId("t1");
+        movie.setNamespace("movie");
+        PlatformMiddlewareInstance web = new PlatformMiddlewareInstance();
+        web.setId("mwi_2");
+        web.setClusterId("c2");
+        web.setTenantId("t1");
+        web.setNamespace("web");
+        when(instances.selectByTenant("t1", null)).thenReturn(List.of(movie, web));
+
+        assertThat(service.list(null, null, "t1", null))
+                .extracting(PlatformMiddlewareInstance::getClusterName)
+                .containsExactly("coding-cluster", "work-cluster");
+        verify(instances, never()).selectByCluster(any(), any());
     }
 
     @Test

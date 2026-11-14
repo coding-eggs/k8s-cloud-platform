@@ -1011,8 +1011,9 @@ export const registryApi = {
 
 
 export const pipelineApi = {
-  list: (clusterId: string, namespace: string) =>
-    http.post<never, Pipeline[]>('/pipeline/list', { clusterId, namespace }),
+  /** clusterId/namespace 都不传 = 本租户全部集群（流水线页按租户展示，不挂顶栏） */
+  list: (clusterId?: string, namespace?: string, tenantId?: string) =>
+    http.post<never, Pipeline[]>('/pipeline/list', { clusterId, namespace, tenantId }),
   get: (id: string) => http.post<never, Pipeline>('/pipeline/get', { id }),
   create: (body: Pipeline) => http.post<never, Pipeline>('/pipeline/create', body),
   update: (body: Pipeline) => http.post<never, Pipeline>('/pipeline/update', body),
@@ -1164,7 +1165,8 @@ export const middlewareApi = {
   formOptions: (clusterId: string, tenantId?: string) =>
     http.post<never, MiddlewareFormOptions>('/middleware/form-options', { clusterId, tenantId }),
   /** `silent` 用于附带性查询（资源页受管归属标记）：失败不弹红条 */
-  instanceList: (clusterId: string, code?: string, tenantId?: string, namespace?: string, silent = false) =>
+  /** clusterId 为空 = 本租户全部集群（实例页按租户展示，不挂顶栏） */
+  instanceList: (clusterId: string | undefined, code?: string, tenantId?: string, namespace?: string, silent = false) =>
     http.post<never, MiddlewareInstance[]>('/middleware/instance/list', { clusterId, code, tenantId, namespace },
       silent ? { silent403: true } : undefined),
   instanceGet: (instanceId: string, tenantId?: string) =>

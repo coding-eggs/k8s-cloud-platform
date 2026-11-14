@@ -45,9 +45,11 @@ class PipelineServiceTest {
     private final NamespaceAccessGuard access = mock(NamespaceAccessGuard.class);
     private final PipelineCapabilityService capability = mock(PipelineCapabilityService.class);
     private final CredentialService credentials = mock(CredentialService.class);
+    private final ClusterService clusterService = mock(ClusterService.class);
 
     private final PipelineService svc =
-            new PipelineService(mapper, access, k8s, auth, credentials, capability);
+            new PipelineService(mapper, access, k8s, auth, credentials, capability,
+                    allocationMapper, clusterService);
 
     /** 带镜像节点的画布：渲染它**必须有连接**（目标镜像地址 = 连接 endpoint + 仓库路径 + tag） */
     private static final String CANVAS_WITH_IMAGE_NODE = """
@@ -212,6 +214,62 @@ class PipelineServiceTest {
         assertThat(svc.list(req("ignored", "ns1")))
                 .singleElement()
                 .satisfies(d -> assertThat(d.getId()).isEqualTo("p1"));
+    }
+
+    @Test
+    void listWithoutPositionIsScopedToTheTenantsAllocatedPairs() {
+        // 2026-11-14：流水线列表按租户跨集群展示 —— 本表没有 tenant_id，边界只能靠分配表的「集群 + 命名空间」对
+        when(auth.effectiveTenantId(any())).thenReturn("t1");
+        when(allocationMapper.listByTenant("t1")).thenReturn(List.of(
+                alloc("c1", "movie"), alloc("c2", "web"), alloc("c2", "web")));
+        PlatformPipeline a = pipeline("p1", "c1", "movie");
+        PlatformPipeline b = pipeline("p2", "c2", "web");
+        when(mapper.listByPairs(anyList())).thenReturn(List.of(a, b));
+        when(clusterService.options()).thenReturn(List.of(
+                new ClusterService.ClusterOption("c1", "coding-cluster", 1, null),
+                new ClusterService.ClusterOption("c2", "work-cluster", 1, null)));
+
+        var out = svc.list(new PipelineDTO());
+
+        assertThat(out).extracting(PipelineDTO::getNamespace).containsExactly("movie", "web");
+        assertThat(out).extracting(PipelineDTO::getClusterName)
+                .containsExactly("coding-cluster", "work-cluster");
+        verify(access, never()).assertAccessible(any(), any());
+    }
+
+    @Test
+    void listWithoutPositionAndWithoutAllocationIsEmptyAndDoesNotQueryTheTable() {
+        when(auth.effectiveTenantId(any())).thenReturn("t1");
+        when(allocationMapper.listByTenant("t1")).thenReturn(List.of());
+
+        assertThat(svc.list(new PipelineDTO())).isEmpty();
+        verify(mapper, never()).listByPairs(anyList());
+    }
+
+    @Test
+    void listWithoutPositionAndWithoutTenantIsPlatformWide() {
+        when(clusterService.options()).thenReturn(List.of());
+        when(mapper.listAll()).thenReturn(List.of(pipeline("p1", "c1", "any")));
+
+        assertThat(svc.list(new PipelineDTO())).singleElement()
+                .satisfies(d -> assertThat(d.getId()).isEqualTo("p1"));
+    }
+
+    private static PlatformPipeline pipeline(String id, String clusterId, String namespace) {
+        PlatformPipeline p = new PlatformPipeline();
+        p.setId(id);
+        p.setClusterId(clusterId);
+        p.setNamespace(namespace);
+        p.setName(id);
+        return p;
+    }
+
+    private static com.coding.data.models.auth.PlatformTenantNamespace alloc(String clusterId, String namespace) {
+        var row = new com.coding.data.models.auth.PlatformTenantNamespace();
+        row.setTenantId("t1");
+        row.setClusterId(clusterId);
+        row.setNamespace(namespace);
+        return row;
     }
 
     @Test

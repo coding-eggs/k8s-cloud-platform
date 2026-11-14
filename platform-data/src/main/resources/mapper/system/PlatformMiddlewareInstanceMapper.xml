@@ -80,6 +80,29 @@
     order by created_at desc
   </select>
 
+  <!-- 租户级：跨集群（列表页不挂顶栏） -->
+  <select id="selectByTenant" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_instance
+    where tenant_id = #{tenantId,jdbcType=VARCHAR}
+      and deleted_at is null
+    <if test="code != null and code != ''">
+      and code = #{code,jdbcType=VARCHAR}
+    </if>
+    order by created_at desc
+  </select>
+
+  <!-- 平台侧且未指定集群：全部租户 -->
+  <select id="selectAll" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List" />
+    from platform_middleware_instance
+    where deleted_at is null
+    <if test="code != null and code != ''">
+      and code = #{code,jdbcType=VARCHAR}
+    </if>
+    order by created_at desc
+  </select>
+
   <update id="clearApp">
     update platform_middleware_instance
     set app_id = null, app_node_id = null, updated_at = now()
