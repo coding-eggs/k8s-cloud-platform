@@ -9,6 +9,7 @@
  * 下载经平台代理（S3 网关只在集群内），单次上传/下载上限 100MB，超过请用 SDK 直连。
  */
 import { computed, onMounted, ref } from 'vue'
+import { Search } from '@element-plus/icons-vue'
 import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { clusterApi, objectStorageApi, resourceContextApi, tenantApi } from '@/api'
@@ -336,6 +337,36 @@ const objPage = ref(0)
 const objNext = ref<string | null>(null)
 const downloading = ref('')
 
+/**
+ * 当前目录内的前缀搜索（空 = 普通目录浏览）。
+ *
+ * <p>S3 只有前缀匹配、没有子串检索：把「当前目录 + 输入」当 prefix，不传 delimiter 递归列，
+ * 结果里所有 key 都天然以搜索词开头，开销只是匹配段本身，不扫全桶。
+ */
+const objSearch = ref('')
+const searchTerm = computed(() => objSearch.value.trim())
+const searching = computed(() => searchTerm.value.length > 0)
+let searchTimer: number | undefined
+/** 请求序号：防抖/翻页造成的过期响应直接丢弃，避免旧结果覆盖新结果 */
+let objReqSeq = 0
+
+function onSearchInput(): void {
+  window.clearTimeout(searchTimer)
+  searchTimer = window.setTimeout(resetSearchPage, 300)
+}
+
+function onSearchNow(): void {
+  window.clearTimeout(searchTimer)
+  resetSearchPage()
+}
+
+/** 搜索词变了：回到第 1 页重新列 */
+function resetSearchPage(): void {
+  objCursors.value = ['']
+  objPage.value = 0
+  void loadObjects()
+}
+
 type ObjRow =
   | { kind: 'folder'; key: string }
   | { kind: 'file'; key: string; size: number; lastModified?: string | null }
@@ -357,10 +388,15 @@ function closeObjects(): void {
   objBucket.value = null
   objItems.value = []
   objFolders.value = []
+  // 换桶/换集群后搜索词没有意义
+  objSearch.value = ''
+  window.clearTimeout(searchTimer)
 }
 
-/** 进入某个目录：重置分页并从该前缀重新列 */
+/** 进入某个目录：重置分页并从该前缀重新列（搜索范围是当前目录，换目录就清空搜索） */
 function enterPrefix(prefix: string): void {
+  objSearch.value = ''
+  window.clearTimeout(searchTimer)
   objPrefix.value = prefix
   objCursors.value = ['']
   objPage.value = 0
@@ -380,11 +416,27 @@ function upOne(): void {
   enterPrefix(parts.length ? parts.join('/') + '/' : '')
 }
 
-/** 当前层显示的名字：去掉当前前缀与结尾的 / */
+/** 当前层显示的名字：去掉当前前缀与结尾的 /（搜索时就是相对当前目录的路径） */
 function baseName(key: string): string {
   const rel = objPrefix.value && key.startsWith(objPrefix.value) ? key.slice(objPrefix.value.length) : key
   return rel.replace(/\/$/, '')
 }
+
+/** 搜索词在结果名里命中的那一段（用于加粗）；没命中就返回空 */
+function nameHead(key: string): string {
+  const name = baseName(key)
+  return searchTerm.value && name.startsWith(searchTerm.value) ? searchTerm.value : ''
+}
+
+function nameTail(key: string): string {
+  const name = baseName(key)
+  return name.slice(nameHead(key).length)
+}
+
+const objEmptyText = computed(() =>
+  searching.value
+    ? `当前目录下没有以「${searchTerm.value}」开头的对象`
+    : '这个目录是空的')
 
 // ---------------- 上传 / 删除（写操作：租户可写自己名下的桶） ----------------
 
@@ -424,7 +476,13 @@ async function onFilePicked(event: Event): Promise<void> {
       (percent) => { uploadPercent.value = percent },
     )
     ElMessage.success(`已上传 ${file.name}`)
-    await loadObjects()
+    if (searching.value) {
+      // 搜索中上传：清空搜索回到目录视图，否则新文件很可能不在当前前缀下、看不到
+      objSearch.value = ''
+      resetSearchPage()
+    } else {
+      await loadObjects()
+    }
   } catch (e) {
     ElMessage.error(e instanceof Error ? e.message : '上传失败')
   } finally {
@@ -453,28 +511,33 @@ async function removeObject(row: { key: string }): Promise<void> {
 
 async function loadObjects(): Promise<void> {
   if (!objBucket.value) return
+  const seq = ++objReqSeq
+  const term = searchTerm.value
   objLoading.value = true
   try {
     const page = await objectStorageApi.objects({
       clusterId: clusterId.value,
       tenantId: scopedTenantId(),
       bucketId: objBucket.value.id,
-      prefix: objPrefix.value || undefined,
+      // 搜索 = 当前目录 + 输入作前缀；普通浏览 = 当前目录（空前缀即桶根）
+      prefix: term ? objPrefix.value + term : (objPrefix.value || undefined),
       after: objCursors.value[objPage.value] || undefined,
       maxKeys: 200,
-      // 按目录列：当前层的文件进 items、子目录进 folders（S3 CommonPrefixes）
-      delimiter: '/',
+      // 搜索走扁平递归（不传 delimiter，结果里可能带子目录里的文件）；普通浏览按层下钻
+      delimiter: term ? undefined : '/',
     })
-    objItems.value = page?.items ?? []
-    objFolders.value = page?.folders ?? []
+    if (seq !== objReqSeq) return // 已有更新的请求，丢弃这份过期结果
+    objItems.value = (page?.items ?? []).filter((i) => !i.key.endsWith('/'))
+    objFolders.value = term ? [] : (page?.folders ?? [])
     objNext.value = page?.nextToken ?? null
   } catch (e) {
+    if (seq !== objReqSeq) return
     objItems.value = []
     objFolders.value = []
     objNext.value = null
     ElMessage.error(e instanceof Error ? e.message : '列对象失败')
   } finally {
-    objLoading.value = false
+    if (seq === objReqSeq) objLoading.value = false
   }
 }
 
@@ -682,6 +745,9 @@ usePaletteAction({
           </el-breadcrumb-item>
         </el-breadcrumb>
         <div class="os-browser-actions">
+          <el-input v-model="objSearch" size="small" clearable :prefix-icon="Search"
+                    class="os-search" placeholder="在当前目录下按前缀搜索（区分大小写）"
+                    @input="onSearchInput" @clear="onSearchNow" @keyup.enter="onSearchNow" />
           <el-button v-if="canWrite" size="small" type="primary" :loading="uploading" @click="pickFile">
             {{ uploading ? `上传中 ${uploadPercent}%` : '上传' }}
           </el-button>
@@ -691,13 +757,15 @@ usePaletteAction({
       </div>
       <input ref="fileInput" type="file" hidden @change="onFilePicked" />
 
-      <el-table v-loading="objLoading" :data="objRows" size="small" empty-text="这个目录是空的">
+      <el-table v-loading="objLoading" :data="objRows" size="small" :empty-text="objEmptyText">
         <el-table-column label="名称" min-width="420">
           <template #default="{ row }">
             <span v-if="row.kind === 'folder'" class="os-folder" @click="enterPrefix(row.key)">
               📁 {{ baseName(row.key) }}
             </span>
-            <span v-else class="os-file">{{ baseName(row.key) }}</span>
+            <span v-else class="os-file">
+              <strong v-if="nameHead(row.key)" class="os-hit">{{ nameHead(row.key) }}</strong>{{ nameTail(row.key) }}
+            </span>
           </template>
         </el-table-column>
         <el-table-column label="大小" width="110">
@@ -872,11 +940,13 @@ usePaletteAction({
 
 /* 对象浏览：文件浏览器式下钻 */
 .os-browser { padding: 12px 16px 16px; }
-.os-browser-bar { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; }
+.os-browser-bar { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; }
 .os-crumbs { flex: 1; min-width: 0; }
 .os-crumbs :deep(.el-breadcrumb__item) { display: inline-flex; }
-.os-browser-actions { display: flex; gap: 8px; }
+.os-browser-actions { display: flex; gap: 8px; align-items: center; }
+.os-search { width: 260px; }
 .os-folder { cursor: pointer; color: var(--accent); }
 .os-folder:hover { text-decoration: underline; }
 .os-file { color: var(--text-1); }
+.os-hit { color: var(--accent); font-weight: 700; }
 </style>
