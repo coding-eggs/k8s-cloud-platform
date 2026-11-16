@@ -38,8 +38,8 @@
 
 | 维度 | 可选值 | 默认 | 落到 |
 |---|---|---|---|
-| 操作系统 | Ubuntu 22.04 / 24.04、Debian 12 / 13、Rocky 9 / 10、Alma 9 / 10、CentOS Stream 9 / 10 | Rocky 9 | 支持矩阵 + 离线仓库类型（rpm/deb） |
-| 架构 | amd64 / arm64（**全集群统一**） | amd64 | `image_arch`（下载产物架构，不是逐节点开关） |
+| 操作系统 | **逐节点**选择：Ubuntu 22.04 / 24.04、Debian 12 / 13、Rocky 9 / 10、Alma 9 / 10、CentOS Stream 9 / 10（可混合） | Rocky 9 | 只进 README 与离线仓库类型提示；kubespray 按主机探测 `ansible_os_family`，不写 group_vars |
+| 架构 | 自动 / amd64 / arm64 | **自动** | 自动 = **不写** `image_arch`（由 kubespray 按主机 `host_architecture` 探测）；显式选择才写 —— 镜像清单是全局的，混架构集群跑不通 |
 | K8s 版本 | 由 kubespray v2.32.0 的 checksums 生成，不手写范围 | 该版本默认（1.36） | `kube_version` |
 | 容器运行时 | containerd / CRI-O | containerd | `container_manager` |
 | 控制面 | 1 / 3 / 5 台，节点逐行勾选 | 3 | inventory `kube_control_plane` |
@@ -50,12 +50,14 @@
 | 镜像源（在线） | 官方默认 / 自定义 registry / 镜像加速地址 / 内网 Harbor | 官方 | `kube_image_repo`、`gcr_image_repo`、`docker_image_repo`、`quay_image_repo` |
 | 离线 | 静态文件仓库地址、内网 registry | — | `files_repo`、`registry_host`、`*_download_url`、`download_run_once` |
 | 代理 | http_proxy / https_proxy / no_proxy | 空 | 节点环境变量配置 |
-| 节点 | IP、SSH 端口、用户名、hostname、角色（可多选） | — | inventory `hosts` |
+| 节点 | IP、SSH 端口、用户名、hostname、操作系统、角色（可多选） | — | inventory `hosts` |
+| SSH 认证 / 跳转机 | 密钥（默认，要求节点已预置部署机公钥）/ 密码；跳转机 `[user@]host[:port]` 可选 | 密钥、直连 | `ansible_password`、`ansible_become_password`、`ansible_ssh_common_args: -o ProxyJump=…` |
 
 说明：
 
-- **OS / 架构是集群级**：不按节点混搭（kubespray 虽能混 OS，但离线仓库与支持矩阵会翻倍，v1 不做）。
-  节点行只填 IP / SSH / hostname / 角色。
+- **操作系统是节点属性**：每台机器可以不同，kubespray 按主机探测；向导只把它写进 README 的 OS 统计，不进 group_vars。
+- **架构是集群级约束**：`image_arch` 决定镜像清单与 download，混架构集群跑不通，所以按集群选一次；
+  默认「自动」不写变量，让 kubespray 按主机探测（写死一个值反而会害了架构不同的节点）。
 - **角色可重叠**：control-plane 可以同时是 worker（单机小集群常见）；专用 etcd **不能**与控制面或 worker 重叠
   （kubespray 文档要求 `kube_node` 与 `etcd` 组不相交）。至少要有一个控制面、至少有一个 `kube_node` 成员
   （控制面兼 worker 时控制面节点同时进 `kube_node`）。
@@ -84,9 +86,22 @@
   - `components/cluster/provision/TopologyPreview.vue` 纯 SVG 拓扑（不用 vue-flow，图很小）
   - `components/cluster/provision/ArtifactPanel.vue` 产物预览、复制、逐文件下载
   - `composables/useProvisionPlan.ts` 纯函数：表单 → 校验结果 + 文件内容
+  - `components/cluster/install/NodeImportDialog.vue` 批量导入节点：粘贴表格 / 选 CSV，本地解析，不上传
+  - `utils/clusterInstall/importNodes.ts` 纯函数解析导入文本（格式见 §4.2）
   - `data/kubesprayVars.ts` vendored 的变量名单与支持矩阵（见 §8）
 - 草稿：`localStorage` 保存当前表单（可选，v1 可以不做）
 - 所有产物用 `Blob` 下载，不引入新依赖
+
+### 4.2 节点批量导入
+
+- 格式：`hostname  IP  [SSH端口]  [SSH用户]  [操作系统]  [角色]`，一行一个节点。
+- 分隔符自动识别：制表符（Excel/WPS 直接粘贴）/ 逗号（CSV）/ 空白；首行若含 `hostname` 与 `ip` 视为表头跳过。
+- 省略列取默认：`22` / `root` / Rocky 9 / `worker`；角色可用 `control-plane` / `worker` / `etcd`，
+  多个用 `/ | 、 ; +` 分隔，认 `master`、`cp`、`控制面` 等同义词。
+- OS 认下拉值与常见写法（`rocky9`、`Rocky 9`、`Rocky Linux 9`、`centos9`、`CentOS Stream 9`）。
+- 严格模式：**任一行有问题就整批不允许导入**（页面上列出行号与原因），避免半份数据进表单；
+  导入内部重复的 hostname / IP 也算问题。
+- 两种落表方式：追加到现有行 / 替换现有行；替换会影响 `etcdMode` 的角色勾选，导入后校验照常提示。
 
 ### 4.1 API 入口字段
 
@@ -206,7 +221,7 @@ README 同时链到 `docs/development/cluster-prerequisites.md`，提醒纳管�
   `files_repo` 仅保留为可读根地址。OS 包仓库仍需现场配置，README 已写明。
 - **C3 etcd 三种模式没有页面入口**：在「节点」步补 etcd 模式单选（同机 / 专用 / 外部）与外部 endpoints。
 - I1 在线镜像源落到四个 `*_image_repo` + `github_image_repo`
-- I2 `image_arch` 落到变量
+- I2 `image_arch` 落到变量（2026-11-16 起改为：默认「自动」不写，显式选择才写）
 - I3 hostname 格式校验；inventory 的 host 键加引号
 - I4 补「单 master 不出现 `kube_vip_*`」「`kube_version` 值」测试
 - I6 `KubesprayVars` 白名单补齐四个 URL 覆盖与 `github_image_repo` / `image_arch`；
@@ -223,3 +238,47 @@ README 同时链到 `docs/development/cluster-prerequisites.md`，提醒纳管�
   填参后校验通过并自动出 4 个产物文件；带 token 时多出「进入平台」「返回集群列表」；
   主题切换有效。
 
+### 11.3 操作系统归节点、架构默认自动（2026-11-16）
+
+用户指出「基础里的操作系统、架构是节点属性」。核对后确认：
+
+- **OS 名不副实**：原实现只把它写进 README 一行，不进任何 group_vars → 移到节点表每行一列，
+  README 改为按 OS 归类计数（混合 OS 如实写出 `Ubuntu 22.04 × 1、Rocky Linux 9 × 3`）。
+- **架构确实是集群级**（`image_arch` 驱动镜像清单与 download），但原实现强制写 `amd64`，
+  会让 arm64 节点按错误架构拉镜像 → 改为「自动 / amd64 / arm64」，默认自动 = **不写** `image_arch`；
+  离线 + 自动时给 warning（`download_run_once` 按下载机架构准备镜像）。
+- 「基础」步只剩集群名 / K8s 版本 / 容器运行时；镜像架构挪到「介质」步。
+- 节点表为放下 OS 列收窄列宽、角色标签改短；右侧汇总列 520 → 440px，1440 宽下表格不再横向滚动。
+- 单测 **24/24**（新增：架构自动不写 `image_arch`、README OS 归类、缺 OS 非法、离线+自动 warning）。
+
+### 11.4 节点批量导入（2026-11-16）
+
+- 新增 `utils/clusterInstall/importNodes.ts`（纯函数）+ `NodeImportDialog.vue`；节点表加「导入节点」按钮。
+- 解析规则与严格模式见 §4.2；单测 **35/35**（新增 11 条：TSV/CSV/表头、默认值、角色同义词、
+  多角色、OS 别名、空文本、注释行、非法 IP / 端口 / 角色 / OS / 列数、重复 hostname 与 IP）。
+- 预览实测：粘贴带一行坏数据的文本 → 显示 2 个有效节点 + 「第 4 行：IP 格式不正确」，
+  导入按钮置灰；去掉坏行后「导入 3 个节点」把 4 行表变成 7 行；CSV 文件选择可用；
+  替换模式把 7 行换成导入的 3 行。
+
+### 11.5 SSH 密码认证与跳转机（2026-11-16）
+
+用户问「SSH 只填了用户，密码是不用吗？跳转机免登录？」——原实现只生成 `ansible_user` / `ansible_port`，
+隐含要求**密钥认证**（节点预置部署机公钥）且**直连**，这两条此前都没在页面里说清。现在都可选：
+
+- 认证方式：密钥（默认）/ 密码。密码模式写 `ansible_password` + `ansible_become_password`（kubespray 用 become 提权），
+  README 提示需要 `sshpass`、包内含明文密码需收紧权限。
+- 跳转机：`ansible_ssh_common_args: "-o ProxyJump=[user@]host[:port]"`，留空即直连；
+  格式与端口在页面上校验。
+- 节点表「操作系统」列 120 → 165px（此前 `Rocky Linux 9` 被截断）；导入预览里的 OS 列同步加宽。
+- 单测 **40/40**（新增：密码变量、密钥模式不落任何 SSH 变量、ProxyJump、README 三类文案、
+  密码缺失报错、跳转机格式/端口校验）。
+
+
+### 11.6 列宽与 etcd 角色可见性（2026-11-16）
+
+- 节点表「操作系统」列 165 → 205px：`CentOS Stream 10` 实测文本 118px、可选区 181px，不再截断；
+  导入预览的 OS 列同步到 170px；右侧汇总列 440 → 420px 让出空间。
+- **同机 / 外部 etcd 模式不再显示 etcd 勾选框**（`etcd` 角色只在「专用 etcd」下有意义）；
+  从专用切走时自动清掉节点上的 etcd 角色（只挂 etcd 的节点回落成 worker）并提示一次，
+  避免留下看不见、只能靠校验错误提示的残留状态。导入时若带 etcd 角色而当前不是专用模式，同样按 worker 导入并提示。
+- 窄屏（≤1100px）由两列改为单列上下叠放，右侧汇总不再把表单挤扁。

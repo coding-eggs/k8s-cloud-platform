@@ -95,6 +95,7 @@ export function validate(form: InstallForm): Issue[] {
     if (!Number.isInteger(n.sshPort) || n.sshPort < 1 || n.sshPort > 65535) {
       err('nodes', `节点 ${n.hostname || '(未命名)'} 的 SSH 端口不合法`)
     }
+    if (!n.os) err('nodes', `节点 ${n.hostname || '(未命名)'} 的操作系统必填`)
   }
 
   // ---- etcd ----
@@ -181,10 +182,30 @@ export function validate(form: InstallForm): Issue[] {
     err('clusterDomain', 'clusterDomain 必填')
   }
 
+  // ---- SSH 连接 ----
+  if (form.sshAuth === 'password' && !form.sshPassword.trim()) {
+    err('sshPassword', '密码认证需要填写 SSH 密码（同时作为 sudo 密码）')
+  }
+  const jump = form.jumpHost.trim()
+  if (jump) {
+    const m = /^([\w.-]+@)?[\w.-]+(?::(\d{1,5}))?$/.exec(jump)
+    if (!m) {
+      err('jumpHost', '跳转机格式应为 [user@]host[:port]')
+    } else if (m[2] && (Number(m[2]) < 1 || Number(m[2]) > 65535)) {
+      err('jumpHost', '跳转机端口不合法')
+    }
+  }
+
   // ---- 介质 ----
   if (!form.online) {
     if (!form.filesRepo.trim()) err('filesRepo', '离线模式需要填写静态文件仓库地址')
     if (!form.registryHost.trim()) err('registryHost', '离线模式需要填写内网 registry')
+    if (form.arch === 'auto') {
+      warn(
+        'arch',
+        '离线镜像按下载主机的架构准备（download_run_once）：与节点架构不同时请显式选择 amd64 / arm64',
+      )
+    }
   }
 
   return issues

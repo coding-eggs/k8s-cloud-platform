@@ -6,7 +6,7 @@
  * 路由是**免登录**的（/clusters/new 挂在 PublicLayout 下），所以这里不能依赖权限、
  * 租户上下文或任何后端接口；只有已登录用户才给「返回集群列表」。
  */
-import { computed, nextTick, ref } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
@@ -14,12 +14,31 @@ import NodeTable from '@/components/cluster/install/NodeTable.vue'
 import TopologyPreview from '@/components/cluster/install/TopologyPreview.vue'
 import ArtifactPanel from '@/components/cluster/install/ArtifactPanel.vue'
 import { useClusterInstallPlan } from '@/composables/useClusterInstallPlan'
-import { KUBE_VERSIONS, OS_OPTIONS } from '@/utils/clusterInstall/kubespray'
+import { KUBE_VERSIONS } from '@/utils/clusterInstall/kubespray'
+import type { NodeRole } from '@/utils/clusterInstall/types'
 import { getAccessToken } from '@/auth/oauth'
 
 const router = useRouter()
 const { form, issues, errors, warnings, artifacts } = useClusterInstallPlan()
 const loggedIn = Boolean(getAccessToken())
+
+// 切走「专用 etcd」时把节点上的 etcd 角色清掉：表格里已经没有 etcd 勾选框，
+// 留着就是看不见的残留状态（校验也会一直提示「当前模式不会使用勾选的 etcd 角色」）。
+watch(
+  () => form.etcdMode,
+  (mode) => {
+    if (mode === 'dedicated') return
+    let changed = false
+    form.nodes = form.nodes.map((n) => {
+      if (!n.roles.includes('etcd')) return n
+      changed = true
+      const roles: NodeRole[] = n.roles.filter((r) => r !== 'etcd')
+      if (roles.length === 0) roles.push('worker')
+      return { ...n, roles }
+    })
+    if (changed) ElMessage.info('已清掉节点上的 etcd 角色：当前 etcd 模式不由节点承载 etcd')
+  },
+)
 
 const STEPS = ['基础', '节点', '网络与入口', '介质'] as const
 const step = ref(0)
@@ -92,17 +111,6 @@ function generateArtifacts(): void {
                 </el-option-group>
               </el-select>
             </el-form-item>
-            <el-form-item label="操作系统">
-              <el-select v-model="form.os" style="width: 260px">
-                <el-option v-for="o in OS_OPTIONS" :key="o.value" :label="`${o.label}（${o.family}）`" :value="o.value" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="架构">
-              <el-radio-group v-model="form.arch">
-                <el-radio value="amd64">amd64</el-radio>
-                <el-radio value="arm64">arm64</el-radio>
-              </el-radio-group>
-            </el-form-item>
             <el-form-item label="容器运行时">
               <el-radio-group v-model="form.runtime">
                 <el-radio value="containerd">containerd</el-radio>
@@ -113,7 +121,38 @@ function generateArtifacts(): void {
 
           <!-- 2. 节点 -->
           <template v-else-if="step === 1">
-            <NodeTable v-model="form.nodes" />
+            <NodeTable v-model="form.nodes" :etcd-mode="form.etcdMode" />
+
+            <el-divider content-position="left">SSH 连接</el-divider>
+            <el-form-item label="认证方式">
+              <el-radio-group v-model="form.sshAuth">
+                <el-radio value="key">密钥（节点已信任部署机公钥）</el-radio>
+                <el-radio value="password">密码</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <template v-if="form.sshAuth === 'password'">
+              <el-form-item label="SSH 密码">
+                <el-input
+                  v-model="form.sshPassword"
+                  type="password"
+                  show-password
+                  autocomplete="new-password"
+                  style="max-width: 320px"
+                />
+              </el-form-item>
+              <el-form-item label="提示">
+                <span class="install__hint">
+                  会以明文写进 group_vars（ansible_password / ansible_become_password），README 里会提示收紧权限；控制机需要 sshpass。
+                </span>
+              </el-form-item>
+            </template>
+            <el-form-item label="跳转机">
+              <el-input
+                v-model="form.jumpHost"
+                placeholder="可选，例如 ops@10.0.0.5:2222；留空 = 直连"
+                style="max-width: 380px"
+              />
+            </el-form-item>
 
             <el-divider content-position="left">etcd</el-divider>
             <el-form-item label="etcd 模式">
@@ -229,6 +268,18 @@ function generateArtifacts(): void {
 
           <!-- 4. 介质 -->
           <template v-else>
+            <el-form-item label="镜像架构">
+              <el-radio-group v-model="form.arch">
+                <el-radio value="auto">自动（按主机探测）</el-radio>
+                <el-radio value="amd64">amd64</el-radio>
+                <el-radio value="arm64">arm64</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item v-if="form.arch === 'auto'" label="提示">
+              <span class="install__hint">
+                不写 image_arch，kubespray 按每台主机探测；集群里架构不一致时请显式选择（镜像清单是全局的）。
+              </span>
+            </el-form-item>
             <el-form-item label="部署模式">
               <el-radio-group v-model="form.online">
                 <el-radio :value="true">在线</el-radio>
@@ -309,7 +360,7 @@ function generateArtifacts(): void {
 }
 .install__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 520px;
+  grid-template-columns: minmax(0, 1fr) 420px;
   gap: 20px;
   align-items: start;
 }
@@ -324,6 +375,17 @@ function generateArtifacts(): void {
   gap: 12px;
   max-height: calc(100vh - 120px);
   overflow: auto;
+}
+/* 窄屏（笔记本半屏、分屏窗口）：右侧汇总挤不出空间，退回单列上下叠放 */
+@media (max-width: 1100px) {
+  .install__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .install__aside {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
 }
 .install__card {
   border: 1px solid var(--el-border-color-lighter);

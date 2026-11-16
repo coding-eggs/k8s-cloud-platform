@@ -3,7 +3,7 @@
  * 纯函数：不读环境、不发请求。
  */
 import type { InstallFile, InstallForm, InstallNode } from './types'
-import { KUBESPRAY_VERSION, type KubesprayVars } from './kubespray.ts'
+import { KUBESPRAY_VERSION, osLabel, type KubesprayVars } from './kubespray.ts'
 import { yamlDoc } from './yaml.ts'
 
 function quote(v: string): string {
@@ -38,9 +38,8 @@ function inventoryDoc(form: InstallForm): string {
 }
 
 function clusterVars(form: InstallForm): KubesprayVars {
-  return {
+  const vars: KubesprayVars = {
     kube_version: form.kubeVersion,
-    image_arch: form.arch,
     container_manager: form.runtime,
     kube_network_plugin: form.cni === 'platform' ? 'cni' : form.cni,
     kube_pods_subnet: form.podCidr,
@@ -49,6 +48,17 @@ function clusterVars(form: InstallForm): KubesprayVars {
     kube_proxy_mode: form.kubeProxyMode,
     kube_proxy_strict_arp: form.kubeProxyMode === 'ipvs' && form.apiEntry === 'kubevip-arp',
   }
+  // 「自动」就**不写** image_arch：kubespray 默认取每台主机探测到的 `host_architecture`。
+  // 写死一个值反而会害了架构不同的节点（按错误架构拉镜像）。
+  if (form.arch !== 'auto') vars.image_arch = form.arch
+  return vars
+}
+
+/** README 用：按 OS 归类计数，混合 OS 集群也能如实写出 `Ubuntu 22.04 × 3、Rocky Linux 9 × 1` */
+function osSummary(nodes: InstallNode[]): string {
+  const counts = new Map<string, number>()
+  for (const n of nodes) counts.set(n.os, (counts.get(n.os) ?? 0) + 1)
+  return [...counts.entries()].map(([os, n]) => `${osLabel(os)} × ${n}`).join('、')
 }
 
 function noProxy(form: InstallForm): string {
@@ -101,6 +111,15 @@ function entryVars(form: InstallForm): KubesprayVars {
     vars.no_proxy = noProxy(form)
   }
 
+  if (form.sshAuth === 'password' && form.sshPassword) {
+    vars.ansible_password = form.sshPassword
+    // 密码登录时 sudo 也要口令（kubespray 用 become 提权）
+    vars.ansible_become_password = form.sshPassword
+  }
+  if (form.jumpHost.trim()) {
+    vars.ansible_ssh_common_args = `-o ProxyJump=${form.jumpHost.trim()}`
+  }
+
   if (form.online && form.imageRegistry.trim()) {
     const repo = form.imageRegistry.trim()
     vars.kube_image_repo = repo
@@ -140,6 +159,16 @@ function offlineVars(form: InstallForm): KubesprayVars {
   }
 }
 
+/** README 用：SSH 认证 + 跳转机一句话 */
+function sshSummary(form: InstallForm): string {
+  const auth =
+    form.sshAuth === 'password'
+      ? '密码认证（控制机需装 sshpass）'
+      : '密钥认证（节点已预置部署机公钥）'
+  const jump = form.jumpHost.trim()
+  return jump ? `${auth}；经跳转机 ${jump}` : `${auth}；直连`
+}
+
 function readme(form: InstallForm): string {
   const dir = `inventory/${form.clusterName}`
   const lines = [
@@ -147,8 +176,10 @@ function readme(form: InstallForm): string {
     '',
     `- kubespray：${KUBESPRAY_VERSION}`,
     `- Kubernetes：${form.kubeVersion}`,
-    `- 操作系统：${form.os}（${form.arch}）`,
+    `- 镜像架构：${form.arch === 'auto' ? '自动（kubespray 按主机探测）' : form.arch}`,
+    `- 操作系统：${osSummary(form.nodes)}`,
     `- 容器运行时：${form.runtime}`,
+    `- SSH：${sshSummary(form)}`,
     `- 控制面：${form.nodes.filter((n) => n.roles.includes('control-plane')).length} 台`,
     '',
     '## 1. 准备',
@@ -178,6 +209,20 @@ function readme(form: InstallForm): string {
     `- 若 CNI 选了「平台管理」：到组件页安装 Calico 时，**Pod CIDR 必须填 \`${form.podCidr}\`**，与该集群的 Pod 网段一字不差；写错会立即断网。`,
     '- 其它集群侧前提（Tekton 开关、配额、存储、网格指标、告警）见 `docs/development/cluster-prerequisites.md`。',
   ]
+  if (form.sshAuth === 'password') {
+    lines.push(
+      '',
+      '> ⚠️ 本包含**明文密码**（`group_vars/all/all.yml` 里的 `ansible_password` / `ansible_become_password`）：',
+      '> 不要提交到 git；拷到控制机后建议 `chmod -R go-rwx inventory/` 收紧权限，并确认已安装 `sshpass`。',
+    )
+  }
+  if (form.jumpHost.trim()) {
+    lines.push(
+      '',
+      '> 跳转机只写进 `ansible_ssh_common_args`（ProxyJump）：跳转机自身的认证走控制机的 `ssh` 配置',
+      '> （密钥 / ssh-agent / `~/.ssh/config`），向导不生成跳转机的口令。',
+    )
+  }
   if (form.etcdMode === 'external') {
     lines.push(
       '',

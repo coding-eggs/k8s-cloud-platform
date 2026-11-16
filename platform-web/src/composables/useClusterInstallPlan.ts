@@ -2,22 +2,24 @@
 import { computed, reactive } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { InstallFile, InstallForm, Issue } from '@/utils/clusterInstall/types'
-import { DEFAULT_KUBE_VERSION } from '@/utils/clusterInstall/kubespray'
+import { DEFAULT_KUBE_VERSION, DEFAULT_OS } from '@/utils/clusterInstall/kubespray'
 import { validate } from '@/utils/clusterInstall/validate'
 import { generate } from '@/utils/clusterInstall/generate'
 
 export function createDefaultForm(): InstallForm {
   return {
     clusterName: '',
-    os: 'rocky9',
-    arch: 'amd64',
+    arch: 'auto',
+    sshAuth: 'key',
+    sshPassword: '',
+    jumpHost: '',
     kubeVersion: DEFAULT_KUBE_VERSION,
     runtime: 'containerd',
     nodes: [
-      { hostname: 'cp-1', ip: '', sshPort: 22, sshUser: 'root', roles: ['control-plane'] },
-      { hostname: 'cp-2', ip: '', sshPort: 22, sshUser: 'root', roles: ['control-plane'] },
-      { hostname: 'cp-3', ip: '', sshPort: 22, sshUser: 'root', roles: ['control-plane'] },
-      { hostname: 'worker-1', ip: '', sshPort: 22, sshUser: 'root', roles: ['worker'] },
+      { hostname: 'cp-1', ip: '', sshPort: 22, sshUser: 'root', os: DEFAULT_OS, roles: ['control-plane'] },
+      { hostname: 'cp-2', ip: '', sshPort: 22, sshUser: 'root', os: DEFAULT_OS, roles: ['control-plane'] },
+      { hostname: 'cp-3', ip: '', sshPort: 22, sshUser: 'root', os: DEFAULT_OS, roles: ['control-plane'] },
+      { hostname: 'worker-1', ip: '', sshPort: 22, sshUser: 'root', os: DEFAULT_OS, roles: ['worker'] },
     ],
     etcdMode: 'stacked',
     externalEtcd: '',

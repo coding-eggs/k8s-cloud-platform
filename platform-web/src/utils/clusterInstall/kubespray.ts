@@ -42,6 +42,14 @@ export const OS_OPTIONS: readonly OsOption[] = [
   { value: 'centos10', label: 'CentOS Stream 10', family: 'rpm' },
 ] as const
 
+/** 新加节点时的默认 OS（引导页里 Kubespray 支持面最广的一档） */
+export const DEFAULT_OS = 'rocky9'
+
+/** 展示用：OS 值 → 人话名；未知值原样返回，别在 UI 里露出裸 key */
+export function osLabel(value: string): string {
+  return OS_OPTIONS.find((o) => o.value === value)?.label ?? value
+}
+
 /** `kube_network_plugin` 的取值：平台的 `platform` 映射为 `cni`（不装 CNI） */
 export type KubesprayCni = 'cni' | Exclude<CniMode, 'platform'>
 
@@ -73,6 +81,12 @@ export interface KubesprayVars {
 
   etcd_deployment_type?: 'host'
   etcd_access_addresses?: string
+
+  /** SSH 密码认证（控制机需装 sshpass；明文，README 有权限提示） */
+  ansible_password?: string
+  ansible_become_password?: string
+  /** 跳转机：`-o ProxyJump=[user@]host[:port]` */
+  ansible_ssh_common_args?: string
 
   http_proxy?: string
   https_proxy?: string

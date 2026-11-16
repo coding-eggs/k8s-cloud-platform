@@ -3,13 +3,14 @@ import assert from 'node:assert/strict'
 import { generate } from '../generate.ts'
 import type { InstallForm, InstallNode } from '../types.ts'
 
-function node(hostname: string, ip: string, roles: InstallNode['roles']): InstallNode {
-  return { hostname, ip, sshPort: 22, sshUser: 'root', roles }
+function node(hostname: string, ip: string, roles: InstallNode['roles'], os = 'rocky9'): InstallNode {
+  return { hostname, ip, sshPort: 22, sshUser: 'root', os, roles }
 }
 
 function base(overrides: Partial<InstallForm> = {}): InstallForm {
   return {
-    clusterName: 'demo', os: 'rocky9', arch: 'amd64', kubeVersion: '1.36.4',
+    clusterName: 'demo', arch: 'auto', kubeVersion: '1.36.4',
+    sshAuth: 'key', sshPassword: '', jumpHost: '',
     runtime: 'containerd',
     nodes: [node('cp-1', '10.0.0.11', ['control-plane', 'worker'])],
     etcdMode: 'stacked', externalEtcd: '',
@@ -40,10 +41,12 @@ test('单 master 兼 worker：两个组都进，且没有 etcd 组 / 没有 VIP 
   assert.equal(files.some((f) => f.path.endsWith('/group_vars/all/all.yml')), false)
 })
 
-test('K8s 版本与架构落到变量，且版本不带 v 前缀', () => {
-  const net = file(base(), 'group_vars/k8s_cluster/k8s-cluster.yml')
-  assert.match(net, /kube_version: "1\.36\.4"/)
-  assert.match(net, /image_arch: "amd64"/)
+test('K8s 版本落到变量（不带 v）；架构自动时不写 image_arch，显式选择才写', () => {
+  const auto = file(base(), 'group_vars/k8s_cluster/k8s-cluster.yml')
+  assert.match(auto, /kube_version: "1\.36\.4"/)
+  // 「自动」交给 kubespray 按主机探测；写死反而会害了架构不同的节点
+  assert.doesNotMatch(auto, /image_arch/)
+  assert.match(file(base({ arch: 'arm64' }), 'group_vars/k8s_cluster/k8s-cluster.yml'), /image_arch: "arm64"/)
 })
 
 test('3 master + ARP：VIP、LB、strictARP 都在', () => {
@@ -110,4 +113,39 @@ test('README 写明 Pod CIDR 与 Calico 一致', () => {
   const readme = file(base(), 'README.md')
   assert.match(readme, /10\.233\.64\.0\/18/)
   assert.match(readme, /Calico/)
+})
+
+test('README 的操作系统按节点归类写（混合 OS 也如实写），架构自动写明', () => {
+  const mixed = base({
+    nodes: [
+      node('cp-1', '10.0.0.11', ['control-plane', 'worker'], 'ubuntu2204'),
+      node('w-1', '10.0.0.21', ['worker'], 'rocky9'),
+    ],
+  })
+  const readme = file(mixed, 'README.md')
+  assert.match(readme, /Ubuntu 22\.04 × 1/)
+  assert.match(readme, /Rocky Linux 9 × 1/)
+  assert.match(readme, /镜像架构：自动（kubespray 按主机探测）/)
+  assert.match(file(base({ arch: 'arm64' }), 'README.md'), /镜像架构：arm64/)
+})
+
+test('SSH 密码认证：写 ansible_password / ansible_become_password；密钥认证一个都不写', () => {
+  const all = file(base({ sshAuth: 'password', sshPassword: 's3cret' }), 'group_vars/all/all.yml')
+  assert.match(all, /ansible_password: "s3cret"/)
+  assert.match(all, /ansible_become_password: "s3cret"/)
+  assert.equal(generate(base()).some((f) => f.content.includes('ansible_password')), false)
+})
+
+test('跳转机：写成 ProxyJump 的 ansible_ssh_common_args', () => {
+  const all = file(base({ jumpHost: 'ops@10.0.0.5:2222' }), 'group_vars/all/all.yml')
+  assert.match(all, /ansible_ssh_common_args: "-o ProxyJump=ops@10\.0\.0\.5:2222"/)
+})
+
+test('README 写明 SSH 认证方式、跳转机与明文密码提醒', () => {
+  const readme = file(base({ sshAuth: 'password', sshPassword: 'x', jumpHost: 'ops@10.0.0.5' }), 'README.md')
+  assert.match(readme, /SSH：密码认证/)
+  assert.match(readme, /经跳转机 ops@10\.0\.0\.5/)
+  assert.match(readme, /明文密码/)
+  assert.match(readme, /跳转机自身的认证走控制机的 `ssh` 配置/)
+  assert.match(file(base(), 'README.md'), /SSH：密钥认证（节点已预置部署机公钥）；直连/)
 })

@@ -4,12 +4,13 @@ import { validate } from '../validate.ts'
 import type { InstallForm, InstallNode } from '../types.ts'
 
 function node(hostname: string, ip: string, roles: InstallNode['roles']): InstallNode {
-  return { hostname, ip, sshPort: 22, sshUser: 'root', roles }
+  return { hostname, ip, sshPort: 22, sshUser: 'root', os: 'rocky9', roles }
 }
 
 function base(overrides: Partial<InstallForm> = {}): InstallForm {
   return {
-    clusterName: 'demo', os: 'rocky9', arch: 'amd64', kubeVersion: '1.36.4',
+    clusterName: 'demo', arch: 'auto', kubeVersion: '1.36.4',
+    sshAuth: 'key', sshPassword: '', jumpHost: '',
     runtime: 'containerd',
     nodes: [node('cp-1', '10.0.0.11', ['control-plane', 'worker'])],
     etcdMode: 'stacked', externalEtcd: '',
@@ -76,4 +77,30 @@ test('hostname 含空格非法', () => {
 test('非专用 etcd 模式勾了 etcd 角色给出 warning', () => {
   const f = base({ nodes: [node('cp-1', '10.0.0.11', ['control-plane', 'worker', 'etcd'])] })
   assert.ok(validate(f).some((i) => i.level === 'warning' && i.field === 'etcdMode'))
+})
+
+test('节点没选操作系统非法', () => {
+  const f = base()
+  f.nodes[0].os = ''
+  assert.ok(errors(f).some((i) => i.field === 'nodes'))
+})
+
+test('离线 + 架构「自动」给 warning，显式选架构后不再提示', () => {
+  const offline = base({ online: false, filesRepo: 'http://10.0.0.5/kubespray', registryHost: 'harbor.local/k8s' })
+  assert.ok(validate(offline).some((i) => i.level === 'warning' && i.field === 'arch'))
+  assert.equal(
+    validate({ ...offline, arch: 'amd64' }).some((i) => i.field === 'arch'),
+    false,
+  )
+})
+
+test('密码认证但没填密码：报错', () => {
+  assert.ok(errors(base({ sshAuth: 'password', sshPassword: '   ' })).some((i) => i.field === 'sshPassword'))
+})
+
+test('跳转机格式：[user@]host[:port]，端口要合法', () => {
+  assert.equal(errors(base({ jumpHost: 'ops@10.0.0.5:2222' })).length, 0)
+  assert.equal(errors(base({ jumpHost: '10.0.0.5' })).length, 0)
+  assert.ok(errors(base({ jumpHost: 'bad host' })).some((i) => i.field === 'jumpHost'))
+  assert.ok(errors(base({ jumpHost: '10.0.0.5:70000' })).some((i) => i.field === 'jumpHost'))
 })
