@@ -179,10 +179,12 @@ README 同时链到 `docs/development/cluster-prerequisites.md`，提醒纳管�
 
 ## 11. 实施验收记录（2026-11-16）
 
-- 单测：17/17（`validate` 10 + `generate` 7）
+- 单测：**21/21**（`validate` 12 + `generate` 9）
 - 构建：`npm run build` 通过；无新增依赖
+- 整页验证（假 token + 真实路由）：四步表单、拓扑、产物面板渲染；填参后 4 个文件；
+  改成 2 台控制面立即报错；切离线多出 `offline.yml`；暗/亮主题都检查；切页期间零 `/api/**` 请求
 - 四组样例已生成并人工核对（工作区 scratch，不提交）：
-  1. 单 master 兼 worker + 同机 etcd + 直连 → 4 个文件
+  1. 单 master 兼 worker + 同机 etcd + 直连 → 3 个文件（无 all.yml）
   2. 3 master + 同机 etcd + kube-vip ARP → 4 个文件
   3. 3 master + 专用 etcd + 外部 LB → 5 个文件
   4. 3 master + kube-vip ARP + 外部 etcd（实验）+ 离线 → 6 个文件（含 warning）
@@ -190,4 +192,21 @@ README 同时链到 `docs/development/cluster-prerequisites.md`，提醒纳管�
 - **未执行 `ansible-playbook --syntax-check`**：本机没有 kubespray 检出，也没有 ansible；
   且 syntax-check 不校验 `group_vars` 键名。键名正确性由 `KubesprayVars` 类型约束 + 单测保证，
   仍需在有 ansible 的控制机上补跑一次真校验。
+
+### 11.1 复审修复（2026-11-16）
+
+独立复审对照 kubespray v2.32.0 源码发现 3 个必须修复项，已在本分支修复并补测试：
+
+- **C1 `kube_version` 不能带 `v`**：v2.32 的 `kube_version` 直接取 checksums 键（`1.36.4`），
+  kubeadm 模板自己拼 `v`。版本表改为裸版本，UI 展示时加 `v`；新增值级测试。
+- **C2 离线：`files_repo` 在 v2.32 没有消费方**：改成生成 `github_url` / `dl_k8s_io_url` /
+  `storage_googleapis_url` / `get_helm_url` 四个覆盖，并补 `github_image_repo`（kube-vip 镜像）；
+  `files_repo` 仅保留为可读根地址。OS 包仓库仍需现场配置，README 已写明。
+- **C3 etcd 三种模式没有页面入口**：在「节点」步补 etcd 模式单选（同机 / 专用 / 外部）与外部 endpoints。
+- I1 在线镜像源落到四个 `*_image_repo` + `github_image_repo`
+- I2 `image_arch` 落到变量
+- I3 hostname 格式校验；inventory 的 host 键加引号
+- I4 补「单 master 不出现 `kube_vip_*`」「`kube_version` 值」测试
+- I6 `KubesprayVars` 白名单补齐四个 URL 覆盖与 `github_image_repo` / `image_arch`；
+  `etcd_deployment_type` 只保留实际使用的 `host`
 

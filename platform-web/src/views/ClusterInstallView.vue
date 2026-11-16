@@ -83,7 +83,7 @@ function generateArtifacts(): void {
             <el-form-item label="Kubernetes 版本">
               <el-select v-model="form.kubeVersion" style="width: 260px">
                 <el-option-group v-for="g in kubeVersionGroups" :key="g.minor" :label="g.minor">
-                  <el-option v-for="v in g.versions" :key="v" :label="v" :value="v" />
+                  <el-option v-for="v in g.versions" :key="v" :label="`v${v}`" :value="v" />
                 </el-option-group>
               </el-select>
             </el-form-item>
@@ -109,6 +109,25 @@ function generateArtifacts(): void {
           <!-- 2. 节点 -->
           <template v-else-if="step === 1">
             <NodeTable v-model="form.nodes" />
+
+            <el-divider content-position="left">etcd</el-divider>
+            <el-form-item label="etcd 模式">
+              <el-radio-group v-model="form.etcdMode">
+                <el-radio value="stacked">同机（控制面即 etcd）</el-radio>
+                <el-radio value="dedicated">专用 etcd</el-radio>
+                <el-radio value="external">外部托管（实验）</el-radio>
+              </el-radio-group>
+            </el-form-item>
+            <el-form-item v-if="form.etcdMode === 'dedicated'" label="提示">
+              <span class="install__hint">把 etcd 角色的节点勾到 3 或 5 台；它们不能兼控制面或 worker。</span>
+            </el-form-item>
+            <el-form-item v-if="form.etcdMode === 'external'" label="endpoints">
+              <el-input
+                v-model="form.externalEtcd"
+                placeholder="https://10.0.0.31:2379,https://10.0.0.32:2379"
+                style="max-width: 520px"
+              />
+            </el-form-item>
           </template>
 
           <!-- 3. 网络与入口 -->
@@ -335,6 +354,10 @@ function generateArtifacts(): void {
 .install__ok {
   font-size: 12.5px;
   color: var(--el-color-success);
+}
+.install__hint {
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
 }
 .install__actions {
   display: flex;

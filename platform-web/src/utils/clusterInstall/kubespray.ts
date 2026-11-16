@@ -8,15 +8,17 @@ import type { CniMode, KubeProxyMode, Runtime } from './types'
 
 export const KUBESPRAY_VERSION = 'v2.32.0'
 
-/** 来自 kubespray v2.32.0 `roles/kubespray_defaults/vars/main/checksums.yml` 的 kubelet_checksums */
+/** 来自 kubespray v2.32.0 `roles/kubespray_defaults/vars/main/checksums.yml` 的 kubelet_checksums。
+ *  ⚠️ 必须**不带 `v` 前缀**：v2.32.0 的 `kube_version` 默认值直接取 checksums 的键（`1.36.4`），
+ *  kubeadm 模板会自己拼 `v`。展示层需要时另行加 `v`。 */
 export const KUBE_VERSIONS: readonly string[] = [
-  'v1.36.4', 'v1.36.3', 'v1.36.2', 'v1.36.1', 'v1.36.0',
-  'v1.35.8', 'v1.35.7', 'v1.35.6', 'v1.35.5', 'v1.35.4', 'v1.35.3', 'v1.35.2', 'v1.35.1', 'v1.35.0',
-  'v1.34.11', 'v1.34.10', 'v1.34.9', 'v1.34.8', 'v1.34.7', 'v1.34.6', 'v1.34.5',
-  'v1.34.4', 'v1.34.3', 'v1.34.2', 'v1.34.1', 'v1.34.0',
+  '1.36.4', '1.36.3', '1.36.2', '1.36.1', '1.36.0',
+  '1.35.8', '1.35.7', '1.35.6', '1.35.5', '1.35.4', '1.35.3', '1.35.2', '1.35.1', '1.35.0',
+  '1.34.11', '1.34.10', '1.34.9', '1.34.8', '1.34.7', '1.34.6', '1.34.5',
+  '1.34.4', '1.34.3', '1.34.2', '1.34.1', '1.34.0',
 ] as const
 
-export const DEFAULT_KUBE_VERSION = 'v1.36.4'
+export const DEFAULT_KUBE_VERSION = '1.36.4'
 
 export type OsFamily = 'rpm' | 'deb'
 
@@ -48,6 +50,7 @@ export type KubesprayCni = 'cni' | Exclude<CniMode, 'platform'>
  */
 export interface KubesprayVars {
   kube_version?: string
+  image_arch?: 'amd64' | 'arm64'
   container_manager?: Runtime
   kube_network_plugin?: KubesprayCni
   kube_pods_subnet?: string
@@ -68,18 +71,24 @@ export interface KubesprayVars {
   loadbalancer_apiserver?: { address: string; port: number }
   apiserver_loadbalancer_domain_name?: string
 
-  etcd_deployment_type?: 'host' | 'kubeadm'
+  etcd_deployment_type?: 'host'
   etcd_access_addresses?: string
 
   http_proxy?: string
   https_proxy?: string
   no_proxy?: string
 
+  /** 仅作为用户可读的镜像根地址保留；真正生效的是下面四个 *_url 覆盖 */
   files_repo?: string
   registry_host?: string
+  github_url?: string
+  dl_k8s_io_url?: string
+  storage_googleapis_url?: string
+  get_helm_url?: string
   kube_image_repo?: string
   gcr_image_repo?: string
   docker_image_repo?: string
   quay_image_repo?: string
+  github_image_repo?: string
   download_run_once?: boolean
 }

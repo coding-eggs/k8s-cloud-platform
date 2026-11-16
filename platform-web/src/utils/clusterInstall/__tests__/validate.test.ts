@@ -9,7 +9,7 @@ function node(hostname: string, ip: string, roles: InstallNode['roles']): Instal
 
 function base(overrides: Partial<InstallForm> = {}): InstallForm {
   return {
-    clusterName: 'demo', os: 'rocky9', arch: 'amd64', kubeVersion: 'v1.36.4',
+    clusterName: 'demo', os: 'rocky9', arch: 'amd64', kubeVersion: '1.36.4',
     runtime: 'containerd',
     nodes: [node('cp-1', '10.0.0.11', ['control-plane', 'worker'])],
     etcdMode: 'stacked', externalEtcd: '',
@@ -67,4 +67,13 @@ test('单 master 选 kube-vip 非法', () => {
 
 test('外部 etcd 给出 warning', () => {
   assert.ok(validate(base({ etcdMode: 'external', externalEtcd: 'https://10.0.0.31:2379' })).some((i) => i.level === 'warning'))
+})
+
+test('hostname 含空格非法', () => {
+  assert.ok(errors(base({ nodes: [node('cp 1', '10.0.0.11', ['control-plane', 'worker'])] })).some((i) => i.field === 'nodes'))
+})
+
+test('非专用 etcd 模式勾了 etcd 角色给出 warning', () => {
+  const f = base({ nodes: [node('cp-1', '10.0.0.11', ['control-plane', 'worker', 'etcd'])] })
+  assert.ok(validate(f).some((i) => i.level === 'warning' && i.field === 'etcdMode'))
 })

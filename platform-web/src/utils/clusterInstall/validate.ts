@@ -70,12 +70,15 @@ export function validate(form: InstallForm): Issue[] {
   const seenHost = new Set<string>()
   const seenIp = new Set<string>()
   for (const n of form.nodes) {
-    if (!n.hostname.trim()) {
+    const hostname = n.hostname.trim()
+    if (!hostname) {
       err('nodes', '节点 hostname 必填')
-    } else if (seenHost.has(n.hostname)) {
-      err('nodes', `节点 hostname 重复：${n.hostname}`)
+    } else if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(hostname)) {
+      err('nodes', `节点 hostname 格式不正确：${hostname}`)
+    } else if (seenHost.has(hostname)) {
+      err('nodes', `节点 hostname 重复：${hostname}`)
     } else {
-      seenHost.add(n.hostname)
+      seenHost.add(hostname)
     }
 
     if (!n.ip.trim()) {
@@ -112,6 +115,9 @@ export function validate(form: InstallForm): Issue[] {
       if (bad) err('etcdMode', `外部 etcd endpoint 格式不正确：${bad}`)
     }
     warn('etcdMode', '外部 etcd 为实验特性：kubespray 没有干净的跳过开关，需现场自验')
+  }
+  if (form.etcdMode !== 'dedicated' && etcdNodes.length > 0) {
+    warn('etcdMode', '当前 etcd 模式不会使用勾选的 etcd 角色')
   }
 
   // ---- API 入口 ----

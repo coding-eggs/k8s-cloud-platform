@@ -17,7 +17,7 @@ function inventoryDoc(form: InstallForm): string {
 
   const lines: string[] = ['all:', '  hosts:']
   for (const n of form.nodes) {
-    lines.push(`    ${n.hostname}:`)
+    lines.push(`    ${quote(n.hostname)}:`)
     lines.push(`      ansible_host: ${quote(n.ip)}`)
     lines.push(`      ip: ${quote(n.ip)}`)
     lines.push(`      access_ip: ${quote(n.ip)}`)
@@ -28,7 +28,7 @@ function inventoryDoc(form: InstallForm): string {
   lines.push('  children:')
   const group = (name: string, nodes: InstallNode[]) => {
     lines.push(`    ${name}:`, '      hosts:')
-    for (const n of nodes) lines.push(`        ${n.hostname}:`)
+    for (const n of nodes) lines.push(`        ${quote(n.hostname)}:`)
   }
   group('kube_control_plane', cps)
   group('kube_node', workers)
@@ -40,6 +40,7 @@ function inventoryDoc(form: InstallForm): string {
 function clusterVars(form: InstallForm): KubesprayVars {
   return {
     kube_version: form.kubeVersion,
+    image_arch: form.arch,
     container_manager: form.runtime,
     kube_network_plugin: form.cni === 'platform' ? 'cni' : form.cni,
     kube_pods_subnet: form.podCidr,
@@ -99,6 +100,15 @@ function entryVars(form: InstallForm): KubesprayVars {
   if (form.httpProxy.trim() || form.httpsProxy.trim() || form.noProxyExtra.trim()) {
     vars.no_proxy = noProxy(form)
   }
+
+  if (form.online && form.imageRegistry.trim()) {
+    const repo = form.imageRegistry.trim()
+    vars.kube_image_repo = repo
+    vars.gcr_image_repo = repo
+    vars.docker_image_repo = repo
+    vars.quay_image_repo = repo
+    vars.github_image_repo = repo
+  }
   return vars
 }
 
@@ -112,13 +122,20 @@ function etcdVars(form: InstallForm): KubesprayVars | null {
 }
 
 function offlineVars(form: InstallForm): KubesprayVars {
+  const repo = form.filesRepo.trim().replace(/\/+$/, '')
   return {
-    files_repo: form.filesRepo,
+    // files_repo 自身在 v2.32 没有消费方，仅作为可读的根地址；真正生效的是四个 *_url 覆盖
+    files_repo: repo,
+    github_url: `${repo}/github.com`,
+    dl_k8s_io_url: `${repo}/dl.k8s.io`,
+    storage_googleapis_url: `${repo}/storage.googleapis.com`,
+    get_helm_url: `${repo}/get.helm.sh`,
     registry_host: form.registryHost,
     kube_image_repo: form.registryHost,
     gcr_image_repo: form.registryHost,
     docker_image_repo: form.registryHost,
     quay_image_repo: form.registryHost,
+    github_image_repo: form.registryHost,
     download_run_once: true,
   }
 }
@@ -142,6 +159,8 @@ function readme(form: InstallForm): string {
     `cp -r ${form.clusterName} <kubespray>/inventory/`,
     '```',
     '',
+    `逐个下载时按面板里的完整路径建目录（\`${dir}/...\`）再放入文件。`,
+    '',
     '## 2. 执行',
     '',
     '```bash',
@@ -151,7 +170,7 @@ function readme(form: InstallForm): string {
     '',
     form.online
       ? '在线模式：节点按 `group_vars` 里的镜像源拉取镜像与二进制。'
-      : '离线模式：先把 `group_vars/all/offline.yml` 里的 `files_repo` 与 `registry_host` 准备好（静态文件仓库 + 内网 registry），再执行上面的命令。',
+      : '离线模式：先把 `group_vars/all/offline.yml` 里的 `files_repo`（按 `<host>/...` 布局镜像 github.com / dl.k8s.io / storage.googleapis.com / get.helm.sh）与 `registry_host` 准备好。OS 包仓库（kubespray 的 `yum_repo` / `debian_repo` / `ubuntu_repo`）需要另行配置，本向导不生成。',
     '',
     '## 3. 纳管后',
     '',
@@ -170,11 +189,15 @@ function readme(form: InstallForm): string {
 
 export function generate(form: InstallForm): InstallFile[] {
   const root = `inventory/${form.clusterName}`
+  const entry = entryVars(form)
   const files: InstallFile[] = [
     { path: `${root}/hosts.yaml`, content: inventoryDoc(form) },
     { path: `${root}/group_vars/k8s_cluster/k8s-cluster.yml`, content: yamlDoc(clusterVars(form)) },
-    { path: `${root}/group_vars/all/all.yml`, content: yamlDoc(entryVars(form)) },
   ]
+  // 空对象不落文件：单 master 直连、无代理时确实没有任何 all.yml 变量
+  if (Object.keys(entry).length > 0) {
+    files.push({ path: `${root}/group_vars/all/all.yml`, content: yamlDoc(entry) })
+  }
 
   const etcd = etcdVars(form)
   if (etcd) files.push({ path: `${root}/group_vars/all/etcd.yml`, content: yamlDoc(etcd) })
