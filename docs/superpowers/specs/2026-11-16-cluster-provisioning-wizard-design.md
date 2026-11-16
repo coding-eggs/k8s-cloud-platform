@@ -72,7 +72,9 @@
 
 ## 4. 页面
 
-- 路由：`/clusters/new`（`meta.nav = 'hidden'`），权限复用 `pageCodes.cluster`，不新增权限码
+- 路由：`/clusters/new`，**`meta.public = true`，免登录**。向导只做本地生成（不执行、不落库、不发请求），
+  放在平台外壳之外（`layouts/PublicLayout.vue`）—— MainLayout 依赖登录态与权限引导（`perm.bootstrap()`），
+  公共路由放行时它不会跑，挂上去只会得到空壳侧栏和一堆 401。不占用 `pageCodes`，也不新增权限码。
 - 入口：集群列表页现有「新增集群」按钮（打开 kubeconfig 登记弹窗）改名为「接入集群」，
   旁边新增「新建集群」按钮 → 向导页
 - 布局：左侧四步表单，右侧 sticky 汇总（拓扑预览 + 校验结果 + 产物下载）
@@ -209,4 +211,15 @@ README 同时链到 `docs/development/cluster-prerequisites.md`，提醒纳管�
 - I4 补「单 master 不出现 `kube_vip_*`」「`kube_version` 值」测试
 - I6 `KubesprayVars` 白名单补齐四个 URL 覆盖与 `github_image_repo` / `image_arch`；
   `etcd_deployment_type` 只保留实际使用的 `host`
+
+### 11.2 改为免登录（2026-11-16）
+
+用户要求「这个不用登录吧，直接就能访问」。向导本来就是纯前端生成器，登录只会挡住想把部署包拿去用的人。
+
+- 路由从 MainLayout 子路由提为顶级：`/clusters/new` → `layouts/PublicLayout.vue`（品牌条 + 主题切换 +
+  `登录平台 / 进入平台`），`meta.public = true`，去掉 `requiresPerm` / `domain` / `nav`。
+- 页面只按 `getAccessToken()` 决定是否显示「返回集群列表」，不碰权限、租户上下文与任何接口。
+- 验证（无 token 直开 `/clusters/new`）：渲染正常、无侧栏、零 `/api/**` 请求、无控制台告警；
+  填参后校验通过并自动出 4 个产物文件；带 token 时多出「进入平台」「返回集群列表」；
+  主题切换有效。
 

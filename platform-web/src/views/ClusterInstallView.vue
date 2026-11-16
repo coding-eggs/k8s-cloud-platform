@@ -2,6 +2,9 @@
 /**
  * 新建集群向导：纯前端生成 kubespray 部署包，不执行、不落库、不发请求。
  * 左侧四步表单，右侧拓扑 + 校验 + 产物。
+ *
+ * 路由是**免登录**的（/clusters/new 挂在 PublicLayout 下），所以这里不能依赖权限、
+ * 租户上下文或任何后端接口；只有已登录用户才给「返回集群列表」。
  */
 import { computed, nextTick, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -12,9 +15,11 @@ import TopologyPreview from '@/components/cluster/install/TopologyPreview.vue'
 import ArtifactPanel from '@/components/cluster/install/ArtifactPanel.vue'
 import { useClusterInstallPlan } from '@/composables/useClusterInstallPlan'
 import { KUBE_VERSIONS, OS_OPTIONS } from '@/utils/clusterInstall/kubespray'
+import { getAccessToken } from '@/auth/oauth'
 
 const router = useRouter()
 const { form, issues, errors, warnings, artifacts } = useClusterInstallPlan()
+const loggedIn = Boolean(getAccessToken())
 
 const STEPS = ['基础', '节点', '网络与入口', '介质'] as const
 const step = ref(0)
@@ -64,8 +69,8 @@ function generateArtifacts(): void {
 
 <template>
   <div class="install">
-    <PageHeader title="新建集群" description="生成 kubespray 部署包，执行由运维在节点侧完成。">
-      <el-button @click="router.push('/clusters')">返回集群列表</el-button>
+    <PageHeader title="新建集群" description="在浏览器本地生成 kubespray 部署包 —— 不登录、不上传、不发请求；执行由运维在节点侧完成。">
+      <el-button v-if="loggedIn" @click="router.push('/clusters')">返回集群列表</el-button>
     </PageHeader>
 
     <el-steps :active="step" finish-status="success" align-center class="install__steps">
