@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "build-only": "vite build",
     "type-check": "vue-tsc --build",
-    "test:install-plan": "node --experimental-strip-types --test src/utils/clusterInstall/__tests__/validate.test.ts src/utils/clusterInstall/__tests__/generate.test.ts src/utils/clusterInstall/__tests__/importNodes.test.ts"
+    "test:install-plan": "node --experimental-strip-types --test src/utils/clusterInstall/__tests__/validate.test.ts src/utils/clusterInstall/__tests__/generate.test.ts src/utils/clusterInstall/__tests__/importNodes.test.ts src/utils/clusterInstall/__tests__/roles.test.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "3.1.3",

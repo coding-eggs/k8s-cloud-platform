@@ -104,3 +104,8 @@ test('跳转机格式：[user@]host[:port]，端口要合法', () => {
   assert.ok(errors(base({ jumpHost: 'bad host' })).some((i) => i.field === 'jumpHost'))
   assert.ok(errors(base({ jumpHost: '10.0.0.5:70000' })).some((i) => i.field === 'jumpHost'))
 })
+
+test('节点没有任何角色：报错（否则会成为 hosts 里的孤儿主机）', () => {
+  const f = base({ nodes: [node('cp-1', '10.0.0.11', ['control-plane', 'worker']), node('x-1', '10.0.0.21', [])] })
+  assert.ok(errors(f).some((i) => i.field === 'nodes' && i.message.includes('至少需要一个角色')))
+})

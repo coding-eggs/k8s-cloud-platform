@@ -8,6 +8,7 @@ import { ElMessage } from 'element-plus'
 import { Delete, Plus, Upload } from '@element-plus/icons-vue'
 import type { EtcdMode, InstallNode, NodeRole } from '@/utils/clusterInstall/types'
 import { DEFAULT_OS, OS_OPTIONS } from '@/utils/clusterInstall/kubespray'
+import { cleanupEtcdRoles } from '@/utils/clusterInstall/roles'
 import NodeImportDialog from './NodeImportDialog.vue'
 
 const rows = defineModel<InstallNode[]>({ required: true, default: () => [] })
@@ -52,21 +53,16 @@ function removeNode(index: number): void {
 }
 
 function onImport(nodes: InstallNode[], mode: 'append' | 'replace'): void {
-  let droppedEtcd = 0
-  const incoming = nodes.map((n) => {
-    const roles: NodeRole[] =
-      props.etcdMode === 'dedicated'
-        ? [...n.roles]
-        : n.roles.filter((r) => r !== 'etcd')
-    if (roles.length !== n.roles.length) droppedEtcd += 1
-    return { ...n, roles: roles.length ? roles : (['worker'] as NodeRole[]) }
-  })
+  const cleaned = cleanupEtcdRoles(nodes, props.etcdMode === 'dedicated')
+  const incoming = cleaned.nodes.map((n) => ({ ...n, roles: [...n.roles] }))
   rows.value = mode === 'replace' ? incoming : [...rows.value, ...incoming]
   showImport.value = false
-  if (droppedEtcd > 0) {
+  if (cleaned.dropped > 0) {
     ElMessage.warning(
-      `${droppedEtcd} 个节点带 etcd 角色，但当前 etcd 模式不由节点承载 etcd，已按 worker 导入；要专用 etcd 请先把模式切成「专用 etcd」`,
+      `${cleaned.dropped} 行只有 etcd 角色，当前模式不由节点承载 etcd，已跳过（要专用 etcd 请先把模式切过去）`,
     )
+  } else if (cleaned.stripped > 0) {
+    ElMessage.info(`${cleaned.stripped} 行的 etcd 角色已忽略：当前不是「专用 etcd」模式`)
   }
 }
 </script>

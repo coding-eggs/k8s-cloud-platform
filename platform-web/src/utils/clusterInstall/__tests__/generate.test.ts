@@ -77,10 +77,16 @@ test('专用 etcd：独立组、且不进 k8s_cluster', () => {
   assert.match(file(f, 'group_vars/all/etcd.yml'), /etcd_deployment_type: "host"/)
 })
 
-test('外部 etcd：不生成 etcd 组，写 endpoints', () => {
+test('外部 etcd：空的 etcd 组 + endpoints + 自备证书（cert_management: none）', () => {
   const f = base({ etcdMode: 'external', externalEtcd: 'https://10.0.0.31:2379,https://10.0.0.32:2379' })
-  assert.doesNotMatch(file(f, 'hosts.yaml'), /^    etcd:/m)
-  assert.match(file(f, 'group_vars/all/etcd.yml'), /etcd_access_addresses: "https:\/\/10\.0\.0\.31:2379,https:\/\/10\.0\.0\.32:2379"/)
+  // 组键必须存在但为空：kubespray 多处直接读 groups['etcd']，且为空才表示不在节点上装 etcd
+  assert.match(file(f, 'hosts.yaml'), /^ {4}etcd:\n {6}hosts:$/m)
+  const etcdYml = file(f, 'group_vars/all/etcd.yml')
+  assert.match(etcdYml, /etcd_access_addresses: "https:\/\/10\.0\.0\.31:2379,https:\/\/10\.0\.0\.32:2379"/)
+  assert.match(etcdYml, /cert_management: "none"/)
+  const readme = file(f, 'README.md')
+  assert.match(readme, /自备证书/)
+  assert.match(readme, /\/etc\/ssl\/etcd\/ssl\/ca\.pem/)
 })
 
 test('离线：生成 offline.yml（四个 URL 覆盖 + github 镜像仓）；在线不生成', () => {

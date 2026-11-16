@@ -81,6 +81,8 @@ export interface KubesprayVars {
 
   etcd_deployment_type?: 'host'
   etcd_access_addresses?: string
+  /** 外部 etcd：不让 kubespray 生成 etcd 证书（它没有「跳过 etcd」开关，只能自备证书） */
+  cert_management?: 'none'
 
   /** SSH 密码认证（控制机需装 sshpass；明文，README 有权限提示） */
   ansible_password?: string

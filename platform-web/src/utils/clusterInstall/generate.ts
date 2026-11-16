@@ -32,7 +32,13 @@ function inventoryDoc(form: InstallForm): string {
   }
   group('kube_control_plane', cps)
   group('kube_node', workers)
-  if (etcd.length > 0) group('etcd', etcd)
+  if (form.etcdMode === 'external') {
+    // 外部 etcd：给一个**空的 etcd 组** —— kubespray 多处直接读 groups['etcd']，
+    // 组键不存在会报 undefined；空组表示「不由 kubespray 装 etcd」。
+    lines.push('    etcd:', '      hosts:')
+  } else if (etcd.length > 0) {
+    group('etcd', etcd)
+  }
   lines.push('    k8s_cluster:', '      children:', '        kube_control_plane:', '        kube_node:')
   return lines.join('\n') + '\n'
 }
@@ -135,8 +141,11 @@ function etcdVars(form: InstallForm): KubesprayVars | null {
   if (form.etcdMode === 'stacked') return null
   if (form.etcdMode === 'dedicated') return { etcd_deployment_type: 'host' }
   return {
+    // kubespray v2.32 的 etcd_deployment_type 只接受 host / docker / kubeadm（validate_inventory 会挡），
+    // 「外部 etcd」靠三件事成立：etcd 组为空（不装 etcd）+ etcd_access_addresses 指向外部 + 自备证书
     etcd_deployment_type: 'host',
     etcd_access_addresses: form.externalEtcd.trim(),
+    cert_management: 'none',
   }
 }
 
@@ -226,7 +235,19 @@ function readme(form: InstallForm): string {
   if (form.etcdMode === 'external') {
     lines.push(
       '',
-      '> ⚠️ 外部 etcd 为实验特性：kubespray 目前没有干净的「跳过 etcd 安装」开关，装之前请确认它不会在控制面上再装一套 etcd。',
+      '## 外部 etcd：自备证书',
+      '',
+      '本包的 `etcd` 组是空的（kubespray 不会在节点上装 etcd），kubeadm 直接连 `etcd_access_addresses`。',
+      '但 kubeadm 用的是 `etcd_cert_dir`（默认 `/etc/ssl/etcd/ssl/`）里的证书，且本包已设 `cert_management: none`，',
+      'kubespray **不会**替你生成。跑 playbook 前请在**每台控制面**放好：',
+      '',
+      '```',
+      '/etc/ssl/etcd/ssl/ca.pem                    # 外部 etcd 的 CA',
+      '/etc/ssl/etcd/ssl/node-<hostname>.pem       # 客户端证书（hostname 用 inventory 里的名字）',
+      '/etc/ssl/etcd/ssl/node-<hostname>-key.pem',
+      '```',
+      '',
+      '否则「把 etcd CA 加进系统信任库」那一步会因为找不到 `ca.pem` 直接失败。',
     )
   }
   return lines.join('\n') + '\n'

@@ -15,7 +15,7 @@ import TopologyPreview from '@/components/cluster/install/TopologyPreview.vue'
 import ArtifactPanel from '@/components/cluster/install/ArtifactPanel.vue'
 import { useClusterInstallPlan } from '@/composables/useClusterInstallPlan'
 import { KUBE_VERSIONS } from '@/utils/clusterInstall/kubespray'
-import type { NodeRole } from '@/utils/clusterInstall/types'
+import { cleanupEtcdRoles } from '@/utils/clusterInstall/roles'
 import { getAccessToken } from '@/auth/oauth'
 
 const router = useRouter()
@@ -27,21 +27,24 @@ const loggedIn = Boolean(getAccessToken())
 watch(
   () => form.etcdMode,
   (mode) => {
-    if (mode === 'dedicated') return
-    let changed = false
-    form.nodes = form.nodes.map((n) => {
-      if (!n.roles.includes('etcd')) return n
-      changed = true
-      const roles: NodeRole[] = n.roles.filter((r) => r !== 'etcd')
-      if (roles.length === 0) roles.push('worker')
-      return { ...n, roles }
-    })
-    if (changed) ElMessage.info('已清掉节点上的 etcd 角色：当前 etcd 模式不由节点承载 etcd')
+    const { nodes, stripped, dropped } = cleanupEtcdRoles(form.nodes, mode === 'dedicated')
+    if (stripped === 0 && dropped === 0) return
+    form.nodes = nodes
+    const parts: string[] = []
+    if (stripped > 0) parts.push(`${stripped} 个节点的 etcd 角色已清掉`)
+    if (dropped > 0) parts.push(`${dropped} 台只承载 etcd 的节点已移除`)
+    ElMessage.info(`${parts.join('；')}（当前 etcd 模式不由节点承载 etcd）`)
   },
 )
 
 const STEPS = ['基础', '节点', '网络与入口', '介质'] as const
 const step = ref(0)
+const formRef = ref<HTMLElement | null>(null)
+
+// 换步回到表单顶部：第 3 步点「下一步」时人还在第 1 步的位置，会以为没反应
+watch(step, () => {
+  formRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+})
 const generated = ref(false)
 const issuesRef = ref<HTMLElement | null>(null)
 const artifactRef = ref<HTMLElement | null>(null)
@@ -97,7 +100,7 @@ function generateArtifacts(): void {
     </el-steps>
 
     <div class="install__grid">
-      <section class="install__form">
+      <section ref="formRef" class="install__form">
         <el-form label-width="130px" label-position="right">
           <!-- 1. 基础 -->
           <template v-if="step === 0">
@@ -354,13 +357,16 @@ function generateArtifacts(): void {
 <style scoped>
 .install {
   padding: 0 2px 24px;
+  /* 超宽屏别把表单拉到 1800px 还让右栏贴着边 */
+  max-width: 1720px;
+  margin: 0 auto;
 }
 .install__steps {
   margin: 4px 0 18px;
 }
 .install__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 420px;
+  grid-template-columns: minmax(0, 1fr) clamp(380px, 30%, 560px);
   gap: 20px;
   align-items: start;
 }

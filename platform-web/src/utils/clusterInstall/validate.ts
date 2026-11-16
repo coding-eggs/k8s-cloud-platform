@@ -96,6 +96,8 @@ export function validate(form: InstallForm): Issue[] {
       err('nodes', `节点 ${n.hostname || '(未命名)'} 的 SSH 端口不合法`)
     }
     if (!n.os) err('nodes', `节点 ${n.hostname || '(未命名)'} 的操作系统必填`)
+    // 没有角色的节点会落进 all.hosts 却不进任何组 —— kubespray 里就是一台孤儿主机
+    if (n.roles.length === 0) err('nodes', `节点 ${n.hostname || '(未命名)'} 至少需要一个角色`)
   }
 
   // ---- etcd ----
@@ -115,7 +117,10 @@ export function validate(form: InstallForm): Issue[] {
       const bad = endpoints.find((e) => !/^https?:\/\/[^/\s]+:\d+$/.test(e))
       if (bad) err('etcdMode', `外部 etcd endpoint 格式不正确：${bad}`)
     }
-    warn('etcdMode', '外部 etcd 为实验特性：kubespray 没有干净的跳过开关，需现场自验')
+    warn(
+      'etcdMode',
+      '外部 etcd：节点上不会装 etcd，但每台控制面都要自备 /etc/ssl/etcd/ssl 下的 ca.pem 与客户端证书（本包已设 cert_management: none）',
+    )
   }
   if (form.etcdMode !== 'dedicated' && etcdNodes.length > 0) {
     warn('etcdMode', '当前 etcd 模式不会使用勾选的 etcd 角色')

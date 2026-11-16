@@ -1,5 +1,10 @@
 <script setup lang="ts">
-/** 产物面板：文件列表 + 只读预览 + 单文件下载。YAML 走 YamlBlock（带行号与复制）。 */
+/**
+ * 产物面板：文件列表 + 只读预览 + 单文件下载。YAML 走 YamlBlock（带行号与复制）。
+ *
+ * <p>列表放在预览**上方**（横向 chip）而不是左侧竖排：右侧汇总列只有 400~560px 宽，
+ * 竖排 200px 的列表会把预览挤到 200px 以内，YAML 基本没法看。
+ */
 import { computed, ref, watch } from 'vue'
 import YamlBlock from '@/components/YamlBlock.vue'
 import type { InstallFile } from '@/utils/clusterInstall/types'
@@ -39,7 +44,8 @@ function download(file: InstallFile): void {
   document.body.appendChild(a)
   a.click()
   a.remove()
-  URL.revokeObjectURL(url)
+  // 立刻 revoke 会让部分浏览器拿不到内容，挪到下一轮事件循环
+  setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 </script>
 
@@ -54,10 +60,10 @@ function download(file: InstallFile): void {
           :key="f.path"
           type="button"
           :class="['artifact__item', { 'artifact__item--active': i === index }]"
+          :title="f.path"
           @click="index = i"
         >
-          <span class="artifact__name">{{ baseName(f.path) }}</span>
-          <span class="artifact__path">{{ dirName(f.path) }}</span>
+          {{ baseName(f.path) }}
         </button>
       </div>
 
@@ -66,7 +72,7 @@ function download(file: InstallFile): void {
           <code class="artifact__full-path">{{ selected?.path }}</code>
           <el-button size="small" @click="selected && download(selected)">下载</el-button>
         </div>
-        <YamlBlock v-if="selected && isYaml" :yaml="selected.content" max-height="52vh" />
+        <YamlBlock v-if="selected && isYaml" :yaml="selected.content" max-height="46vh" />
         <pre v-else-if="selected" class="artifact__text">{{ selected.content }}</pre>
       </div>
     </template>
@@ -76,7 +82,8 @@ function download(file: InstallFile): void {
 <style scoped>
 .artifact {
   display: flex;
-  gap: 12px;
+  flex-direction: column;
+  gap: 10px;
   min-height: 180px;
 }
 .artifact__empty {
@@ -89,45 +96,37 @@ function download(file: InstallFile): void {
   border: 1px dashed var(--el-border-color);
   border-radius: 8px;
 }
+/* 文件 chip：横排、可换行，宽度不够也不会把预览挤掉 */
 .artifact__list {
-  width: 200px;
-  flex-shrink: 0;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 56vh;
-  overflow: auto;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 .artifact__item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 1px;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 999px;
   background: transparent;
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  line-height: 1.6;
   cursor: pointer;
-  text-align: left;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .artifact__item:hover {
-  background: var(--el-fill-color-light);
+  border-color: var(--el-color-primary);
+  color: var(--el-color-primary);
 }
 .artifact__item--active {
-  background: var(--el-fill-color);
-}
-.artifact__name {
-  font-size: 12.5px;
-  color: var(--el-text-color-primary);
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
   font-weight: 600;
 }
-.artifact__path {
-  font-size: 10.5px;
-  color: var(--el-text-color-secondary);
-  word-break: break-all;
-}
 .artifact__body {
-  flex: 1;
   min-width: 0;
 }
 .artifact__bar {
@@ -138,6 +137,8 @@ function download(file: InstallFile): void {
   margin-bottom: 8px;
 }
 .artifact__full-path {
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   color: var(--el-text-color-secondary);
   overflow: hidden;
@@ -146,7 +147,7 @@ function download(file: InstallFile): void {
 }
 .artifact__text {
   margin: 0;
-  max-height: 52vh;
+  max-height: 46vh;
   overflow: auto;
   padding: 10px;
   border-radius: 6px;

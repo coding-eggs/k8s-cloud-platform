@@ -43,7 +43,7 @@
 | K8s 版本 | 由 kubespray v2.32.0 的 checksums 生成，不手写范围 | 该版本默认（1.36） | `kube_version` |
 | 容器运行时 | containerd / CRI-O | containerd | `container_manager` |
 | 控制面 | 1 / 3 / 5 台，节点逐行勾选 | 3 | inventory `kube_control_plane` |
-| etcd | 同机（控制面即 etcd）/ 专用 3 或 5 台 / 外部托管（填 endpoints） | 同机 | `etcd` 组 + `etcd_deployment_type` |
+| etcd | 同机（控制面即 etcd）/ 专用 3 或 5 台 / 外部托管（填 endpoints，**自备证书**） | 同机 | `etcd` 组 + `etcd_deployment_type` + `etcd_access_addresses` + `cert_management: none`（仅外部） |
 | API 入口 | kube-vip ARP / kube-vip BGP / 外部 LB / 单 master 直连 | kube-vip ARP | `kube_vip_*`、`loadbalancer_apiserver` |
 | CNI | 平台管理（不装）/ kubespray 装 Calico / Cilium / flannel | 平台管理 | `kube_network_plugin` |
 | 网络 | Pod CIDR、Service CIDR、clusterDomain、kube-proxy 模式、strictARP、节点网段（可选） | `10.233.64.0/18`、`10.233.0.0/18`、`cluster.local`、`ipvs` | `kube_pods_subnet`、`kube_service_addresses`、`cluster_name`、`kube_proxy_mode`、`kube_proxy_strict_arp` |
@@ -282,3 +282,40 @@ README 同时链到 `docs/development/cluster-prerequisites.md`，提醒纳管�
   从专用切走时自动清掉节点上的 etcd 角色（只挂 etcd 的节点回落成 worker）并提示一次，
   避免留下看不见、只能靠校验错误提示的残留状态。导入时若带 etcd 角色而当前不是专用模式，同样按 worker 导入并提示。
 - 窄屏（≤1100px）由两列改为单列上下叠放，右侧汇总不再把表单挤扁。
+
+### 11.7 复核修正（2026-11-17）
+
+用户指出右侧拓扑/产物被挤扁，要求整体复核。逐项核对 kubespray v2.32.0 源码后改了这些：
+
+**布局**
+
+- 产物面板从「左侧 200px 竖排列表 + 右侧预览」改成**横向文件 chip + 全宽预览**：右栏只有 400~560px，
+  竖排列表会把 YAML 预览挤到 170px。实测 2048 宽下预览区从 170px 变成 481px。
+- 右栏宽度 `420px` → `clamp(380px, 30%, 560px)`；页面 `max-width: 1720px`，超宽屏不再把表单拉到 1800px 贴边。
+- 换步时滚回表单顶部（原来点「下一步」人还停在上一屏，以为没反应）。
+
+**外部 etcd（原实现会跑不起来）**
+
+对照 `roles/validate_inventory/tasks/main.yml`：`etcd_deployment_type` 只接受 `host / docker / kubeadm`，
+所以「外部 etcd」不能靠这个变量；实际做法是三件事：
+
+1. `hosts.yaml` 里给一个**空的 etcd 组**（组键必须存在，多处代码直接读 `groups['etcd']`；空组表示不装 etcd）；
+2. `etcd_access_addresses` 指向外部端点（kubeadm 模板在 `etcd_deployment_type != kubeadm` 时一律走 external 分支）；
+3. `cert_management: none` + README 说明「每台控制面自备 `/etc/ssl/etcd/ssl/{ca.pem,node-<host>.pem,node-<host>-key.pem}`」——
+   否则 etcd 角色里的「把 etcd CA 加进系统信任库」会因找不到 ca.pem 直接失败。
+
+**角色清理（原来会把 etcd 节点静默变成 worker）**
+
+切走「专用 etcd」时，只做 etcd 的节点此前会回落成 worker，等于凭空多出几台工作节点。
+现在抽成纯函数 `utils/clusterInstall/roles.ts`：兼角色的只去掉 etcd；**只做 etcd 的整行移除**并提示数量；
+导入时同理跳过并提示。
+
+**其它**
+
+- 新增校验「节点至少需要一个角色」：无角色的节点会进 `all.hosts` 却不进任何组，成为孤儿主机。
+- 核对过无问题的：`kube_version` 裸版本、`kube_proxy_mode`（ipvs/iptables/nftables）、`kube_network_plugin`
+  （cni/calico/cilium/flannel）、kube-vip 全套变量与 `loadbalancer_apiserver`（官方文档同样要求）、
+  BGP peers 格式 `ip:as::false`、`cluster_name` 取 DNS 域名（与 kubespray 样例 `dns_domain: {{ cluster_name }}` 一致）。
+- 已知缺口（未做）：内网 registry 若是 HTTP 或自签证书，需要 `containerd_insecure_registries` /
+  预置 CA，向导目前不生成。
+- 单测 **44/44**（新增：外部 etcd 的空组/cert_management/README、角色清理 3 条、无角色报错）。
