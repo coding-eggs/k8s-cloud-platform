@@ -26,7 +26,7 @@ function renderEntry(key: string, value: YamlValue, indent: number): string[] {
   return [`${pad}${key}: ${scalar(value)}`]
 }
 
-export function yamlDoc(doc: YamlDoc): string {
+export function yamlDoc<T extends object>(doc: T): string {
   const lines: string[] = []
   for (const [k, v] of Object.entries(doc)) {
     if (v === undefined) continue
