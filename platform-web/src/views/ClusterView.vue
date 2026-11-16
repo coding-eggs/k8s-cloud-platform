@@ -243,7 +243,8 @@ usePaletteAction({
 <template>
   <div>
     <div class="toolbar">
-      <el-button type="primary" @click="openCreate">新增集群</el-button>
+      <el-button type="primary" @click="openCreate">接入集群</el-button>
+      <el-button type="primary" plain @click="router.push('/clusters/new')">新建集群</el-button>
       <el-button @click="load">刷新</el-button>
     </div>
 
@@ -303,7 +304,7 @@ usePaletteAction({
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑集群' : '新增集群'" width="680px">
+    <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑集群' : '接入集群'" width="680px">
       <el-form label-width="100px">
         <el-divider content-position="left">基本信息</el-divider>
         <el-form-item label="集群名称" required>
