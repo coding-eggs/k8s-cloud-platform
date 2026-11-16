@@ -176,3 +176,18 @@ README 同时链到 `docs/development/cluster-prerequisites.md`，提醒纳管�
 - 是否保留 localStorage 草稿
 - 产物是否需要一次性下载（zip）——v1 不做
 - 拓扑图的节点分组与连线细节
+
+## 11. 实施验收记录（2026-11-16）
+
+- 单测：17/17（`validate` 10 + `generate` 7）
+- 构建：`npm run build` 通过；无新增依赖
+- 四组样例已生成并人工核对（工作区 scratch，不提交）：
+  1. 单 master 兼 worker + 同机 etcd + 直连 → 4 个文件
+  2. 3 master + 同机 etcd + kube-vip ARP → 4 个文件
+  3. 3 master + 专用 etcd + 外部 LB → 5 个文件
+  4. 3 master + kube-vip ARP + 外部 etcd（实验）+ 离线 → 6 个文件（含 warning）
+- **样例 4 修正**：3 master 必须有 API 入口（§6），原 §9 的写法缺这一项，补了 kube-vip ARP。
+- **未执行 `ansible-playbook --syntax-check`**：本机没有 kubespray 检出，也没有 ansible；
+  且 syntax-check 不校验 `group_vars` 键名。键名正确性由 `KubesprayVars` 类型约束 + 单测保证，
+  仍需在有 ansible 的控制机上补跑一次真校验。
+
