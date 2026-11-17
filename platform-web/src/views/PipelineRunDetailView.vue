@@ -249,11 +249,32 @@ function sourceHintFor(id: string): { text: string; title: string } | undefined 
   const s = sourcesById.value[id]
   if (!s?.sha) return undefined
   const short = s.shortSha ?? s.sha.slice(0, 7)
+  const d = diffs.value[id]
+  const subject = subjectOf(s)
   return {
-    // 提交标题是「查看变更」那次才取的 —— 没有就只显示短 sha，不占位
-    text: s.subject ? `${short} · ${s.subject}` : short,
-    title: [s.repo, s.sha, s.subject, s.author, s.committedAt].filter(Boolean).join('\n'),
+    // 提交标题要拿过一次清单才有（触发时只 ls-remote，不下载提交对象）—— 没有就只显示短 sha
+    text: subject ? `${short} · ${subject}` : short,
+    title: [s.repo, s.sha, subject, d?.author ?? s.author, d?.committedAt ?? s.committedAt]
+      .filter(Boolean).join('\n'),
   }
+}
+
+/**
+ * 提交标题：**清单取回来时才有**。
+ *
+ * <p>为什么触发时不落库：那一档只做 ls-remote（一行一个 ref、不下载对象），要拿标题就得
+ * depth-1 取整棵树 —— 触发是运行的关键路径，为一个展示用的标题多下一遍仓库不值得。
+ * 点过「查看变更」之后这个值就有了，卡片与那一行会一起补上。
+ */
+function subjectOf(s: PipelineSourceRef): string | null {
+  return diffs.value[s.nodeId]?.subject ?? s.subject ?? null
+}
+
+/** 标题的悬浮提示里把作者与时间一并给出（表格里放不下） */
+function subjectTitle(s: PipelineSourceRef): string {
+  const d = diffs.value[s.nodeId]
+  return [d?.subject ?? s.subject, d?.author ?? s.author, d?.committedAt ?? s.committedAt]
+    .filter(Boolean).join('\n')
 }
 
 /** 这次运行涉及的所有 git 节点（老运行没有 sourceJson 就是空） */
@@ -876,13 +897,16 @@ function jumpToLogBottom(): void {
             <span class="src-ref">{{ refText(c.ref) }}</span>
             <code v-if="c.ref.sha" class="src-sha" :title="c.ref.sha">{{ c.ref.shortSha }}</code>
             <span v-else class="src-bad">{{ c.ref.error || '未记录提交' }}</span>
-            <span v-if="c.ref.subject" class="src-subject" :title="c.ref.subject">{{ c.ref.subject }}</span>
+            <span v-if="subjectOf(c.ref)" class="src-subject" :title="subjectTitle(c.ref)">
+              {{ subjectOf(c.ref) }}
+            </span>
             <span class="src-base">{{ baseText(c.ref) }}</span>
             <el-button
               v-if="c.ref.sha && canDiff(c.ref) && !c.diff"
               link
               type="primary"
               class="src-diff"
+              title="取提交信息与文件清单（要浅取一次仓库）"
               :loading="isDiffLoading(c.ref.nodeId)"
               @click="loadDiff(c.ref)"
             >
