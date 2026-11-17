@@ -58,7 +58,7 @@ class MilvusMiddlewareAdapterTest {
     }
 
     @Test
-    void standaloneBuildsStandaloneModeWithLocalVolume() {
+    void standaloneBuildsStandaloneModeWithoutPersistence() {
         var res = adapter.buildCreate(req("STANDALONE")).get(0).resource();
         Map<String, Object> spec = spec(res);
 
@@ -69,10 +69,9 @@ class MilvusMiddlewareAdapterTest {
         assertThat(map(map(spec.get("components")).get("resources")).get("limits"))
                 .isEqualTo(Map.of("cpu", "2", "memory", "4Gi"));
 
-        Map<String, Object> pvc = map(map(spec.get("persistence")).get("persistentVolumeClaim"));
-        assertThat(pvc.get("labels")).isEqualTo(Map.of("platform.coding/middleware-instance", "mwi_1"));
-        assertThat(map(map(pvc.get("spec")).get("resources")).get("requests"))
-                .isEqualTo(Map.of("storage", "10Gi"));
+        // v1beta1 的 Milvus CRD 没有 spec.persistence（只有 v1alpha1 有）：写了会被 API server 拒，
+        // 报 "spec.persistence: field not declared in schema"。数据在对象存储，单节点不需要本地盘。
+        assertThat(spec).doesNotContainKey("persistence");
     }
 
     @Test

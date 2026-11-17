@@ -125,9 +125,10 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
         Map<String, Object> spec = new LinkedHashMap<>();
         spec.put("mode", cluster ? "cluster" : "standalone");
         spec.put("components", components);
-        if (!cluster) {
-            spec.put("persistence", persistenceOf(req));
-        }
+        // ⚠️ 不要写 spec.persistence：v1beta1 的 Milvus CRD 没有这个字段（只有 v1alpha1 有，
+        // 但 v1beta1 是 storage version，写进去 API server 直接按 schema 拒：
+        // "spec.persistence: field not declared in schema"）。单节点也不需要本地盘 ——
+        // 2.6 的 WAL/数据写对象存储，线上健康实例的 stored spec 里同样没有 persistence。
         spec.put("dependencies", dependenciesOf(req, cluster));
         // spec.config 直接并进 milvus.yaml：minio 是顶层键，**不要**再包一层 milvus
         Map<String, Object> config = new LinkedHashMap<>();
@@ -284,25 +285,6 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
             throw new CloudPlatformException(EnumResponseType.ERROR, "etcd 节点数只能是 1~3");
         }
         return n;
-    }
-
-    private static Map<String, Object> persistenceOf(MiddlewareCreateRequestDTO req) {
-        Map<String, Object> claimSpec = new LinkedHashMap<>();
-        claimSpec.put("accessModes", List.of("ReadWriteOnce"));
-        claimSpec.put("resources", Map.of("requests", Map.of("storage",
-                isBlank(req.getLocalStorageSize()) ? "10Gi" : req.getLocalStorageSize())));
-        if (!isBlank(req.getStorageClass())) {
-            claimSpec.put("storageClassName", req.getStorageClass());
-        }
-        Map<String, Object> claim = new LinkedHashMap<>();
-        // 平台标签：删实例（keepPvc=false）时按它回收这块 PVC —— operator 建的 PVC 没有 OwnerReference
-        claim.put("labels", Map.of(INSTANCE_LABEL, instanceLabel(req)));
-        claim.put("spec", claimSpec);
-
-        Map<String, Object> persistence = new LinkedHashMap<>();
-        persistence.put("enabled", true);
-        persistence.put("persistentVolumeClaim", claim);
-        return persistence;
     }
 
     private static Map<String, Object> dependenciesOf(MiddlewareCreateRequestDTO req, boolean cluster) {

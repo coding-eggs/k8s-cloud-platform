@@ -21,8 +21,8 @@
 
 - **实例名**：`mw-milvus-<8 位随机>`，即 `Milvus` CR 名；Service 名是 `<实例名>-milvus`；
 - **受管标签**：CR 带 `platform.coding/managed-by=middleware` + `platform.coding/middleware-instance=<id>`；
-- **PVC 标签**：单节点本地盘（`<实例名>-data`）与 etcd PVC 都带同一个 `platform.coding/middleware-instance`，
-  删实例且 `keepPvc=false` 时平台按它回收；
+- **PVC 标签**：etcd PVC 带 `platform.coding/middleware-instance`，
+  删实例且 `keepPvc=false` 时平台按它回收（单节点**没有**本地数据盘 PVC，见 §4.6）；
 - **资源**：Milvus 组件与 etcd **必须**写 requests + limits（租户命名空间有 quota）；
 - **租户 RBAC**：模板需要 `milvus.io`（`V2026_10_25_8`）+ **重下发全部模板**；
 - **状态**：Pod 选择器 `app.kubernetes.io/instance=<实例名>,app.kubernetes.io/name=milvus`。
@@ -31,7 +31,7 @@
 
 | 形态 | CR 要点 |
 |---|---|
-| `STANDALONE` | `mode: standalone`；`persistence` 开 PVC（本地 WAL/临时盘）；WAL 用 rocksmq |
+| `STANDALONE` | `mode: standalone`；**不写 `spec.persistence`**（v1beta1 CRD 没这个字段，见 §4.6）；数据与 WAL 都落对象存储 |
 | `CLUSTER` | `mode: cluster` + `dependencies.msgStreamType: woodpecker`；`components.queryNode.replicas` 由表单控制，其余组件固定 1；不配 persistence（woodpecker 写对象存储） |
 
 ## 4. 坑（实施与真跑时核对）
@@ -42,7 +42,12 @@
    **不要**包一层 `config.milvus.*`（operator 直接把 `spec.config` 合并进 milvus.yaml）；
 4. **SeaweedFS 用路径风格**：`config.minio.useVirtualHost=false`；
 5. **etcd chart 默认不写 resources**：平台必须补，否则租户 quota 直接拒；
-6. **单节点本地盘 PVC 没有 OwnerReference**：删 CR 不会带走它，必须靠标签回收；
+6. **`spec.persistence` 在 v1beta1 里不存在（2026-11-17 真集群确认）**：`milvuses.milvus.io` 的
+   v1alpha1 有 `persistence`，但 storage version 是 v1beta1，它的 `spec` 只有
+   `components / config / dependencies / hookConfig / mode`。写 `spec.persistence` 会被 API server
+   按 schema 拒绝：`failed to create typed patch object … spec.persistence: field not declared in schema`。
+   单节点也不需要本地盘 —— 2.6 的数据/WAL 都写对象存储，线上健康实例的 stored spec 里同样没有该字段。
+   表单里的「本地数据盘」已同步去掉；要本地盘只能自己建 PVC 后用 `components.volumes` + `volumeMounts` 挂；
 7. **鉴权（2026-10-26 新增）**：勾了「开启鉴权」才写 ——
    - `spec.config.common.security.authorizationEnabled: true`（非敏感，直接进 milvus.yaml）；
    - root 口令**不进 CR**：`spec.components.env` 里放 `COMMON_SECURITY_DEFAULTROOTPASSWORD`，

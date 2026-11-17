@@ -53,7 +53,6 @@ const createFields = computed(() => {
   const all = createItem.value ? (MIDDLEWARE_FIELDS[createItem.value.code] ?? []) : []
   if (createItem.value?.code !== 'milvus') return all
   return all.filter((f) => {
-    if (f.key === 'localStorageSize') return createMode.value === 'STANDALONE'
     if (f.key === 'storageSize') return form.value.objectStorageType !== 'CUSTOM'
     return true
   })

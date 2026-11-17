@@ -123,10 +123,6 @@ export const MIDDLEWARE_FIELDS: Record<string, MiddlewareField[]> = {
     { key: 'memoryRequest', label: '内存请求', type: 'number', unit: 'size', unitDefault: 'Gi', default: 2 },
     { key: 'memoryLimit', label: '内存上限', type: 'number', unit: 'size', unitDefault: 'Gi', default: 4 },
     {
-      key: 'localStorageSize', label: '本地数据盘', type: 'number', unit: 'size', unitDefault: 'Gi',
-      default: 10, min: 1, help: '单节点形态的 WAL/临时目录；集群形态不使用',
-    },
-    {
       key: 'storageSize', label: '对象存储容量', type: 'number', unit: 'size', unitDefault: 'Gi',
       default: 20, min: 1, help: '仅「平台对象存储」生效（作为桶配额）；自带 S3 时忽略',
     },
