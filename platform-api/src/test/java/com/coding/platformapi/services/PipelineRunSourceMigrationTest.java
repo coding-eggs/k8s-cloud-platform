@@ -52,4 +52,30 @@ class PipelineRunSourceMigrationTest {
         assertThat(SQL).contains("WHERE rp.permission_id = 'perm_pipeline_run'");
         assertThat(SQL).contains("'perm_pipeline_runpreview'");
     }
+
+    // ---- V2026_11_18_2：历史运行的变更清单端点 ----
+
+    private static final String DIFF_SQL = readFile("V2026_11_18_2__pipeline_run_diff.sql");
+
+    private static String readFile(String name) {
+        try {
+            return Files.readString(Path.of("../platform-data/src/main/resources/db/migration/" + name));
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    @Test
+    void theHistoricalDiffEndpointHasAPermissionRowToo() {
+        // 新端点没有权限行 = PermissionCrossCheckRunner 拒启（fail-closed）
+        assertThat(DIFF_SQL).contains("'/pipeline/run/diff'");
+        // 能运行的人才能看它跑了哪些文件 —— 与预览同一个码
+        assertThat(DIFF_SQL).contains("'tenant:pipeline:run'");
+        assertThat(DIFF_SQL).contains("'perm_pipeline_rundiff'");
+    }
+
+    @Test
+    void theDiffRowIsBoundToWhoeverCanTriggerRuns() {
+        assertThat(DIFF_SQL).contains("WHERE rp.permission_id = 'perm_pipeline_run'");
+    }
 }

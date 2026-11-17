@@ -2708,10 +2708,37 @@ export interface PipelineSourceRef {
   baseKind?: string | null
   /** 基线来自哪次运行（last-success 时有） */
   baseRunName?: string | null
+  /**
+   * 变更文件清单 —— **只有 `withDiff` 的请求才有**（拉整棵快照，慢）。
+   * 触发时落库的 `source_json` 里没有这个字段，历史运行要看时走 `/pipeline/run/diff` 现算。
+   */
+  files?: PipelineFileChange[] | null
+  /** 变更文件**总数**（可能大于 `files.length`） */
+  fileCount?: number
+  /** 全部变更的新增行数 */
+  additions?: number
+  /** 全部变更的删除行数 */
+  deletions?: number
+  /** 文件太多，`files` 只给了前 N 个 */
+  truncated?: boolean
   /** sha 拿到了、但提交标题/基线不可用时的原因 */
   warning?: string | null
   /** 这条节点没解析出来的原因 */
   error?: string | null
+}
+
+/** 一个变更文件（`git diff --name-status` 的等价物 + 增删行数）。 */
+export interface PipelineFileChange {
+  /** 文件路径（删除的是被删的那个路径） */
+  path: string
+  /** A 新增 / M 修改 / D 删除 / R 改名 / C 复制 */
+  status: string
+  /** 改名/复制时的原路径 */
+  oldPath?: string | null
+  additions: number
+  deletions: number
+  /** 二进制文件：数不出行数，界面显示「二进制」 */
+  binary: boolean
 }
 
 /** 「这个集群能不能跑 CI」—— Tekton 与可动态供应的 StorageClass 缺一不可（spec §9）。 */export interface PipelineCapability {

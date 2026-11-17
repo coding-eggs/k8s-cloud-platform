@@ -20,6 +20,8 @@ import '@vue-flow/core/dist/theme-default.css'
 import type { PipelineCanvasEdge, PipelineCanvasNode, PipelineSourceRef } from '@/types'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
+import PipelineSourceFiles from '@/components/pipeline/PipelineSourceFiles.vue'
+import { baseText, refText, repoShort } from '@/components/pipeline/sourceRefText'
 
 const props = defineProps<{
   modelValue: boolean
@@ -30,11 +32,15 @@ const props = defineProps<{
   sources?: PipelineSourceRef[]
   previewLoading?: boolean
   previewError?: string | null
+  /** 「查看变更」那一次请求在飞（它要下载整棵快照，比打开时那次慢得多） */
+  diffLoading?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
   /** 第二个参数 = 本次要**钉住**的 commit（节点 id → 完整 sha），只含仍在跑且解析成功的 git 节点 */
   (e: 'confirm', maskedNodeIds: string[], pinnedShas: Record<string, string>): void
+  /** 用户点了「查看变更」：父组件带 withDiff 再拉一次预览 */
+  (e: 'request-diff'): void
 }>()
 
 /** 节点清单（图标 / 类型名 / 配色）—— 图上的卡片与编辑器里是同一套 */
@@ -181,26 +187,9 @@ const pinnedShas = computed(() => {
   return out
 })
 
-/** `https://gitlab.x/group/repo.git` → `group/repo`（一眼看出是哪个仓库，不用读整条 URL） */
-function repoShort(repo: string): string {
-  const parts = (repo ?? '').replace(/\/+$/, '').replace(/\.git$/, '').split('/')
-  return parts.length <= 1 ? repo : parts.slice(-2).join('/')
-}
-
-/** 分支/标签那一栏：默认分支与「已钉住」要说人话 */
-function refText(s: PipelineSourceRef): string {
-  if (s.kind === 'default') return '默认分支'
-  if (s.kind === 'pinned') return '已钉住的提交'
-  if (s.kind === 'tag') return `标签 ${s.revision ?? ''}`
-  return `分支 ${s.revision ?? ''}`
-}
-
-/** 与上次成功运行的对比：**相同**比「较上次 +N」更值得强调（那意味着这次没有新代码可构建） */
-function baseText(s: PipelineSourceRef): string {
-  if (!s.baseSha) return '首次运行'
-  if (s.sha && s.baseSha === s.sha) return '与上次成功构建相同'
-  if (s.baseKind === 'parent') return '较上一提交'
-  return `较上次成功 ${s.baseSha.slice(0, 7)}`
+/** 值不值得算变更：有基线、且与基线不是同一个提交（相同 = 这次没有新代码） */
+function canDiff(s: PipelineSourceRef): boolean {
+  return Boolean(s.sha && s.baseSha && s.sha !== s.baseSha)
 }
 
 function confirm() {
@@ -228,19 +217,40 @@ function confirm() {
         <div
           v-for="s in sources"
           :key="s.nodeId"
-          class="src-row"
+          class="src-item"
           :class="{ 'is-off': !selected.has(s.nodeId) }"
         >
-          <span class="src-repo">{{ repoShort(s.repo) }}</span>
-          <span class="src-ref">{{ refText(s) }}</span>
-          <template v-if="s.sha">
-            <code class="src-sha" :title="s.sha">{{ s.shortSha }}</code>
-            <!-- 提交标题要浅取一个 commit 才有（P2 与「查看变更」一起取）—— 没有就不占位 -->
-            <span v-if="s.subject" class="src-subject" :title="s.subject">{{ s.subject }}</span>
-            <span class="src-base">{{ baseText(s) }}</span>
-          </template>
-          <span v-else class="src-bad">{{ s.error || '未解析出提交' }}</span>
-          <span v-if="s.warning" class="src-warn" :title="s.warning">提交信息不可用</span>
+          <div class="src-row">
+            <span class="src-repo">{{ repoShort(s.repo) }}</span>
+            <span class="src-ref">{{ refText(s) }}</span>
+            <template v-if="s.sha">
+              <code class="src-sha" :title="s.sha">{{ s.shortSha }}</code>
+              <!-- 提交标题要浅取一个 commit 才有（与「查看变更」那一次一起取）—— 没有就不占位 -->
+              <span v-if="s.subject" class="src-subject" :title="s.subject">{{ s.subject }}</span>
+              <span class="src-base">{{ baseText(s) }}</span>
+              <!-- 已经算过就不再显示按钮（清单已经摊在下面了） -->
+              <el-button
+                v-if="canDiff(s) && !(s.files && s.files.length)"
+                link
+                type="primary"
+                class="src-diff"
+                :loading="diffLoading"
+                @click="emit('request-diff')"
+              >
+                查看变更
+              </el-button>
+            </template>
+            <span v-else class="src-bad">{{ s.error || '未解析出提交' }}</span>
+          </div>
+          <!-- 变更清单：点过「查看变更」才有（要下载整棵快照，不能自动来） -->
+          <PipelineSourceFiles
+            v-if="s.files && s.files.length"
+            :source="s"
+            :max-height="220"
+            class="src-files"
+          />
+          <!-- 拿不到变更/提交信息的原因 —— 不影响运行，所以只是说明 -->
+          <div v-if="s.warning" class="src-note src-warn">{{ s.warning }}</div>
         </div>
       </template>
     </div>
@@ -346,9 +356,19 @@ function confirm() {
   font-size: 12px;
   line-height: 20px;
 }
+.src-item {
+  padding: 1px 0;
+}
 /* 被屏蔽的 git 节点：灰掉，表示这次不跑（它的 pin 也不会生效） */
-.src-row.is-off {
+.src-item.is-off {
   opacity: .45;
+}
+.src-files {
+  margin: 2px 0 6px 0;
+}
+.src-diff {
+  flex-shrink: 0;
+  font-size: 12px;
 }
 .src-repo {
   color: var(--text-1);
@@ -384,7 +404,6 @@ function confirm() {
   color: var(--danger);
 }
 .src-warn {
-  flex-shrink: 0;
   color: var(--warning);
 }
 </style>

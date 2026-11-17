@@ -224,19 +224,43 @@ public class PipelineController {
      *
      * <p>裁剪规则与触发**完全一致**（屏蔽闭包在服务端再展开一次，不信任前端）。
      * 解析失败不是错误 —— 每个节点各自带 {@code error}，运行照旧可走。
+     *
+     * @param withDiff 用户点了「查看变更」：浅取提交对象并算**文件级变更**（慢，会下载整棵快照）。
+     *                 打开对话框时是 false —— 只 ls-remote，不下载对象
      */
-    public record PreviewRequest(String id, String tenantId, List<String> maskedNodeIds) {
+    public record PreviewRequest(String id, String tenantId, List<String> maskedNodeIds,
+                                 Boolean withDiff) {
     }
 
     @PostMapping("/run/preview")
-    @Operation(summary = "触发前预览源码（分支/标签对应的 commit）",
-            description = "复用触发那条连接授权与裁剪规则；仓库不可达/分支不存在时该节点带 error，不影响运行")
+    @Operation(summary = "触发前预览源码（分支/标签对应的 commit，可选文件级变更）",
+            description = "复用触发那条连接授权与裁剪规则；仓库不可达/分支不存在时该节点带 error，不影响运行。"
+                    + "`withDiff` 会浅取提交对象算变更清单（慢，只该由用户主动触发）")
     @Auditable(action = AuditAction.PIPELINE_PREVIEW_SOURCE, target = "#request.id")
     public ResponseData<List<com.coding.platformapi.models.PipelineSourceRefDTO>> previewRun(
             @RequestBody PreviewRequest request) {
         PipelineDTO pipeline = pipelineService.get(request.id());   // 顺带校验归属
         return new ResponseData<>(runService.preview(pipeline.getId(), pipeline.getCanvasJson(),
-                request.maskedNodeIds()));
+                request.maskedNodeIds(), Boolean.TRUE.equals(request.withDiff())));
+    }
+
+    /**
+     * 一次**历史运行**的变更清单（按落库的 sha/baseSha 现算）。
+     *
+     * <p>与 {@code /run/preview} 的区别：那个回答「这次**将要**构建什么」，这个回答
+     * 「那次**已经**构建了什么、改了什么」—— 输入全部来自那条运行自己的记录。
+     */
+    public record RunDiffRequest(String runName, String nodeId, String tenantId) {
+    }
+
+    @PostMapping("/run/diff")
+    @Operation(summary = "一次历史运行的变更文件清单",
+            description = "按运行行里记录的 sha/baseSha 现算（清单不落库）；"
+                    + "凭据已删/仓库不可达时回 warning，不影响运行详情其它信息")
+    @Auditable(action = AuditAction.PIPELINE_PREVIEW_SOURCE, target = "#request.runName")
+    public ResponseData<com.coding.platformapi.models.PipelineSourceRefDTO> runDiff(
+            @RequestBody RunDiffRequest request) {
+        return new ResponseData<>(runService.diff(request.runName(), request.nodeId()));
     }
 
     /** 从断点继续的入参。 */

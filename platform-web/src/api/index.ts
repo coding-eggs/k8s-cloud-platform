@@ -1043,9 +1043,19 @@ export const pipelineApi = {
    * <p>⚠️ 这是**只读**的，但仍然要带生效租户：后端按调用者身份解析连接授权。
    * 单个节点解析失败不会整体报错 —— 该节点带 `error` 返回，运行照旧可走。
    */
-  previewSource: (pipelineId: string, tenantId?: string, maskedNodeIds?: string[]) =>
+  previewSource: (pipelineId: string, tenantId?: string, maskedNodeIds?: string[],
+                  withDiff?: boolean) =>
     http.post<never, PipelineSourceRef[]>('/pipeline/run/preview',
-      { id: pipelineId, tenantId, maskedNodeIds }),
+      { id: pipelineId, tenantId, maskedNodeIds, withDiff }),
+  /**
+   * 一次**历史运行**的变更清单（按落库的 sha/baseSha 现算）。
+   *
+   * <p>与 `previewSource` 的区别：那个回答「这次**将要**构建什么」，这个回答
+   * 「那次**已经**构建了什么、改了什么」—— 输入全部来自那条运行自己的记录。
+   */
+  runDiff: (runName: string, nodeId: string, tenantId?: string) =>
+    http.post<never, PipelineSourceRef>('/pipeline/run/diff',
+      { runName, nodeId, tenantId }),
   /**
    * 触发一次运行。
    *

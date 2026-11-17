@@ -770,10 +770,80 @@ public class PipelineRunService {
      */
     public List<PipelineSourceRefDTO> preview(
             String pipelineId, String canvasJson, List<String> maskedNodeIds) {
+        return preview(pipelineId, canvasJson, maskedNodeIds, false);
+    }
+
+    /**
+     * 同上，{@code withDiff = true} 时额外浅取提交对象并算**文件级变更**（用户点「查看变更」）。
+     *
+     * <p>⚠️ 这一档要下载整棵快照，慢且吃带宽 —— 只在用户主动要的时候走；
+     * 打开对话框与触发落库都走 {@code false} 那一档。
+     */
+    public List<PipelineSourceRefDTO> preview(
+            String pipelineId, String canvasJson, List<String> maskedNodeIds, boolean withDiff) {
         Set<String> masked = PipelineCanvasMask.maskedClosure(canvasJson,
                 maskedNodeIds == null ? List.of() : maskedNodeIds);
         String toRun = PipelineCanvasMask.trim(canvasJson, allBut(canvasJson, masked), null);
-        return sourcePreview.preview(pipelineId, toRun, auth.hatTenantId());
+        return sourcePreview.preview(pipelineId, toRun, auth.hatTenantId(), withDiff);
+    }
+
+    /**
+     * 一次**历史运行**的变更清单：按落库的 sha/baseSha 现算（清单不落库，见设计文档 §4）。
+     *
+     * <p>输入全部来自那条运行自己的记录 —— {@code source_json} 给 sha/基线/repo，
+     * {@code canvas_json} 给连接 id（凭据引用不放进源码元数据里，那是两回事）。
+     * 所以今天流水线改了、连接删了，都不会改变「当年那次跑了什么」的答案。
+     */
+    public PipelineSourceRefDTO diff(String runName, String nodeId) {
+        PlatformPipelineRun run = get(runName);
+        JsonNode src = sourceEntryOf(run.getSourceJson(), nodeId);
+        String sha = src == null ? null : src.path("sha").asString(null);
+        if (sha == null || sha.isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "这次运行没有为这个节点记录 commit（本能力上线前的运行，或当时没解析成功）");
+        }
+        SourcePreviewService.DiffTarget target = new SourcePreviewService.DiffTarget(
+                nodeId,
+                src.path("repo").asString(""),
+                src.path("revision").asString(""),
+                connectionIdOf(run.getCanvasJson(), nodeId),
+                src.path("kind").asString("pinned"),
+                sha,
+                src.path("baseSha").asString(null),
+                src.path("baseKind").asString("none"),
+                src.path("baseRunName").asString(null));
+        return sourcePreview.diff(target, auth.hatTenantId());
+    }
+
+    /** {@code source_json} 里某节点的那条记录；找不到/解析不了回 null。 */
+    private static JsonNode sourceEntryOf(String sourceJson, String nodeId) {
+        if (sourceJson == null || sourceJson.isBlank()) {
+            return null;
+        }
+        try {
+            JsonNode arr = JSON.readTree(sourceJson);
+            if (!arr.isArray()) {
+                return null;
+            }
+            for (JsonNode n : arr) {
+                if (nodeId.equals(n.path("nodeId").asString(null))) {
+                    return n;
+                }
+            }
+        } catch (RuntimeException e) {
+            return null;
+        }
+        return null;
+    }
+
+    /** 运行那张画布上某个 git 节点引用的连接 id；没有则空串（匿名拉取）。 */
+    private String connectionIdOf(String canvasJson, String nodeId) {
+        for (SourcePreviewService.GitNode node : sourcePreview.gitNodes(canvasJson)) {
+            if (nodeId.equals(node.nodeId())) {
+                return node.connectionId();
+            }
+        }
+        return "";
     }
 
     /**

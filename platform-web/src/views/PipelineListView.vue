@@ -112,12 +112,35 @@ async function openRun(row: Pipeline) {
 
 const previewSources = ref<PipelineSourceRef[]>([])
 const previewLoading = ref(false)
+/** 「查看变更」那一次请求在飞（要下载整棵快照，比打开时那次慢得多） */
+const previewDiffLoading = ref(false)
 const previewError = ref<string | null>(null)
 
-async function loadPreview(row: Pipeline) {
+/**
+ * @param withDiff 用户点了「查看变更」：额外浅取提交对象并算文件级变更。
+ *                 失败只提示、**不抹掉已经显示的 sha** —— 变更清单是附加信息，不是运行的前提。
+ *
+ * <p>⚠️ 这一档会**重新解析一次引用**并整份替换结果，所以分支在两次请求之间前进了的话，
+ * 行上的 sha 会跟着变。这是对的：显示什么就钉住什么，用户最后看到的那行才是要构建的提交。
+ */
+async function loadPreview(row: Pipeline, withDiff = false) {
+  if (!row.id) return
+
+  if (withDiff) {
+    if (previewDiffLoading.value) return
+    previewDiffLoading.value = true
+    try {
+      previewSources.value = (await pipelineApi.previewSource(row.id, tenantId.value, undefined, true)) ?? []
+    } catch (e) {
+      ElMessage.warning(`变更清单不可用：${(e as Error)?.message || '未知原因'}`)
+    } finally {
+      previewDiffLoading.value = false
+    }
+    return
+  }
+
   previewSources.value = []
   previewError.value = null
-  if (!row.id) return
   previewLoading.value = true
   try {
     previewSources.value = (await pipelineApi.previewSource(row.id, tenantId.value)) ?? []
@@ -127,6 +150,10 @@ async function loadPreview(row: Pipeline) {
   } finally {
     previewLoading.value = false
   }
+}
+
+function requestDiff() {
+  if (runTarget.value) void loadPreview(runTarget.value, true)
 }
 
 async function confirmRun(maskedNodeIds: string[], pinnedShas: Record<string, string>) {
@@ -215,8 +242,10 @@ usePaletteAction({
       :sources="previewSources"
       :preview-loading="previewLoading"
       :preview-error="previewError"
+      :diff-loading="previewDiffLoading"
       :title="`触发运行 · ${runTarget?.name ?? ''}`"
       @confirm="confirmRun"
+      @request-diff="requestDiff"
     />
   </div>
 </template>

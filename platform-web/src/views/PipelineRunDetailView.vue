@@ -30,6 +30,8 @@ import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { fmtDate } from '@/utils/format'
 import YamlBlock from '@/components/YamlBlock.vue'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
+import PipelineSourceFiles from '@/components/pipeline/PipelineSourceFiles.vue'
+import { baseText, refText, repoShort } from '@/components/pipeline/sourceRefText'
 
 const route = useRoute()
 const router = useRouter()
@@ -248,9 +250,59 @@ function sourceHintFor(id: string): { text: string; title: string } | undefined 
   if (!s?.sha) return undefined
   const short = s.shortSha ?? s.sha.slice(0, 7)
   return {
-    // 提交标题是 P2 才随「查看变更」一起取的 —— 没有就只显示短 sha，不占位
+    // 提交标题是「查看变更」那次才取的 —— 没有就只显示短 sha，不占位
     text: s.subject ? `${short} · ${s.subject}` : short,
     title: [s.repo, s.sha, s.subject, s.author, s.committedAt].filter(Boolean).join('\n'),
+  }
+}
+
+/** 这次运行涉及的所有 git 节点（老运行没有 sourceJson 就是空） */
+const sourceList = computed(() => Object.values(sourcesById.value))
+
+/**
+ * 变更清单**不落库**（一次格式化能改几千个文件），按落库的 sha/baseSha 现算 —— 所以是点出来的。
+ * 与 `sourcesById` 分开存：预览到的元数据是权威的，现算的清单只是附加信息。
+ */
+const diffs = ref<Record<string, PipelineSourceRef>>({})
+const diffLoading = ref<Record<string, boolean>>({})
+const diffError = ref<Record<string, string>>({})
+
+/** 行 = 元数据 + 可能已经算好的清单（`v-for` 里不必再做索引访问） */
+const sourceCards = computed(() =>
+  sourceList.value.map((s) => ({ ref: s, diff: diffs.value[s.nodeId] ?? null })),
+)
+
+/** 这张画布上有 git 节点 —— 用来区分「老运行没记录」和「这条流水线本来就不拉代码」 */
+const canvasHasGit = computed(() => (canvas.value?.nodes ?? []).some((n) => n.type === 'git'))
+
+/** 值不值得算：有基线、且与基线不是同一个提交（相同 = 这次没有新代码） */
+function canDiff(s: PipelineSourceRef): boolean {
+  return Boolean(s.sha && s.baseSha && s.sha !== s.baseSha)
+}
+
+function isDiffLoading(id: string): boolean {
+  return diffLoading.value[id] === true
+}
+
+function diffErrorText(id: string): string | null {
+  return diffError.value[id] ?? null
+}
+
+async function loadDiff(s: PipelineSourceRef) {
+  const name = run.value?.runName
+  if (!name || diffLoading.value[s.nodeId]) return
+  diffLoading.value = { ...diffLoading.value, [s.nodeId]: true }
+  const { [s.nodeId]: _drop, ...restErr } = diffError.value
+  diffError.value = restErr
+  try {
+    const got = await pipelineApi.runDiff(name, s.nodeId, effectiveTenantId.value)
+    diffs.value = { ...diffs.value, [s.nodeId]: got }
+    // 拿不到清单不是错误：节点照旧是成功的，只是这次没有明细可看
+    if (got.warning) diffError.value = { ...diffError.value, [s.nodeId]: got.warning }
+  } catch (e) {
+    diffError.value = { ...diffError.value, [s.nodeId]: (e as Error)?.message || '取不到变更清单' }
+  } finally {
+    diffLoading.value = { ...diffLoading.value, [s.nodeId]: false }
   }
 }
 
@@ -792,6 +844,44 @@ function jumpToLogBottom(): void {
         </VueFlow>
       </div>
 
+      <!-- 源码：这次构建了哪个提交、相对上次成功改了什么。
+           元数据是**触发时落库**的（归档后集群对象全删，这里是唯一记录）；
+           变更清单不落库，点「查看变更」按 sha/baseSha 现算。 -->
+      <div v-if="sourceCards.length" class="sources">
+        <div class="sources-head">
+          <span>源码</span>
+          <span class="dim">触发时记录 —— 归档后集群对象已删，这里就是这次的凭据</span>
+        </div>
+        <div v-for="c in sourceCards" :key="c.ref.nodeId" class="src-item">
+          <div class="src-row">
+            <span class="src-repo">{{ repoShort(c.ref.repo) }}</span>
+            <span class="src-ref">{{ refText(c.ref) }}</span>
+            <code v-if="c.ref.sha" class="src-sha" :title="c.ref.sha">{{ c.ref.shortSha }}</code>
+            <span v-else class="src-bad">{{ c.ref.error || '未记录提交' }}</span>
+            <span v-if="c.ref.subject" class="src-subject" :title="c.ref.subject">{{ c.ref.subject }}</span>
+            <span class="src-base">{{ baseText(c.ref) }}</span>
+            <el-button
+              v-if="c.ref.sha && canDiff(c.ref) && !c.diff"
+              link
+              type="primary"
+              class="src-diff"
+              :loading="isDiffLoading(c.ref.nodeId)"
+              @click="loadDiff(c.ref)"
+            >
+              查看变更
+            </el-button>
+          </div>
+          <PipelineSourceFiles v-if="c.diff" :source="c.diff" :max-height="240" class="src-files" />
+          <div v-if="diffErrorText(c.ref.nodeId)" class="src-note src-warn">
+            {{ diffErrorText(c.ref.nodeId) }}
+          </div>
+        </div>
+      </div>
+      <!-- 老运行（能力上线前）确实没有这条记录 —— 说清楚，比让人以为「构建了空的提交」好 -->
+      <div v-else-if="canvasHasGit" class="source-none">
+        这条运行没有记录源码信息（本能力上线前的运行）
+      </div>
+
       <!-- 日志区只剩一行标题（当前看的是哪个节点）—— 节点在上面点，不再罗列一排 tab。
            全屏 = 这一块变成铺满窗口的浮层（Esc 或按钮退出） -->
       <div class="log-panel" :class="{ full: logFullscreen }">
@@ -958,5 +1048,84 @@ function jumpToLogBottom(): void {
 .yaml-note {
   margin-bottom: 8px;
   line-height: 1.6;
+}
+
+/* ---- 源码（这次构建了哪个提交） ---- */
+.sources {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 6px 10px;
+}
+.sources-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 2px;
+}
+.src-item {
+  padding: 2px 0;
+}
+.src-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 20px;
+}
+.src-repo {
+  color: var(--text-1);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.src-ref {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.src-sha {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--panel-hover);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.src-subject {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.src-base {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+.src-bad {
+  color: var(--danger);
+}
+.src-diff {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+.src-files {
+  margin: 2px 0 6px 0;
+}
+.src-note {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.src-warn {
+  color: var(--warning);
+}
+.source-none {
+  font-size: 12px;
+  color: var(--text-3);
 }
 </style>

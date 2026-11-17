@@ -82,8 +82,10 @@ ALTER TABLE platform_pipeline_run
 ```
 
 - 迁移文件：`platform-data/src/main/resources/db/migration/V2026_11_18_1__pipeline_run_source.sql`（本仓无 Flyway，**手工重放**）。
+  历史 diff 端点另有一条 `V2026_11_18_2__pipeline_run_diff.sql`（权限行）。
 - 前端 `PipelineRun` 类型加 `sourceJson?: string | null`（原样透传字符串，沿用 `stepsJson` 的既有风格）。
-- 只存元数据与统计，**不存文件清单**（体积考虑）：历史详情要看清单时用存下来的 `sha/baseSha` 现查（§5.3）。
+- **落库的只有元数据**（repo / 分支 / sha / 基线 / 标题 / 作者 / 时间）。文件清单**与统计**都不落库：
+  一次格式化能改几千个文件，体积不可控；历史详情要看时用存下来的 `sha/baseSha` 现查（§5.3）。
 
 ## 5. 接口
 
@@ -103,8 +105,10 @@ ALTER TABLE platform_pipeline_run
 
 - 授权：复用 `PipelineRunService.resolveConnections`（逐条校验“允许在流水线里使用”，**不静默降级成匿名**），只解析本次要跑的子画布（屏蔽闭包 `PipelineCanvasMask.maskedClosure` 之后）。
 - `withDiff=false` 走 `ls-remote`（不下载对象，通常 <1s）。
-- **P1 落地时只实现了这一档**：depth-1 取一个 commit 会把整棵快照下下来（普通仓库几秒、monorepo 几十秒甚至几百 MB），打开触发框不该付这个代价。所以 P1 的预览里**没有提交标题**；标题与文件清单在 P2 与「查看变更」那一次拉取一起做（同一个 commit 只取一次）。
-- `withDiff=true` 走 §7 的 JGit 流程（30s 上限），单个仓库失败只在该节点上回 `error`，不影响其它节点。
+- `withDiff=true` 走 §7 的 JGit 流程（30s 上限），单个仓库失败只在该节点上回 `warning`，不影响其它节点。
+- **两档的分界线是「要不要下载对象」**：打开触发框、触发时落库都走 false 那一档；
+  只有用户点「查看变更」才走 true（depth-1 取一个 commit 会把整棵快照下下来，普通仓库几秒、
+  monorepo 几十秒甚至几百 MB）。所以 P1 的预览里没有提交标题，P2 点「查看变更」时一次拿到标题 + 清单。
 - 权限码：沿用 `tenant:pipeline:run`（能运行的人才能预览源码）。
 
 ### 5.2 触发（扩展，向后兼容）
@@ -223,3 +227,24 @@ ALTER TABLE platform_pipeline_run
 | 凭据在预览期被使用 | 权限面扩大 | 与触发同一条 `resolveConnections` 授权；预览纳入审计 |
 | 老运行无 `source_json` | 历史对比缺失 | 显式显示“未记录”，首次运行后自然积累 |
 | 部署顺序错（api 先于 k8s-server） | pin 被忽略、预览与执行漂移 | §9 的部署顺序写进发布说明 |
+
+## 13. 落地记录（2026-11-18，P1 + P2 同批）
+
+实现时才明确下来的几件事，改动任何一条都会让「看到的」与「跑的」对不上：
+
+- **一个节点一个临时仓库**：`readCommit`（depth-1 取 head）与 `diff`（depth-1 取 base）共用同一个
+  `RepoSession`，否则同一个提交会被下两遍。`close()` 递归删目录，凭据只在内存。
+- **shallow 边界提交没有父提交**：depth-1 取下来的提交被 git/JGit 当作「无父」，所以
+  `RevCommit.getParentCount()` 恒为 0。而「首次运行的基线 = 上一提交」正需要那个 id ——
+  改为从提交对象的原始字节里读 `parent <sha>` 行（只多读几十字节，比再下一棵父树便宜）。
+  这一条**只有真跑才会暴露**（本地仓库测试才发现）。
+- **diff 只需要两棵树**：`CanonicalTreeParser` 各自 reset 到两个提交的树，`DiffFormatter`
+  开 `setDetectRenames(true)`（否则一次 `mv` 会读成「删了一个又加了一个」），行数从 `Edit`
+  的类型与长度累加，二进制文件由 `FileHeader.PatchType.BINARY` 判定。
+- **历史 diff 的 connectionId 来自运行行的 `canvas_json`**，不是 `source_json`：凭据引用
+  不属于源码元数据，混进去会让「哪些字段能公开」变得含混。
+- **测试用本地仓库当 remote**（`file://` URL）：不联网就能把 ls-remote → 浅取 → 两棵树对比
+  整条链路真跑一遍。⚠️ 测试仓库必须打开 `uploadpack.allowReachableSHA1InWant`（基线提交通常
+  不是任何 ref 的尖端）—— 这同时也说明自建源不开这项时，预览会如实降级成「变更清单不可用」。
+- **前端文案与清单各只有一份**：`sourceRefText.ts`（repo/分支/基线文案）与
+  `PipelineSourceFiles.vue`（文件表），触发对话框与运行详情共用，避免两处口径分叉。
