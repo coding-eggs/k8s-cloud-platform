@@ -32,6 +32,18 @@ import urllib.parse
 import urllib.request
 
 # ---------------------------------------------------------------------------
+# 平台支持的集群 minor（与 platform-web/src/utils/clusterInstall/kubespray.ts 的
+# KUBE_VERSIONS 同源，kubespray 升级时两边一起看）。
+#
+# 为什么单独声明：kube-prometheus-stack 的 CRD 升级 Job 把**集群的 K8s 版本**当 kubectl
+# 镜像的 tag（chart 的 crds/templates/upgrade/job.yaml：`tag | default
+# .Capabilities.KubeVersion.Version`）。同一份 chart 装到 1.34 / 1.35 / 1.36 的集群，
+# 就要三个不同的镜像。按 minor 通配同步整条分支，minor 内任何 patch 都能命中，
+# kubespray 往 KUBE_VERSIONS 里加新 patch 时不用回来改这里。
+# ---------------------------------------------------------------------------
+SUPPORTED_K8S_MINORS = ['1.34', '1.35', '1.36']
+
+# ---------------------------------------------------------------------------
 # 需要维护的表：上游 → 仓库:tag。
 # 不带 tag 会复制该仓库的**全部** tag（几百个、几十 GB），除非确实要全量，否则请写死 tag；
 # 中间件允许创建新版本时（ES / Milvus），把新 tag 加一行再重跑。
@@ -113,6 +125,10 @@ IMAGES = {
     'registry.k8s.io': [
         'kube-state-metrics/kube-state-metrics:v2.20.0',
         'metrics-server/metrics-server:v0.9.0',
+        # kube-prometheus-stack 的 CRD 升级 Job —— recipe 强制 crds.upgradeJob.enabled=true，
+        # 每次装/升级都会跑。它的 kubectl 镜像 tag = 集群的 K8s 版本，所以按支持的 minor
+        # 整条分支同步（见上面的 SUPPORTED_K8S_MINORS）。
+        *[f'kubectl:v{m}.*' for m in SUPPORTED_K8S_MINORS],
         # csi-driver-nfs（含 snapshot-controller）
         'sig-storage/csi-node-driver-registrar:v2.17.0',
         'sig-storage/csi-provisioner:v6.3.0',
@@ -171,6 +187,11 @@ class Harbor:
             if e.code in allow:
                 return None
             raise RuntimeError(f'{method} {path} -> {e.code} {detail}') from None
+        except urllib.error.URLError as e:
+            # 最常见的第一次失败：HARBOR_URL 没设，脚本回落到默认的 127.0.0.1:30002 → 10061 连接被拒。
+            raise SystemExit(
+                f'连不上 Harbor：{self.url}（{e.reason}）\n'
+                f'  确认 HARBOR_URL，例如：export HARBOR_URL=https://harbor.ackcp.cloud') from None
 
     def paged(self, path):
         """翻页取全量。⚠️ Harbor 默认 page_size=10：列表接口不带分页就会只拿到前 10 条，
@@ -387,6 +408,8 @@ def main():
         sys.exit('缺少 HARBOR_ADMIN_PASSWORD（平台生成，见 Secret harbor/platform-harbor-secrets）')
 
     harbor = Harbor(url, user, password or '', args.dry_run)
+    if not args.status:
+        print(f'Harbor: {url}（用户 {user}）')
     upstreams = [args.only] if args.only else sorted(IMAGES)
     for up in upstreams:
         if up not in IMAGES:

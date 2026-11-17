@@ -142,6 +142,7 @@ Endpoint 地址：
 |---|---|
 | `registry.k8s.io/metrics-server/metrics-server` | metrics-server |
 | `registry.k8s.io/kube-state-metrics/kube-state-metrics` | kube-state-metrics |
+| `registry.k8s.io/kubectl` | kube-prometheus-stack 的 CRD 升级 Job。tag = **集群的 K8s 版本**，按脚本里的 `SUPPORTED_K8S_MINORS`（= 安装向导的 `KUBE_VERSIONS`）逐 minor 通配同步，minor 内任何 patch 都能命中 |
 | `quay.io/prometheus-operator/prometheus-operator` | Prometheus Operator |
 | `quay.io/prometheus/prometheus` | Prometheus |
 | `quay.io/prometheus/alertmanager` | Alertmanager |
