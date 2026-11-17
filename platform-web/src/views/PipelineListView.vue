@@ -14,11 +14,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPlay } from '@element-plus/icons-vue'
 import { pipelineApi } from '@/api'
-import type { Pipeline, PipelineCanvas, PipelineSourceRef } from '@/types'
+import type { Pipeline, PipelineCanvas, PipelineCacheStatus, PipelineRetryWorkspaces, PipelineSourceRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useApplicationContext } from '@/composables/useApplicationContext'
 import PipelineRunDialog from '@/components/pipeline/PipelineRunDialog.vue'
+import { fmtBytes, fmtDate } from '@/utils/format'
 
 const route = useRoute()
 const router = useRouter()
@@ -61,6 +62,8 @@ async function load() {
   } finally {
     loading.value = false
   }
+  // 两列命名空间级状态**不阻塞表格**：行先画出来，这两格各自填（见 loadNamespaceState）
+  void loadNamespaceState()
 }
 
 onMounted(async () => {
@@ -170,6 +173,154 @@ async function confirmRun(maskedNodeIds: string[], pinnedShas: Record<string, st
   }
 }
 
+// ---- 命名空间级资源（构建缓存 / 待重试工作区，两列）----
+
+/**
+ * 两列都是**命名空间级**的（与具体哪条流水线无关），所以按「集群 + 命名空间」去重后
+ * 各探一次；同一命名空间下的多行共享同一份结果。
+ *
+ * <p>⚠️ **不阻塞列表渲染**：`/pipeline/capability` 要连集群探 Tekton 与 StorageClass，
+ * 一个离线集群能挂几十秒 —— 先把表格画出来，这些列再各自填（探不到就是「—」）。
+ */
+interface NsState {
+  cache: PipelineCacheStatus | null
+  workspaces: PipelineRetryWorkspaces | null
+  loading: boolean
+  clearing: boolean
+}
+
+const nsStates = ref<Record<string, NsState>>({})
+
+/** 一个命名空间一份状态；行与命名空间是多对一 */
+function nsKey(clusterId?: string | null, namespace?: string | null): string {
+  return `${clusterId ?? ''}|${namespace ?? ''}`
+}
+
+function nsOf(row: Pipeline): NsState | undefined {
+  if (!row.clusterId || !row.namespace) return undefined
+  return nsStates.value[nsKey(row.clusterId, row.namespace)]
+}
+
+function patchNs(key: string, patch: Partial<NsState>) {
+  const cur = nsStates.value[key] ?? { cache: null, workspaces: null, loading: false, clearing: false }
+  nsStates.value = { ...nsStates.value, [key]: { ...cur, ...patch } }
+}
+
+async function loadNamespaceState() {
+  const pairs = new Map<string, { clusterId: string; namespace: string }>()
+  for (const r of rows.value) {
+    if (!r.clusterId || !r.namespace) continue
+    pairs.set(nsKey(r.clusterId, r.namespace), { clusterId: r.clusterId, namespace: r.namespace })
+  }
+  const next: Record<string, NsState> = {}
+  for (const key of pairs.keys()) {
+    next[key] = { cache: null, workspaces: null, loading: true, clearing: false }
+  }
+  nsStates.value = next
+  await Promise.all([...pairs.entries()].map(([key, p]) =>
+    refreshNamespace(key, p.clusterId, p.namespace)))
+}
+
+async function refreshNamespace(key: string, clusterId: string, namespace: string) {
+  patchNs(key, { loading: true })
+  try {
+    const cap = await pipelineApi.capability(clusterId, tenantId.value, namespace)
+    patchNs(key, { cache: cap?.cache ?? null })
+  } catch {
+    // 探不到就说不知道（集群可能离线）—— 不是错误，这一格留「—」
+  }
+  try {
+    const ws = await pipelineApi.retryWorkspaces(clusterId, namespace, tenantId.value)
+    patchNs(key, { workspaces: ws })
+  } catch {
+    // 同上
+  } finally {
+    patchNs(key, { loading: false })
+  }
+}
+
+// ---- 两列的文案（模板里不直接摸索引，省得每处都判空） ----
+
+/** 构建缓存那格：`已启用 10Gi` / `未启用`；null = 没探到 */
+function cacheText(row: Pipeline): string | null {
+  const c = nsOf(row)?.cache
+  if (!c) return null
+  return c.ready ? `已启用 ${c.capacity}` : '未启用'
+}
+
+function cacheReady(row: Pipeline): boolean {
+  return nsOf(row)?.cache?.ready === true
+}
+
+/** 卷名 / 前提 / 不可用原因都进 tooltip —— 表格里放不下，但排查时正需要 */
+function cacheTip(row: Pipeline): string {
+  const c = nsOf(row)?.cache
+  if (!c) return '没探到（集群可能离线）'
+  return [
+    c.claimName ? `卷 ${c.claimName}` : null,
+    `容量 ${c.capacity}`,
+    c.prerequisite,
+    c.reason,
+    '要清空请到编辑器页',
+  ].filter(Boolean).join('\n')
+}
+
+/** 待重试工作区那格：`2 块 / 3.5 GiB` / `无`；null = 没探到 */
+function wsText(row: Pipeline): string | null {
+  const w = nsOf(row)?.workspaces
+  if (!w) return null
+  return w.count > 0 ? `${w.count} 块 / ${fmtBytes(w.totalBytes)}` : '无'
+}
+
+function wsCount(row: Pipeline): number {
+  return nsOf(row)?.workspaces?.count ?? 0
+}
+
+/** 明细放进 tooltip：哪几次运行还占着工作区、各多大、保留到什么时候 */
+function wsTip(row: Pipeline): string {
+  const w = nsOf(row)?.workspaces
+  if (!w) return '没探到（集群可能离线）'
+  if (!w.count) return '没有待重试的工作区（只有失败的运行会留下）'
+  return w.items.map((i) =>
+    `${i.runName ?? i.name} · ${fmtBytes(i.sizeBytes)}`
+    + (i.retainUntil ? ` · 保留至 ${fmtDate(i.retainUntil)}` : '')).join('\n')
+}
+
+function nsLoading(row: Pipeline): boolean {
+  return nsOf(row)?.loading === true
+}
+
+function nsClearing(row: Pipeline): boolean {
+  return nsOf(row)?.clearing === true
+}
+
+/**
+ * 清掉这个命名空间的待重试工作区。
+ *
+ * <p>**不可恢复**：清掉之后那些失败运行不能再从断点继续，只能整条重跑 —— 所以确认框
+ * 把这句话原样说出来，而不是只问「确定吗」。
+ */
+async function clearWorkspaces(row: Pipeline) {
+  if (!row.clusterId || !row.namespace) return
+  const key = nsKey(row.clusterId, row.namespace)
+  if (nsStates.value[key]?.clearing) return
+  await ElMessageBox.confirm(
+    `清理「${row.namespace}」里全部待重试工作区？清掉之后，那些运行不能再从断点继续，只能整条重跑。`,
+    '确认清理',
+    { type: 'warning', confirmButtonText: '清理', cancelButtonText: '算了' },
+  )
+  patchNs(key, { clearing: true })
+  try {
+    await pipelineApi.clearRetryWorkspaces(row.clusterId, row.namespace, tenantId.value)
+    ElMessage.success('已清理')
+    await refreshNamespace(key, row.clusterId, row.namespace)
+  } catch {
+    // 拦截器已提示
+  } finally {
+    patchNs(key, { clearing: false })
+  }
+}
+
 async function remove(row: Pipeline) {
   await ElMessageBox.confirm(
     `删除流水线「${row.name}」？运行记录与日志**不会**跟着删（那是历史）。`,
@@ -216,6 +367,37 @@ usePaletteAction({
         <template #default="{ row }">{{ row.clusterName || row.clusterId || '—' }}</template>
       </el-table-column>
       <el-table-column prop="namespace" label="命名空间" width="150" />
+      <!-- 命名空间级的两块资源：跟着「集群 + 命名空间」走，同一命名空间的多行看到同一份。
+           探测在表格画出来之后才跑（见 loadNamespaceState），所以这里会有「探测中…」 -->
+      <el-table-column label="构建缓存" width="130">
+        <template #default="{ row }">
+          <el-tooltip v-if="cacheText(row)" :content="cacheTip(row)" placement="top" raw-content>
+            <el-tag :type="cacheReady(row) ? 'success' : 'info'" size="small">
+              {{ cacheText(row) }}
+            </el-tag>
+          </el-tooltip>
+          <span v-else class="dim-cell">{{ nsLoading(row) ? '探测中…' : '—' }}</span>
+        </template>
+      </el-table-column>
+      <!-- 待重试工作区是**要经常清**的那一个：量少但会攒，所以清除按钮直接放在格子里 -->
+      <el-table-column label="待重试工作区" width="200">
+        <template #default="{ row }">
+          <span v-if="wsText(row)" class="ws-cell" :title="wsTip(row)">
+            <span :class="{ dim: wsCount(row) === 0 }">{{ wsText(row) }}</span>
+            <el-button
+              v-if="canManage && wsCount(row) > 0"
+              link
+              type="warning"
+              size="small"
+              :loading="nsClearing(row)"
+              @click="clearWorkspaces(row)"
+            >
+              清除
+            </el-button>
+          </span>
+          <span v-else class="dim-cell">{{ nsLoading(row) ? '探测中…' : '—' }}</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
       <el-table-column prop="createdBy" label="创建人" width="140" />
       <el-table-column label="更新时间" width="180">
@@ -270,5 +452,20 @@ usePaletteAction({
 }
 .name.focus {
   font-weight: 600;
+}
+
+/* ---- 命名空间级的两列 ---- */
+.dim-cell {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.ws-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.dim {
+  color: var(--text-3);
 }
 </style>

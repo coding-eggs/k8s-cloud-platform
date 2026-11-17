@@ -26,6 +26,19 @@ export function fmtAge(v?: number | string | null): string {
 
 export type BadgeType = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
+/** 字节数 → `12.3 GiB`（工作区占用这类地方用；0 直接给 `0`） */
+export function fmtBytes(bytes?: number | null): string {
+  if (!bytes) return '0'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let v = bytes
+  let i = 0
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
+}
+
 /**
  * 工作负载状态：由副本就绪情况推导（列表 / 详情页共用）。
  *

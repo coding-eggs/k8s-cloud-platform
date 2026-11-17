@@ -28,6 +28,7 @@ import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import { usePipelineCapability } from '@/composables/usePipelineCapability'
 import { usePermission } from '@/stores/permission'
 import { useApplicationContext } from '@/composables/useApplicationContext'
+import { fmtBytes } from '@/utils/format'
 import { apiCodes } from '@/apiCodes'
 import YamlBlock from '@/components/YamlBlock.vue'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
@@ -218,21 +219,9 @@ async function loadRetryWorkspaces(): Promise<void> {
   }
 }
 
-function fmtBytes(bytes: number): string {
-  if (!bytes) return '0'
-  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
-  let v = bytes
-  let i = 0
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024
-    i++
-  }
-  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
-}
-
 async function doClearRetryWorkspaces(): Promise<void> {
   await ElMessageBox.confirm(
-    `清理「${form.value.namespace}」里全部待重试工作区？清掉之后，那些运行**不能再从断点继续**，只能整条重跑。`,
+    `清理「${form.value.namespace}」里全部待重试工作区？清掉之后，那些运行不能再从断点继续，只能整条重跑。`,
     '确认清理',
     { type: 'warning', confirmButtonText: '清理', cancelButtonText: '算了' },
   )
