@@ -176,7 +176,11 @@ const sidebarTitle = computed(() =>
 // ---------- 顶栏 ----------
 // 顶栏不再显示面包屑：域 tab + 侧栏当前项已经回答了「我在哪」（见 docs/superpowers/specs/2026-10-30-frontend-navigation-ia-design.md §6.1）
 // 资源管理页在顶栏展示全局上下文级联（租户→集群→命名空间）
+// 详情/编辑页（nav: 'hidden'）除外：它们绑的是「进页时那个命名空间里的那个对象」，
+// 顶栏再让人切 ns 只会把上下文改掉而对象不变（页面数据与所选上下文脱节），
+// 所以直接收起级联 —— 所属 租户/集群/命名空间 由页面自己的面包屑展示。
 const showContextSelector = computed(() => route.meta.context === 'full'
+  && route.meta.nav !== 'hidden'
   && !(perm.currentTenant == null && route.meta.platformContext === 'none'))
 
 // 用户按钮：头像 + 名称，下拉里展示角色与退出
