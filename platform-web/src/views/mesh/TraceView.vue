@@ -593,6 +593,10 @@ onMounted(async () => {
 .trace-attrs {
   flex: 0 0 360px; border: 1px solid var(--border); border-radius: 8px;
   padding: 10px 12px; max-height: 66vh; overflow: auto;
+  /* 调用链很长时属性卡片跟着滚动条走：吸在抽屉内容区顶部，不用滚回去找 */
+  position: sticky; top: 0; z-index: 2;
+  /* sticky 后没有底色会把瀑布图的行透出来 */
+  background: var(--surface, var(--bg));
 }
 .trace-attrs-head {
   display: flex; align-items: center; justify-content: space-between;
