@@ -1,8 +1,11 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.models.app.AppObjectRefDTO;
+import com.coding.common.models.app.AppObjectStatusDTO;
 import com.coding.common.models.app.AppRenderRequestDTO;
 import com.coding.common.models.app.AppRenderResultDTO;
+import com.coding.common.models.app.AppStatusResultDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO;
 import com.coding.common.models.middleware.MiddlewareConnectionDTO.ConnInfo;
 import com.coding.data.mapper.system.PlatformAppDependencyMapper;
@@ -520,6 +523,38 @@ class AppReleaseServiceTest {
         assertThat(s.state()).isEqualTo("NOT_RELEASED");
         assertThat(s.version()).isEqualTo(1);
         assertThat(s.desired()).containsEntry("imageTag", "1");
+        assertThat(s.podIssues()).isEmpty();
+    }
+
+    /** 未就绪时把 Pod 级归因带到服务行（前端拿它做「为什么」并跳到事件页签）。 */
+    @Test
+    void overviewCarriesPodIssuesForUnreadyWorkload() {
+        app.setLiveReleaseNo(1);
+        PlatformAppRelease r = new PlatformAppRelease();
+        r.setReleaseNo(1);
+        r.setSnapshotJson(JSON.writeValueAsString(Map.of("services", Map.of("api", svc("1")), "dependencies", List.of())));
+        AppObjectRefDTO ref = new AppObjectRefDTO();
+        ref.setKind("Deployment");
+        ref.setNamespace("demo");
+        ref.setName("shop-api");
+        r.setObjectsJson(JSON.writeValueAsString(List.of(ref)));
+        when(releases.selectByNo("app1", 1)).thenReturn(r);
+        when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
+
+        AppObjectStatusDTO st = new AppObjectStatusDTO();
+        st.setKind("Deployment");
+        st.setName("shop-api");
+        st.setState("FAILED");
+        st.setPodIssues(List.of("Pod shop-api-abc：容器 web 拉取镜像失败（ImagePullBackOff）：not found"));
+        AppStatusResultDTO result = new AppStatusResultDTO();
+        result.setObjects(List.of(st));
+        when(client.status(any())).thenReturn(result);
+
+        var s = service.overview("app1", "t1").services().get(0);
+
+        assertThat(s.state()).isEqualTo("FAILED");
+        assertThat(s.podIssues())
+                .containsExactly("Pod shop-api-abc：容器 web 拉取镜像失败（ImagePullBackOff）：not found");
     }
 
     @Test

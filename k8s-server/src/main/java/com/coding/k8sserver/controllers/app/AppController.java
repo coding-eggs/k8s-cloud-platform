@@ -2,6 +2,8 @@ package com.coding.k8sserver.controllers.app;
 
 import com.coding.common.models.app.AppApplyRequestDTO;
 import com.coding.common.models.app.AppDependencySecretRequestDTO;
+import com.coding.common.models.app.AppEventDTO;
+import com.coding.common.models.app.AppEventsRequestDTO;
 import com.coding.common.models.app.AppInitRequestDTO;
 import com.coding.common.models.app.AppInitResultDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
@@ -14,6 +16,7 @@ import com.coding.common.models.k8s.dto.IngressListenerSetRequestDTO;
 import com.coding.common.models.k8s.dto.IngressListenerSetStatusDTO;
 import com.coding.k8sserver.app.AppApplyService;
 import com.coding.k8sserver.app.AppDependencySecretService;
+import com.coding.k8sserver.app.AppEventsService;
 import com.coding.k8sserver.app.AppIngressService;
 import com.coding.k8sserver.app.AppInitService;
 import com.coding.k8sserver.app.AppRenderService;
@@ -43,16 +46,18 @@ public class AppController implements AccessBoundaryAware {
     private final AppInitService init;
     private final AppIngressService ingress;
     private final AppDependencySecretService dependencySecrets;
+    private final AppEventsService events;
 
     public AppController(AppRenderService render, AppApplyService apply, AppStatusService status,
                          AppInitService init, AppIngressService ingress,
-                         AppDependencySecretService dependencySecrets) {
+                         AppDependencySecretService dependencySecrets, AppEventsService events) {
         this.render = render;
         this.apply = apply;
         this.status = status;
         this.init = init;
         this.ingress = ingress;
         this.dependencySecrets = dependencySecrets;
+        this.events = events;
     }
 
     @Override
@@ -97,6 +102,14 @@ public class AppController implements AccessBoundaryAware {
     @Operation(summary = "现读这些对象的就绪状态")
     public ResponseData<AppStatusResultDTO> status(@RequestBody AppStatusRequestDTO request) {
         return new ResponseData<>(status.status(request));
+    }
+
+    @PostMapping("/events")
+    @Operation(summary = "应用自己的 Kubernetes 事件（排障第一现场）",
+            description = "按平台标签 platform.coding/app 找对象，工作负载建出来的 ReplicaSet/Pod 按名字前缀并入；"
+                    + "按 lastTimestamp 倒序，最多 limit 条（默认 200）")
+    public ResponseData<java.util.List<AppEventDTO>> events(@RequestBody AppEventsRequestDTO request) {
+        return new ResponseData<>(events.events(request));
     }
 
     @PostMapping("/ingress-listenerset")

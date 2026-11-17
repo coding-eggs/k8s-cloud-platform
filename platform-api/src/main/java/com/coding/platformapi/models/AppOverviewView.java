@@ -23,10 +23,13 @@ public record AppOverviewView(String appId, String status, Integer liveReleaseNo
      * ingress：网关方式分到的端口及其 listener 状态；没分端口为 null。
      * nodePort：线上 Service 为 NodePort 类型时实际的 nodePort（现读）；不是 NodePort 或读不到为 null。
      * canary：线上正在灰度时的灰度信息；不在灰度为 null。
+     * podIssues：工作负载未就绪时下钻到 Pod 的中文归因（「调度失败：0/3 nodes…」这种），第一条最关键；
+     * 就绪、未发布或读不到时为空列表。前端在服务行展示第一条，点了跳到「事件」页签。
      */
     public record ServiceRow(String key, String kind, String image, String liveImage, Integer replicas,
                              String state, String pending, Map<String, Object> desired, Integer version,
-                             String newTag, Ingress ingress, Integer nodePort, Canary canary) {
+                             String newTag, Ingress ingress, Integer nodePort, Canary canary,
+                             List<String> podIssues) {
     }
 
     /**

@@ -6,6 +6,7 @@ import type {
   AppExecutionLog,
   AppDependencyRequest,
   AppDependencyRow,
+  AppEvent,
   AppOverview,
   AppRelease,
   AppReleasePreview,
@@ -1296,6 +1297,9 @@ export const applicationApi = {
   /** clusterId 为空 = 本租户全部集群的「集群 + 命名空间」组合（见 targets） */
   options: (clusterId: string | undefined, tenantId?: string) =>
     http.post<never, ApplicationOptions>('/application/options', { clusterId, tenantId }),
+  /** 应用自己的 Kubernetes 事件；warningsOnly 由后端过滤（事件有条数上限，前端筛会漏更早的 Warning） */
+  events: (appId: string, tenantId?: string, warningsOnly?: boolean) =>
+    http.post<never, AppEvent[]>('/application/events', { appId, tenantId, warningsOnly }),
 }
 
 /** 应用服务配置与概览（/application/service/*、/application/overview） */

@@ -489,3 +489,21 @@ HPA / 可观测 / 服务网格（§1.7）：
   旧配置（环境变量启动时读一次、subPath 不跟随更新），但这期间任何旧 Pod 重启（崩溃、驱逐、节点故障）
   都会读到**新**的环境变量和配置文件，配旧镜像。ConfigMap 名不带版本号，是有意的取舍（不留历史 ConfigMap）；
   发布失败后尽快修复再发，或回滚。
+
+## 7. 应用事件（2026-11-17）
+
+应用页「事件」页签读的是**本应用对象的 Kubernetes 事件**（排障第一现场：为什么没起来、为什么重启），
+不是平台操作流水 —— 「谁改了什么、发没发成功」看「发布记录」，两者不重复。
+
+- **端点**：`POST /application/events` → platform-api → k8s-server `POST /application/events`。
+  权限码 `tenant:application:read`，迁移 `V2026_11_17_1`（**先重放再部署 platform-api**，否则启动即 fail-closed）。
+- **归属口径**：标签 `platform.coding/app=<appId>` 找 Pod / Service / Deployment / StatefulSet；
+  ReplicaSet 与 Pod 按「工作负载名-」前缀并入。**不含依赖（中间件）的事件** —— 那边详情页有自己的事件块。
+- **现读、不缓存、不轮询**：打开页签拉一次 + 手动刷新；默认 200 条，`limit` 夹在 1~500。
+- **`warningsOnly` 在服务端过滤**：事件有条数上限，在前端筛会漏掉更早的 Warning。
+- **`serviceKey` 由 platform-api 回填**：按对象名匹配 `<slug>-<服务 key>`，key 按长度降序匹配
+  （否则 `api` 会把 `api-v2` 的对象先认走）。对不上的对象前端显示为「未归属」。
+- **服务行联动**：概览的 `ServiceRow.podIssues`（k8s-server 已经算好的 Pod 级归因）在服务表格「状态」列
+  显示第一条，点了把事件页签切过去并只看这个服务（`v-model:service-key` 双向绑定）。
+- **保留期**：apiserver 的事件默认只留 1 小时（`--event-ttl`）。页面上「没有事件」不等于「没有问题」。
+

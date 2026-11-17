@@ -3156,6 +3156,8 @@ export interface AppServiceRow {
   nodePort?: number | null
   /** 线上正在入口灰度时的灰度信息；不在灰度为空 */
   canary?: AppServiceCanary | null
+  /** 工作负载未就绪时下钻到 Pod 的中文归因，第一条最关键；就绪 / 未发布为空 */
+  podIssues?: string[] | null
 }
 
 /** 入口灰度：权重、header 规则（没开为空）、灰度版本镜像与副本、灰度工作负载现读状态 */
@@ -3280,6 +3282,22 @@ export interface AppSettingsView {
   settings: AppSettings
   live?: AppSettings | null
   version: number
+}
+
+/** 应用自己的 Kubernetes 事件（/application/events，现读）。serviceKey 由后端按对象名前缀回填。 */
+export interface AppEvent {
+  /** Normal / Warning */
+  type?: string | null
+  reason?: string | null
+  message?: string | null
+  /** Pod / ReplicaSet / Deployment / StatefulSet / Service ... */
+  objectKind?: string | null
+  objectName?: string | null
+  count?: number | null
+  lastTimestamp?: string | null
+  firstTimestamp?: string | null
+  /** 属于哪个服务（应用里的节点 key）；对不上任何服务时为 null */
+  serviceKey?: string | null
 }
 
 export interface AppOverview {

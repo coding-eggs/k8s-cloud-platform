@@ -2,13 +2,17 @@ package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.app.AppEventDTO;
+import com.coding.common.models.app.AppEventsRequestDTO;
 import com.coding.common.models.app.AppObjectRefDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.system.PlatformAppExecutionMapper;
+import com.coding.data.mapper.system.PlatformAppServiceMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
+import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationResource;
 import com.coding.platformapi.app.AppObjectNames;
@@ -21,6 +25,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -37,6 +42,7 @@ public class ApplicationService {
 
     private final PlatformApplicationMapper apps;
     private final PlatformApplicationResourceMapper resources;
+    private final PlatformAppServiceMapper appServices;
     private final PlatformTenantNamespaceMapper allocations;
     private final NamespaceAccessGuard namespaceGuard;
     private final K8sAppClient client;
@@ -48,6 +54,7 @@ public class ApplicationService {
 
     public ApplicationService(PlatformApplicationMapper apps,
                               PlatformApplicationResourceMapper resources,
+                              PlatformAppServiceMapper appServices,
                               PlatformTenantNamespaceMapper allocations,
                               NamespaceAccessGuard namespaceGuard,
                               K8sAppClient client,
@@ -61,6 +68,7 @@ public class ApplicationService {
         this.ingressListeners = ingressListeners;
         this.apps = apps;
         this.resources = resources;
+        this.appServices = appServices;
         this.allocations = allocations;
         this.namespaceGuard = namespaceGuard;
         this.client = client;
@@ -107,6 +115,53 @@ public class ApplicationService {
 
     public ApplicationView get(String appId, String tenantId) {
         return view(require(appId, tenantId));
+    }
+
+    /**
+     * 应用自己的 Kubernetes 事件（现读，最多 limit 条）。
+     *
+     * <p>归属口径是 k8s-server 侧的机械过滤（平台标签 + 工作负载名前缀）；这里只做一件业务事：
+     * 把事件对象名映射回服务 key，前端才能按服务筛。
+     */
+    public List<AppEventDTO> events(String appId, String tenantId, Integer limit, Boolean warningsOnly) {
+        PlatformApplication app = require(appId, tenantId);
+        AppEventsRequestDTO req = new AppEventsRequestDTO();
+        req.setClusterId(app.getClusterId());
+        req.setNamespace(app.getNamespace());
+        req.setAppId(app.getId());
+        req.setLimit(limit);
+
+        List<String> keys = appServices.selectByApp(app.getId()).stream()
+                .map(PlatformAppService::getServiceKey)
+                // 长 key 优先：api-v2 要排在 api 前面，否则 api 会先把 api-v2 的对象认走
+                .sorted(Comparator.comparingInt(String::length).reversed())
+                .toList();
+        List<AppEventDTO> events = new ArrayList<>(client.events(req));
+        for (AppEventDTO e : events) {
+            e.setServiceKey(serviceKeyOf(app.getSlug(), keys, e.getObjectName()));
+        }
+        if (Boolean.TRUE.equals(warningsOnly)) {
+            events.removeIf(e -> !"Warning".equalsIgnoreCase(e.getType()));
+        }
+        return events;
+    }
+
+    /**
+     * 事件对象名 → 服务 key：等于某个服务对象名，或以「服务对象名-」开头（ReplicaSet / Pod）。
+     *
+     * <p>names 必须按长度降序传进来，避免一个 key 是另一个的前缀时先命中短的。
+     */
+    static String serviceKeyOf(String slug, List<String> keysByLengthDesc, String objectName) {
+        if (objectName == null) {
+            return null;
+        }
+        for (String key : keysByLengthDesc) {
+            String name = AppObjectNames.objectName(slug, key);
+            if (objectName.equals(name) || objectName.startsWith(name + "-")) {
+                return key;
+            }
+        }
+        return null;
     }
 
     public List<ApplicationView> list(String clusterId, String tenantId) {

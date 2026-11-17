@@ -2,6 +2,8 @@ package com.coding.platformapi.k8s;
 
 import com.coding.common.models.app.AppApplyRequestDTO;
 import com.coding.common.models.app.AppDependencySecretRequestDTO;
+import com.coding.common.models.app.AppEventDTO;
+import com.coding.common.models.app.AppEventsRequestDTO;
 import com.coding.common.models.app.AppInitRequestDTO;
 import com.coding.common.models.app.AppInitResultDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
@@ -57,6 +59,13 @@ public class K8sAppClient {
     public AppStatusResultDTO status(AppStatusRequestDTO body) {
         return gateway.exchange(HttpMethod.POST, "/application/status", Map.of(), body,
                 gateway.responseType(AppStatusResultDTO.class));
+    }
+
+    /** 应用自己的 Kubernetes 事件（现读，按 lastTimestamp 倒序）。 */
+    public List<AppEventDTO> events(AppEventsRequestDTO body) {
+        List<AppEventDTO> out = gateway.exchange(HttpMethod.POST, "/application/events", Map.of(), body,
+                gateway.listResponseType(AppEventDTO.class));
+        return out == null ? List.of() : out;
     }
 
     /** 某个 Service 声明的端口（应用端口池只分配网关 Service 上已声明的端口）；Service 不存在返回空列表。 */

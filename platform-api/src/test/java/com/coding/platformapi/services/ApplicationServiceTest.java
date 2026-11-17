@@ -1,10 +1,13 @@
 package com.coding.platformapi.services;
 
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.models.app.AppEventDTO;
 import com.coding.common.models.app.AppPruneRequestDTO;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformApplicationResourceMapper;
+import com.coding.data.mapper.system.PlatformAppServiceMapper;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
+import com.coding.data.models.system.PlatformAppService;
 import com.coding.data.models.system.PlatformApplication;
 import com.coding.data.models.system.PlatformApplicationResource;
 import com.coding.platformapi.k8s.K8sAppClient;
@@ -30,6 +33,7 @@ class ApplicationServiceTest {
 
     private PlatformApplicationMapper apps;
     private PlatformApplicationResourceMapper resources;
+    private PlatformAppServiceMapper appServices;
     private PlatformTenantNamespaceMapper allocations;
     private NamespaceAccessGuard namespaceGuard;
     private K8sAppClient client;
@@ -42,6 +46,7 @@ class ApplicationServiceTest {
     void setUp() {
         apps = mock(PlatformApplicationMapper.class);
         resources = mock(PlatformApplicationResourceMapper.class);
+        appServices = mock(PlatformAppServiceMapper.class);
         allocations = mock(PlatformTenantNamespaceMapper.class);
         namespaceGuard = mock(NamespaceAccessGuard.class);
         client = mock(K8sAppClient.class);
@@ -53,8 +58,8 @@ class ApplicationServiceTest {
         when(clusterService.options()).thenReturn(List.of(
                 new ClusterService.ClusterOption("c1", "coding-cluster", 1, null),
                 new ClusterService.ClusterOption("c2", "work-cluster", 1, null)));
-        service = new ApplicationService(apps, resources, allocations, namespaceGuard, client, appDependencies,
-                appExecutions, ports, listeners, clusterService);
+        service = new ApplicationService(apps, resources, appServices, allocations, namespaceGuard, client,
+                appDependencies, appExecutions, ports, listeners, clusterService);
     }
 
     private static ApplicationCreateRequest req() {
@@ -249,6 +254,47 @@ class ApplicationServiceTest {
         assertThat(out.getTargets()).extracting(t -> t.getClusterName() + "/" + t.getNamespace())
                 .containsExactly("coding-cluster/api", "coding-cluster/movie", "work-cluster/web");
         assertThat(out.getTargets().get(0).getClusterId()).isEqualTo("c1");
+    }
+
+    @Test
+    void eventsFillServiceKeyByObjectNamePrefixLongestFirst() {
+        when(apps.selectById("app_1")).thenReturn(row());
+        when(appServices.selectByApp("app_1")).thenReturn(List.of(serviceRow("api"), serviceRow("api-v2")));
+
+        AppEventDTO v2 = event("Warning", "demo-app-api-v2-5f6d-abc");
+        AppEventDTO api = event("Normal", "demo-app-api-77c-xyz");
+        AppEventDTO other = event("Normal", "demo-app-other");
+        when(client.events(any())).thenReturn(List.of(v2, api, other));
+
+        var out = service.events("app_1", "t1", null, null);
+
+        // api-v2 必须先把 api-v2 的对象认走，不能被 api 抢
+        assertThat(out).extracting(AppEventDTO::getServiceKey).containsExactly("api-v2", "api", null);
+    }
+
+    @Test
+    void eventsCanFilterToWarningsOnly() {
+        when(apps.selectById("app_1")).thenReturn(row());
+        when(appServices.selectByApp("app_1")).thenReturn(List.of(serviceRow("api")));
+        when(client.events(any())).thenReturn(List.of(
+                event("Warning", "demo-app-api-1"), event("Normal", "demo-app-api-2")));
+
+        var out = service.events("app_1", "t1", null, true);
+
+        assertThat(out).extracting(AppEventDTO::getType).containsExactly("Warning");
+    }
+
+    private static PlatformAppService serviceRow(String key) {
+        PlatformAppService s = new PlatformAppService();
+        s.setServiceKey(key);
+        return s;
+    }
+
+    private static AppEventDTO event(String type, String objectName) {
+        AppEventDTO e = new AppEventDTO();
+        e.setType(type);
+        e.setObjectName(objectName);
+        return e;
     }
 
     private static com.coding.data.models.auth.PlatformTenantNamespace alloc(String tenant, String cluster, String ns) {

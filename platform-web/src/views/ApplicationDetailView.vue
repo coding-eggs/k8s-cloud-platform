@@ -21,6 +21,7 @@ import AppReleaseDialog from '@/components/app-release/AppReleaseDialog.vue'
 import AppRollbackDialog from '@/components/app-release/AppRollbackDialog.vue'
 import AppExecutionPanel from '@/components/app-release/AppExecutionPanel.vue'
 import AppReleaseHistory from '@/components/app-release/AppReleaseHistory.vue'
+import AppEventsPanel from '@/components/app-release/AppEventsPanel.vue'
 import AppDependencyDialog from '@/components/app-release/AppDependencyDialog.vue'
 import AppDependencyDetail from '@/components/app-release/AppDependencyDetail.vue'
 import AppTopology from '@/components/app-release/AppTopology.vue'
@@ -140,6 +141,11 @@ function goList(): void {
 }
 function openService(row: AppServiceRow): void {
   router.push(`/applications/${appId.value}/services/${encodeURIComponent(row.key)}`)
+}
+/** 服务行的 Pod 归因 → 事件页签，并只看这个服务 */
+function openServiceEvents(key: string): void {
+  eventsServiceKey.value = key
+  bottomTab.value = 'events'
 }
 
 // ---------- 入口灰度（不在灰度：开启灰度对话框；灰度中：管理抽屉） ----------
@@ -342,6 +348,8 @@ onBeforeUnmount(() => {
 })
 
 const bottomTab = ref('releases')
+/** 服务行点「事件」时带给事件页签的服务筛选（组件自己也能改，双向绑定） */
+const eventsServiceKey = ref('')
 
 onMounted(async () => {
   await ensure()
@@ -446,11 +454,19 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
               <span v-else class="muted">—</span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" min-width="170">
+          <el-table-column label="状态" min-width="220">
             <template #default="{ row }">
               <StatusBadge :label="STATE_META[row.state as AppServiceState]?.text ?? row.state" :type="STATE_META[row.state as AppServiceState]?.type ?? 'neutral'" />
               <el-tooltip v-if="row.canary" :content="`灰度版本 ${row.canary.image}，${row.canary.replicas} 副本`" placement="top">
                 <el-tag size="small" type="primary" effect="light" class="app-detail__canary">灰度中 {{ row.canary.weight }}%</el-tag>
+              </el-tooltip>
+              <!-- 未就绪时给一条中文归因（调度失败 / 拉镜像失败 / 崩溃循环），点了跳到「事件」页签并只看这个服务 -->
+              <el-tooltip
+                v-if="row.podIssues?.length"
+                :content="`${row.podIssues.join('；')}（点击查看该服务的事件）`"
+                placement="top"
+              >
+                <span class="app-detail__issue" @click="openServiceEvents(row.key)">{{ row.podIssues[0] }}</span>
               </el-tooltip>
             </template>
           </el-table-column>
@@ -544,7 +560,12 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
           />
         </el-tab-pane>
         <el-tab-pane label="事件" name="events" lazy>
-          <EmptyState title="事件" description="应用事件将在后续版本提供。" />
+          <AppEventsPanel
+            v-model:service-key="eventsServiceKey"
+            :app-id="appId"
+            :tenant-id="tenantId"
+            :services="overview.services"
+          />
         </el-tab-pane>
       </el-tabs>
     </template>
@@ -665,5 +686,12 @@ watch(appId, () => { overview.value = null; app.value = null; void load() })
 .app-svc-dlg .app-svc-dlg__err { color: var(--el-color-danger); font-size: 12px; }
 .app-svc-dlg .app-svc-dlg__tip { margin-left: 10px; color: var(--el-text-color-secondary); font-size: 12px; }
 .app-detail__canary { margin-left: 6px; }
+/* 状态列里的 Pod 归因：一行省略号，点了跳事件页签 */
+.app-detail__issue {
+  display: block; margin-top: 4px; max-width: 100%;
+  font-size: 12px; color: var(--el-color-danger); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.app-detail__issue:hover { text-decoration: underline; }
 .app-detail__op { display: inline-flex; margin: 0 12px; }
 </style>

@@ -2,8 +2,10 @@ package com.coding.platformapi.controllers;
 
 import com.coding.common.models.page.PageResult;
 import com.coding.common.models.system.ResponseData;
+import com.coding.common.models.app.AppEventDTO;
 import com.coding.platformapi.models.AppCanaryMetricsView;
 import com.coding.platformapi.models.AppCanaryRequest;
+import com.coding.platformapi.models.AppEventsRequest;
 import com.coding.platformapi.models.AppReleaseListRequest;
 import com.coding.common.audit.AuditAction;
 import com.coding.common.audit.Auditable;
@@ -172,6 +174,14 @@ public class ApplicationController {
     public ResponseData<AppOverviewView> overview(@RequestBody AppReleaseRequest request) {
         return new ResponseData<>(release.overview(request.getAppId(),
                 auth.effectiveTenantId(request.getTenantId())));
+    }
+
+    @PostMapping("/events")
+    @Operation(summary = "应用自己的 Kubernetes 事件（排障第一现场）",
+            description = "现读，按时间倒序；apiserver 默认只保留 1 小时事件。serviceKey 由服务端按对象名前缀回填")
+    public ResponseData<List<AppEventDTO>> events(@RequestBody AppEventsRequest request) {
+        return new ResponseData<>(service.events(request.getAppId(),
+                auth.effectiveTenantId(request.getTenantId()), request.getLimit(), request.getWarningsOnly()));
     }
 
     @PostMapping("/release/preview")

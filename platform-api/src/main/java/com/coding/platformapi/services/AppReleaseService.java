@@ -590,7 +590,8 @@ public class AppReleaseService {
         Map<String, AppPending.Change> byKey = changes.stream()
                 .collect(Collectors.toMap(AppPending.Change::key, c -> c, (a, b) -> a));
         Map<String, Integer> nodePorts = new HashMap<>();
-        Map<String, String> states = liveStates(app, nodePorts);
+        Map<String, List<String>> podIssues = new HashMap<>();
+        Map<String, String> states = liveStates(app, nodePorts, podIssues);
         Map<String, String> newTags = newTags(live, byKey, tenantId);
         Map<String, AppOverviewView.Ingress> ingress = ingressOf(app);
 
@@ -611,7 +612,9 @@ public class AppReleaseService {
                     desired.get("replicas") instanceof Number n ? n.intValue() : null,
                     state, change == null ? null : change.type(), desired, row.getVersion(),
                     newTags.get(row.getServiceKey()), ingress.get(row.getServiceKey()),
-                    deployed ? nodePorts.get(objectName) : null, canaryRow(app, row.getServiceKey(), liveDesired, states)));
+                    deployed ? nodePorts.get(objectName) : null,
+                    canaryRow(app, row.getServiceKey(), liveDesired, states),
+                    deployed ? podIssues.getOrDefault(objectName, List.of()) : List.of()));
         }
         // 线上有、台账无行的孤儿服务（待删除）：照样列出来，才有地方勾选删除
         Set<String> rowKeys = rows.stream().map(PlatformAppService::getServiceKey).collect(Collectors.toSet());
@@ -625,7 +628,8 @@ public class AppReleaseService {
                     AppServiceDesired.image(liveDesired), AppServiceDesired.image(liveDesired),
                     liveDesired.get("replicas") instanceof Number n ? n.intValue() : null,
                     states.getOrDefault(objectName, "UNKNOWN"), "DELETED", liveDesired, null, null,
-                    ingress.get(c.key()), nodePorts.get(objectName), canaryRow(app, c.key(), liveDesired, states)));
+                    ingress.get(c.key()), nodePorts.get(objectName), canaryRow(app, c.key(), liveDesired, states),
+                    podIssues.getOrDefault(objectName, List.of())));
         }
         Map<String, String> depStatus = dependencies.statusOf(dependencyRows.selectByApp(app.getId()));
         List<AppOverviewView.DependencyRow> depRows = dependencyRows.selectByApp(app.getId()).stream()
@@ -879,7 +883,8 @@ public class AppReleaseService {
                 spec.external());
     }
 
-    private Map<String, String> liveStates(PlatformApplication app, Map<String, Integer> nodePorts) {
+    private Map<String, String> liveStates(PlatformApplication app, Map<String, Integer> nodePorts,
+                                           Map<String, List<String>> podIssues) {
         List<AppObjectRefDTO> objects = liveObjects(app);
         Map<String, String> out = new HashMap<>();
         if (objects.isEmpty()) {
@@ -894,6 +899,9 @@ public class AppReleaseService {
                 for (AppObjectStatusDTO s : result.getObjects()) {
                     if ("Deployment".equals(s.getKind()) || "StatefulSet".equals(s.getKind())) {
                         out.put(s.getName(), s.getState());
+                        if (s.getPodIssues() != null && !s.getPodIssues().isEmpty()) {
+                            podIssues.put(s.getName(), s.getPodIssues());
+                        }
                     } else if ("Service".equals(s.getKind()) && s.getNodePort() != null) {
                         nodePorts.put(s.getName(), s.getNodePort());
                     }
