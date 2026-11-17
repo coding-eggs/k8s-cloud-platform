@@ -57,6 +57,7 @@ SUPPORTED_K8S_MINORS = ['1.34', '1.35', '1.36']
 IMAGES = {
     'docker.io': [
         'bats/bats:1.14.0',
+        'bitnamilegacy/etcd:3.5.21-debian-12-r6',   # Milvus 内置 etcd（适配器显式钉版本）
         'bitnamilegacy/rabbitmq-cluster-operator:2.16.1-debian-12-r0',
         'bitnamilegacy/rmq-default-credential-updater:1.0.8-debian-12-r0',
         'chrislusf/seaweedfs:4.48',
@@ -96,6 +97,8 @@ IMAGES = {
         'buildah/stable:v1.35',
         # calico **不纳管**：它必须能先于镜像仓库可用（换 CNI 镜像得先有 CNI），固定走上游 quay.io。
         # 原因见 ChartImagePins 里那段注释；`quay.io` 项目下残留的 calico/* 仓库可以随手清掉。
+        # ACME HTTP01 的 solver Pod 由 controller 用 --acme-http01-solver-image 拉起
+        'jetstack/cert-manager-acmesolver:v1.21.2',
         'jetstack/cert-manager-cainjector:v1.21.2',
         'jetstack/cert-manager-controller:v1.21.2',
         'jetstack/cert-manager-startupapicheck:v1.21.2',
@@ -106,6 +109,10 @@ IMAGES = {
         'opstree/redis-operator:v0.27.0',
         'opstree/redis-sentinel:v7.0.15',
         'prometheus-operator/prometheus-operator:v0.94.1',
+        # operator 用 --prometheus-config-reloader 传进来，运行时注入 Prometheus（init-config-reloader
+        # + config-reloader）和 Alertmanager（config-reloader）两个 STS —— chart 的 image: 字段里
+        # 看不到，渲染护栏也扫不到。**最容易漏**，2026-11-17 就是它导致 kps 升级卡住。
+        'prometheus-operator/prometheus-config-reloader:v0.94.1',
         'prometheus/alertmanager:v0.34.1',
         'prometheus/node-exporter:v1.12.1-distroless',
         'prometheus/prometheus:v3.15.0-distroless',
@@ -117,9 +124,18 @@ IMAGES = {
     ],
     'ghcr.io': [
         'cloudnative-pg/cloudnative-pg:1.30.1',
+        'cloudnative-pg/postgresql:18.2',   # PG 实例镜像（适配器写 spec.imageName）
         'jkroepke/kube-webhook-certgen:1.11.0',
         'open-telemetry/opentelemetry-operator/opentelemetry-operator:0.161.0',
+        # operator 的 --collector-image / --target-allocator-image：建 collector CR 时才拉
+        'open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s:0.161.0',
+        'open-telemetry/opentelemetry-operator/target-allocator:0.161.0',
         'tektoncd/operator/operator-303303c315a48490ba6517859ef65b77:v0.81.2',
+        # operator 的 IMAGE_PIPELINES_PROXY
+        'tektoncd/operator/proxy-webhook-f6167da7bc41b96a27c5529f850e63d1:v0.81.2',
+        # ⚠️ IMAGE_JOB_PRUNER_TKN 不搬：chart 里 tag 字段写的是 digest（sha256:…），Harbor 的
+        #    复制规则只能按 tag 过滤，digest 搬不过来（2026-11-17 把该仓库全量 tag 拉下来也没有
+        #    那一版）。平台在 TektonConfig 里把 pruner 关掉了，见 ComponentRecipeCatalog。
         'tektoncd/operator/webhook-f2bb711aa8f0c0892856a4cbf6d9ddd8:v0.81.2',
     ],
     'registry.k8s.io': [

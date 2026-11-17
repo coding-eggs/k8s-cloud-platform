@@ -24,8 +24,9 @@ import java.util.Map;
  *
  * <p><b>凭据</b>：Operator 生成 {@code <cr>-app} Secret（含 user/password/host/port/dbname），平台不写口令。
  *
- * <p><b>镜像</b>：不写 {@code imageName}，用 Operator 自己的默认 PostgreSQL 镜像 —— 平台钉死镜像版本
- * 会让「升级 Operator」和「实例镜像」脱钩，反而更难维护。
+ * <p><b>镜像</b>：显式写 {@code spec.imageName}。<b>2026-11-17 起不再用 Operator 默认值</b> ——
+ * 默认值在 {@code ghcr.io}，走平台 Harbor 的环境拉不到（Harbor 有 ghcr 项目，但 operator 不会自己去
+ * 那儿取），而且版本不可控。钉版本后「换 PG 版本」是一次显式的改动，不是升 operator 的副作用。
  */
 @Component
 public class PostgresqlMiddlewareAdapter implements MiddlewareAdapter {
@@ -35,6 +36,12 @@ public class PostgresqlMiddlewareAdapter implements MiddlewareAdapter {
 
     /** CNPG 默认库名/属主（= 应用账号名），平台不改它 */
     static final String APP_DATABASE = "app";
+
+    /**
+     * 实例镜像。改这里就是换 PG 大版本，同步改 {@code scripts/harbor-replication.py} 的 IMAGES 表。
+     * CNPG 官方镜像按 {@code <major>.<minor>} 打 tag。
+     */
+    static final String POSTGRES_IMAGE = "ghcr.io/cloudnative-pg/postgresql:18.2";
 
     static final CustomResourceDefinitionContext CRD = new CustomResourceDefinitionContext.Builder()
             .withGroup(GROUP).withVersion(VERSION)
@@ -54,6 +61,7 @@ public class PostgresqlMiddlewareAdapter implements MiddlewareAdapter {
     @Override
     public List<CrSpec> buildCreate(MiddlewareCreateRequestDTO req) {
         Map<String, Object> spec = new LinkedHashMap<>();
+        spec.put("imageName", Images.resolve(POSTGRES_IMAGE, req));
         spec.put("bootstrap", bootstrap());
         spec.put("instances", instancesOf(req));
         spec.put("storage", storageOf(req));

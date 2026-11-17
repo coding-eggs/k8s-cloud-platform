@@ -2,6 +2,7 @@ package com.coding.k8sserver.middleware;
 
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
+import com.coding.common.models.image.ImageReference;
 import com.coding.common.models.middleware.MiddlewareCreateRequestDTO;
 import com.coding.common.models.middleware.MiddlewareScaleRequestDTO;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
@@ -43,6 +44,15 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
     static final String ROOT_PASSWORD_ENV = "COMMON_SECURITY_DEFAULTROOTPASSWORD";
     static final int METRICS_PORT = 9091;
     static final String ETCD_STORAGE = "5Gi";
+    /**
+     * 内置 etcd 的镜像 —— **显式钉版本，不用 operator 内置默认值**。
+     *
+     * <p>Milvus 只认证 etcd 3.5.x；bitnami 的旧 tag 从 2025-09 起只在 {@code bitnamilegacy} 下，
+     * 而 operator 默认值指向的仓库/版本不受平台控制、离线环境也拉不到，所以这里写死。
+     * 换 etcd 版本时同步 {@code scripts/harbor-replication.py} 的 IMAGES 表。
+     */
+    static final String ETCD_REPOSITORY = "bitnamilegacy/etcd";
+    static final String ETCD_TAG = "3.5.21-debian-12-r6";
     static final String INSTANCE_LABEL = "platform.coding/middleware-instance";
     static final Map<String, Object> ETCD_RESOURCES = Map.of(
             "requests", Map.of("cpu", "100m", "memory", "256Mi"),
@@ -298,6 +308,9 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
         etcdValues.put("replicaCount", etcdReplicas(req));
         etcdValues.put("persistence", persistence);
         etcdValues.put("resources", ETCD_RESOURCES);   // etcd chart 默认完全不写 resources，配额会拒
+        etcdValues.put("image", etcdImageOf(req));      // 显式钉镜像，见 ETCD_REPOSITORY/ETCD_TAG
+        // bitnami 系「不是 bitnami/* 仓库就拒绝渲染」的开关（换到 bitnamilegacy 后必须放行）
+        etcdValues.put("global", Map.of("security", Map.of("allowInsecureImages", true)));
 
         Map<String, Object> storage = new LinkedHashMap<>();
         storage.put("external", true);
@@ -319,6 +332,22 @@ public class MilvusMiddlewareAdapter implements MiddlewareAdapter {
         dependencies.put("etcd", Map.of("inCluster", inCluster));
         dependencies.put("storage", storage);
         return dependencies;
+    }
+
+    /**
+     * 内置 etcd 的镜像（bitnami chart 的三段式写法）：配了平台仓库就拼成
+     * {@code <registry>/docker.io/bitnamilegacy/etcd:<tag>}，没配就走上游（= 行为回到今天）。
+     */
+    private static Map<String, Object> etcdImageOf(MiddlewareCreateRequestDTO req) {
+        String host = req.getImageRegistryHost();
+        String registry = (host == null || host.isBlank())
+                ? "docker.io"
+                : ImageReference.prefix(host.trim(), req.getImageRegistryProject()) + "/docker.io";
+        Map<String, Object> image = new LinkedHashMap<>();
+        image.put("registry", registry);
+        image.put("repository", ETCD_REPOSITORY);
+        image.put("tag", ETCD_TAG);
+        return image;
     }
 
     private static Map<String, Object> resourcesOf(MiddlewareCreateRequestDTO req) {

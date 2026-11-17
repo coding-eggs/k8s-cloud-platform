@@ -46,6 +46,25 @@ class PostgresqlMiddlewareAdapterTest {
         assertThat(spec(res)).containsEntry("instances", 1);
     }
 
+    /** 实例镜像显式钉死：operator 默认值在 ghcr.io，走平台 Harbor 的环境拉不到 */
+    @Test
+    void instanceImageIsPinnedExplicitly() {
+        var res = adapter.buildCreate(req("SINGLE", 1)).get(0).resource();
+
+        assertThat(spec(res)).containsEntry("imageName",
+                "ghcr.io/cloudnative-pg/postgresql:18.2");
+    }
+
+    @Test
+    void instanceImageGoesThroughPlatformRegistry() {
+        var r = req("SINGLE", 1);
+        r.setImageRegistryHost("harbor.example.com");
+        var res = adapter.buildCreate(r).get(0).resource();
+
+        assertThat(spec(res)).containsEntry("imageName",
+                "harbor.example.com/ghcr.io/cloudnative-pg/postgresql:18.2");
+    }
+
     @Test
     void haEnforcesThreeInstances() {
         assertThat(spec(adapter.buildCreate(req("HA", 2)).get(0).resource())).containsEntry("instances", 3);

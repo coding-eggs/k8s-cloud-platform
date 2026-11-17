@@ -144,6 +144,7 @@ Endpoint 地址：
 | `registry.k8s.io/kube-state-metrics/kube-state-metrics` | kube-state-metrics |
 | `registry.k8s.io/kubectl` | kube-prometheus-stack 的 CRD 升级 Job。tag = **集群的 K8s 版本**，按脚本里的 `SUPPORTED_K8S_MINORS`（= 安装向导的 `KUBE_VERSIONS`）逐 minor 通配同步，minor 内任何 patch 都能命中 |
 | `quay.io/prometheus-operator/prometheus-operator` | Prometheus Operator |
+| `quay.io/prometheus-operator/prometheus-config-reloader` | Prometheus / Alertmanager 的 config-reloader 容器。operator 用 `--prometheus-config-reloader` 传进去、运行时才注入 STS，**chart 和渲染护栏都看不到**，最容易漏 |
 | `quay.io/prometheus/prometheus` | Prometheus |
 | `quay.io/prometheus/alertmanager` | Alertmanager |
 | `quay.io/prometheus/node-exporter` | node-exporter |
@@ -158,15 +159,15 @@ Endpoint 地址：
 | 上游仓库 | 用途 |
 |---|---|
 | `docker.io/istio/pilot`、`docker.io/istio/install-cni`、`docker.io/istio/ztunnel`、`docker.io/istio/proxyv2` | istiod / CNI / ztunnel / 网关与注入的 sidecar（1.31.x）。**proxyv2 容易漏**：gateway 的 Deployment 写的是 `image: auto`，由 istiod 按 `global.hub` 拼成 `<hub>/proxyv2:<tag>` |
-| `quay.io/jetstack/cert-manager-controller`、`-cainjector`、`-webhook`、`-startupapicheck` | cert-manager |
+| `quay.io/jetstack/cert-manager-controller`、`-cainjector`、`-webhook`、`-startupapicheck`、**`-acmesolver`** | cert-manager（acmesolver 由 controller 的 `--acme-http01-solver-image` 拉起，只在 ACME HTTP01 时用） |
 | `quay.io/tigera/operator` | Calico operator —— **也不改写，走官方**（整份 chart 跳过，见下方） |
 | `quay.io/calico/calico`、`quay.io/calico/node`、`quay.io/calico/third-party-cni-plugins` | Calico **工作负载** —— **有意不纳管，固定走上游**（见下方） |
 | `quay.io/strimzi/operator` + `quay.io/strimzi/kafka` | Strimzi（operator 与 broker） |
 | `docker.io/chrislusf/seaweedfs` | 对象存储 |
 | `registry.k8s.io/sig-storage/nfsplugin`、`csi-provisioner`、`csi-resizer`、`csi-snapshotter`、`livenessprobe`、`csi-node-driver-registrar`、`snapshot-controller` | NFS CSI 驱动（卷快照）。**snapshot-controller 容易漏**：chart 默认不渲染它，渲染护栏看不到 |
-| `ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator` | otel operator |
+| `ghcr.io/open-telemetry/opentelemetry-operator/opentelemetry-operator`、`ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-k8s`、`ghcr.io/open-telemetry/opentelemetry-operator/target-allocator` | otel operator + collector + target allocator（后两个是 operator 的 `--collector-image` / `--target-allocator-image`，建 collector CR 时才拉） |
 | `docker.io/grafana/tempo` | Tempo |
-| `ghcr.io/tektoncd/operator/operator-303303c315a48490ba6517859ef65b77`、`.../webhook-f2bb711aa8f0c0892856a4cbf6d9ddd8` | Tekton（名字带内容哈希，随 chart 版本变） |
+| `ghcr.io/tektoncd/operator/operator-303303c315a48490ba6517859ef65b77`、`.../webhook-f2bb711aa8f0c0892856a4cbf6d9ddd8`、`.../proxy-webhook-f6167da7bc41b96a27c5529f850e63d1` | Tekton（名字带内容哈希，随 chart 版本变）。**pruner 的 `tkn` 不搬**：chart 里 tag 字段写的是 digest，Harbor 复制规则只能按 tag 过滤 → 搬不过来；平台在 TektonConfig 里关掉了 pruner |
 | `ghcr.io/jkroepke/kube-webhook-certgen` | Prometheus Operator 的证书 Job |
 
 **中间件（Operator + 实例）**
@@ -214,13 +215,18 @@ Endpoint 地址：
 > 候选来自**镜像仓库连接**，与工作负载的镜像框是同一套 `useImageSuggest`），不会被强行改回 Harbor。
 > 换镜像仓库地址只需改 `PipelineBaseImages` 一处。
 
-### 3.3 不受这层改写管的三处
+### 3.3 不受这层改写管的地方
 
 | 位置 | 原因 | 处理 |
 |---|---|---|
-| CNPG 的 **PG 实例镜像**（`ghcr.io/cloudnative-pg/postgresql:<major>`） | 适配器有意不写 `imageName`，由 Operator 内置默认决定 | 想断网装：在 Harbor 里留同名路径，或在适配器里补 `spec.imageName` |
-| Milvus 的 **inCluster etcd 镜像** | 由 milvus-operator 内置 chart 决定，values 里没有 | 同上 |
 | **平台自身 4 个镜像** | 不在本仓库 | 见 §7 |
+| **Harbor 自己**（`docker.io/goharbor/*`） | 它就是仓库本身，自举拉不到自己 | 永远走官方 |
+| **calico 的运行期镜像**（`Installation` → `ImageSet`） | chart 里没有这些镜像，operator 运行时才拼出来；改前缀会让 calico-node/typha 滚动，单节点集群 CNI 一断就装不完 | 固定走上游 quay.io；离线交付另做方案 |
+
+> **CNPG 的 PG 实例镜像、Milvus 的内置 etcd 曾经也在这张表里**（用 operator 自带的默认值）。
+> 2026-11-17 起两者都在适配器里**显式钉版本**：`PostgresqlMiddlewareAdapter.POSTGRES_IMAGE`
+> （`ghcr.io/cloudnative-pg/postgresql:18.2`）、`MilvusMiddlewareAdapter.ETCD_REPOSITORY/ETCD_TAG`
+> （`docker.io/bitnamilegacy/etcd:3.5.21-debian-12-r6`）。改这两个常量要同步 `IMAGES` 表。
 
 ### 3.4 首次全量 + 核对
 

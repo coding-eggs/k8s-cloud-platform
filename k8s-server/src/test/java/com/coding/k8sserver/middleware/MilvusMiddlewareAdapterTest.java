@@ -88,6 +88,32 @@ class MilvusMiddlewareAdapterTest {
                 .isEqualTo(Map.of("cpu", "500m", "memory", "512Mi"));
     }
 
+    /** 内置 etcd 的镜像必须显式钉死：operator 的默认值不受平台控制，离线环境也拉不到 */
+    @Test
+    void inClusterEtcdImageIsPinned() {
+        var res = adapter.buildCreate(req("STANDALONE")).get(0).resource();
+        Map<String, Object> values = etcdValues(res);
+
+        assertThat(map(values.get("image")))
+                .containsEntry("registry", "docker.io")
+                .containsEntry("repository", "bitnamilegacy/etcd")
+                .containsEntry("tag", "3.5.21-debian-12-r6");
+        // bitnami chart 换仓库后要放行，否则渲染直接报错
+        assertThat(map(map(values.get("global")).get("security")))
+                .containsEntry("allowInsecureImages", true);
+    }
+
+    @Test
+    void inClusterEtcdImageGoesThroughPlatformRegistry() {
+        var r = req("STANDALONE");
+        r.setImageRegistryHost("harbor.example.com");
+        var res = adapter.buildCreate(r).get(0).resource();
+
+        assertThat(map(etcdValues(res).get("image")))
+                .containsEntry("registry", "harbor.example.com/docker.io")
+                .containsEntry("repository", "bitnamilegacy/etcd");
+    }
+
     @Test
     void storageIsAlwaysExternalS3WithSecretRef() {
         var res = adapter.buildCreate(req("STANDALONE")).get(0).resource();

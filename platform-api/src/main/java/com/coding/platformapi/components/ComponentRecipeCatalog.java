@@ -373,6 +373,13 @@ public class ComponentRecipeCatalog {
             "spec", Map.of(
                     "profile", "${tekton.profile}",
                     "targetNamespace", "tekton-pipelines",
+                    // 关掉两个 pruner（`pruner` = 老的 job pruner，`tektonpruner` = 新的事件式）：
+                    // 老的那个镜像在 chart 里 tag 字段写的是 **digest**（sha256:…），Harbor 复制规则
+                    // 只能按 tag 过滤，digest 永远搬不过来 → CronJob 一直拉不到镜像（2026-11-17 查实：
+                    // 仓库 103 个 tag 里没有那个 digest）。保留期本来也由平台自己管
+                    // （PipelineArchiveService 归档 + 孤儿 run 对账），让 tekton 删反而会跟归档打架。
+                    "pruner", Map.of("disabled", true),
+                    "tektonpruner", Map.of("disabled", true),
                     "pipeline", Map.of(
                             "coschedule", "pipelineruns",
                             "options", Map.of(

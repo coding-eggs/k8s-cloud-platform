@@ -412,6 +412,9 @@ class ComponentRecipeCatalogTest {
                 .contains("default:").contains("place-scripts").contains("prepare");
         // profile 由安装表单选（占位符），默认 all
         assertThat(spec).containsEntry("profile", "${tekton.profile}");
+        // pruner 的镜像在 chart 里按 digest 钉死，Harbor 复制规则搬不过来 → 平台显式关掉（两个都关）
+        assertThat(spec.get("pruner")).isEqualTo(Map.of("disabled", true));
+        assertThat(spec.get("tektonpruner")).isEqualTo(Map.of("disabled", true));
         assertThat(catalog.recipeOf("tekton", "BUSINESS").tektonProfile()).isTrue();
         // 我们自己下发 TektonConfig，就必须关掉 operator 的自动安装，否则两边抢同一个 config
         Map<String, Object> operator = (Map<String, Object>)
