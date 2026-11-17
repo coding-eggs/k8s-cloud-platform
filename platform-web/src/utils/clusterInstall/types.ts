@@ -58,6 +58,10 @@ export interface InstallForm {
   nodeSubnet: string
   online: boolean
   imageRegistry: string
+  /** **离线准备机**拉镜像用的镜像站前缀（如 `docker.m.daocloud.io`、内网 Harbor 项目地址）。
+   *  只影响 `offline-prepare.sh` 打包时从哪拉；拉完会打回原名，离线侧仍走本地 registry。
+   *  留空 = 官方源（registry.k8s.io / docker.io / quay.io / gcr.io / ghcr.io）。 */
+  imageMirror: string
   httpProxy: string
   httpsProxy: string
   noProxyExtra: string

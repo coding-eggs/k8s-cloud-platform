@@ -499,3 +499,26 @@ README 同时链到 `docs/development/cluster-prerequisites.md`，提醒纳管�
   有错误时只显示错误列表（提示回上一步改）。
 - 实测 1024 宽：五步标题正确、第 4 步只有表单、第 5 步卡片为「拓扑 / 校验 通过 / 部署包文件」，
   review 两列 478px、部署包 972px、无横向滚动。单测 60/60、构建通过。
+
+### 11.21 离线准备：下载源可配，并修掉清单里全是占位符的 bug（2026-11-17）
+
+用户：离线准备时下载包的地址应该可以配置，主要说镜像。
+
+先查出来一个真 bug：准备脚本原来直接拿 `inventory/<名>/hosts.yaml` 跑 `generate_list.sh`，而这份 inventory
+带着 `offline.yml`（`kube_image_repo: __CONTROL_HOST__:5000`、四个 `*_url: http://__CONTROL_HOST__:8080/...`），
+于是 `images.list` / `files.list` 里全是离线占位地址 —— 准备机根本拉不到，`register` 还会把
+`__CONTROL_HOST__:5000/...` 当成镜像路径推一遍。
+
+- **清单改从「在线副本」生成**：`inventory/<名>-online` = 复制一份 inventory，删掉 `group_vars/all/offline.yml`，
+  跑完 `generate_list.sh` 就删掉。清单里因此是 `registry.k8s.io/...`、`https://dl.k8s.io/...` 这类官方地址。
+- **镜像下载源可配**：向导「介质」步（离线时）新增「镜像下载源」`imageMirror`，填镜像站前缀
+  （`docker.m.daocloud.io`、内网 Harbor 项目地址），留空 = 官方源。校验：带 `://` 直接报错（它是前缀不是 URL）。
+- **拉取方式**：不再用 `manage-offline-container-images.sh create`（它只认清单里的原名，没有镜像站这一层），
+  改成自己循环：`src = <镜像源>/<原镜像名>`（`docker.io/` 前缀省掉，其余公共 registry 保留在路径里）→
+  拉取（5 次重试）→ `tag "$src" "$image"` 打回原名 → 按官方格式写 `container-images.txt` 并打成
+  `container-images.tar.gz`。离线侧 `register` 完全不受影响，仍然只认本地 registry。
+  `registry:2` 同样走镜像站（`<镜像源>/library/registry:2`），拉回后 tag 成 `registry:2`。
+- **代理**：向导里的 `http_proxy` / `https_proxy` / `no_proxy 追加` 现在会 `export` 进准备脚本，
+  静态文件（wget）与 pip 都走它。
+- README §9.1 补了这两段；单测 **64/64**（清单来源、镜像源映射、代理导出、镜像源校验各一条），
+  生成的脚本 `bash -n` 通过，构建通过。页面实测：介质步选「离线」后出现「镜像下载源」输入与说明。

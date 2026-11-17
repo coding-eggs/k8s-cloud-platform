@@ -296,6 +296,20 @@ function prev(): void {
               <el-input v-model="form.imageRegistry" placeholder="留空 = 官方源；可填内网 registry / 加速地址" style="max-width: 420px" />
             </el-form-item>
             <template v-else>
+              <el-form-item label="镜像下载源">
+                <el-input
+                  v-model="form.imageMirror"
+                  placeholder="留空 = 官方源；例如 docker.m.daocloud.io 或 harbor.local/k8s"
+                  style="max-width: 420px"
+                />
+              </el-form-item>
+              <el-form-item label="提示">
+                <span class="install__hint">
+                  离线包在能上网的机器上生成。准备机拉不到 registry.k8s.io / docker.io 时填这个镜像站前缀，
+                  会按「镜像源/原镜像名」拉取、再打回原名打进包，离线侧仍然只走本地 registry；
+                  静态文件与 pip 走下面的代理。
+                </span>
+              </el-form-item>
               <el-form-item label="离线部署">
                 <span class="install__hint">
                   离线地址不用填：`deploy-offline.sh` 会按控制机 IP 写入 inventory（文件服务 :8080、registry :5000），

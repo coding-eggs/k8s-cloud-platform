@@ -208,6 +208,10 @@ export function validate(form: InstallForm): Issue[] {
       '离线镜像按下载主机的架构准备（download_run_once）：与节点架构不同时请显式选择 amd64 / arm64',
     )
   }
+  // 镜像下载源是「registry 前缀」而不是 URL：写成 http://... 会在准备机上拼出非法镜像名
+  if (form.imageMirror.trim() && form.imageMirror.includes('://')) {
+    err('imageMirror', '镜像下载源只写 <主机>[:端口][/路径]，不要带 http:// 前缀')
+  }
 
   return issues
 }

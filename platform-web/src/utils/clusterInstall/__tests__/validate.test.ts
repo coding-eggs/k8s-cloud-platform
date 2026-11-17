@@ -18,7 +18,7 @@ function base(overrides: Partial<InstallForm> = {}): InstallForm {
     lbAddress: '', lbPort: 6443, lbDomain: '',
     cni: 'platform', podCidr: '10.233.64.0/18', serviceCidr: '10.233.0.0/18',
     clusterDomain: 'cluster.local', kubeProxyMode: 'ipvs', nodeSubnet: '',
-    online: true, imageRegistry: '',
+    online: true, imageRegistry: '', imageMirror: '',
     httpProxy: '', httpsProxy: '', noProxyExtra: '',
     ...overrides,
   }
@@ -92,6 +92,13 @@ test('离线 + 架构「自动」给 warning，显式选架构后不再提示', 
     validate({ ...offline, arch: 'amd64' }).some((i) => i.field === 'arch'),
     false,
   )
+})
+
+test('镜像下载源写成带 scheme 的地址：报错（它是镜像前缀，不是 URL）', () => {
+  assert.ok(
+    errors(base({ online: false, imageMirror: 'http://mirror.local' })).some((i) => i.field === 'imageMirror'),
+  )
+  assert.equal(errors(base({ online: false, imageMirror: 'mirror.local:5000/k8s' })).length, 0)
 })
 
 test('密码认证但没填密码：报错', () => {

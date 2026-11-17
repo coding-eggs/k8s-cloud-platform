@@ -188,6 +188,21 @@ function offlineVars(): KubesprayVars {
  */
 function offlinePrepareScript(form: InstallForm): string {
   const name = form.clusterName
+  const mirror = form.imageMirror.trim().replace(/\/+$/, '')
+  const proxy = form.httpProxy.trim()
+  const proxyTls = form.httpsProxy.trim()
+  const noProxy = ['localhost', '127.0.0.1', ...form.noProxyExtra.split(',').map((s) => s.trim()).filter(Boolean)].join(',')
+  const proxyBlock =
+    proxy || proxyTls
+      ? [
+          '# 准备机要经代理才能访问 github.com / dl.k8s.io / 镜像仓库时填的（来自向导「介质」步）',
+          proxy ? `export http_proxy="${proxy}"` : '',
+          proxyTls ? `export https_proxy="${proxyTls}"` : '',
+          `export no_proxy="${noProxy}"`,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      : ''
   const families = new Set(form.nodes.map((n) => osFamily(n.os)))
   const rpmPart = families.has('rpm')
     ? `if command -v yum >/dev/null 2>&1; then
@@ -217,8 +232,11 @@ set -euo pipefail
 
 CLUSTER_NAME="${name}"
 KUBESPRAY_VERSION="${KUBESPRAY_VERSION}"
+# 镜像站前缀：只决定准备机从哪拉镜像，拉完会打回原名打进离线包（留空 = 官方源）
+IMAGE_MIRROR="${mirror}"
 PKG_DIR="$(cd "$(dirname "$0")" && pwd)"
 WORKDIR="$(cd "$PKG_DIR/.." && pwd)/kubespray-offline"
+${proxyBlock}
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "缺少命令：$1"; exit 1; }; }
 need git
@@ -249,15 +267,61 @@ python3 -m pip install -U pip
 python3 -m pip download -r requirements.txt -d "$WORKDIR/pip"
 python3 -m pip install -r requirements.txt
 
-echo "==> [4/7] 生成清单并下载静态文件（NO_HTTP_SERVER：只下载，不起服务）"
-./contrib/offline/generate_list.sh -i "inventory/\${CLUSTER_NAME}/hosts.yaml"
+echo "==> [4/7] 生成下载清单（必须用去掉 offline.yml 的副本：否则清单里全是离线占位地址）"
+ONLINE_INV="inventory/\${CLUSTER_NAME}-online"
+rm -rf "$ONLINE_INV"
+cp -r "inventory/$CLUSTER_NAME" "$ONLINE_INV"
+rm -f "$ONLINE_INV/group_vars/all/offline.yml"
+./contrib/offline/generate_list.sh -i "$ONLINE_INV/hosts.yaml"
+rm -rf "$ONLINE_INV"
+
+echo "==> 下载静态文件（NO_HTTP_SERVER：只下载，不起服务）"
 (cd contrib/offline && NO_HTTP_SERVER=true sh ./manage-offline-files.sh)
 
-echo "==> [5/7] 打包容器镜像（镜像包里有 nginx，离线机上用它当文件服务器）"
-(cd contrib/offline && IMAGES_FROM_FILE=./temp/images.list sh ./manage-offline-container-images.sh create)
+echo "==> [5/7] 打包容器镜像（镜像站：\${IMAGE_MIRROR:-官方源}）"
+# 不用 manage-offline-container-images.sh create：它按清单里的原名拉，没有镜像站这一层。
+# 这里按 IMAGE_MIRROR 换成镜像站地址拉，再 tag 回原名，产出的 container-images.txt /
+# container-images.tar.gz 与官方脚本格式一致，离线侧 register 照常认。
+cd contrib/offline
+rm -rf container-images container-images.tar.gz
+mkdir -p container-images
+: > container-images/container-images.txt
+while read -r image; do
+  [ -n "$image" ] || continue
+  src="$image"
+  if [ -n "$IMAGE_MIRROR" ]; then
+    case "$image" in
+      docker.io/*) src="$IMAGE_MIRROR/\${image#docker.io/}" ;;
+      *) src="$IMAGE_MIRROR/$image" ;;
+    esac
+  fi
+  ok=""
+  for _ in 1 2 3 4 5; do
+    if $CONTAINER pull "$src"; then ok=1; break; fi
+    echo "拉取失败，重试：$src"
+    sleep 5
+  done
+  if [ -z "$ok" ]; then echo "拉取失败：$src"; exit 1; fi
+  # 打回原名：离线侧 register 会按公共 registry 前缀剥离后推本地仓库，名字必须与 kubespray 模板一致
+  if [ "$src" != "$image" ]; then $CONTAINER tag "$src" "$image"; fi
+  flat="$(echo "$image" | tr '/:' '--')"
+  flat="\${flat%%@*}"
+  $CONTAINER save -o "container-images/$flat.tar" "$image"
+  raw="$image"
+  case "$image" in
+    registry.k8s.io/*|gcr.io/*|ghcr.io/*|docker.io/*|quay.io/*) raw="\${image#*/}" ;;
+  esac
+  echo "$flat.tar  $raw" >> container-images/container-images.txt
+done < temp/images.list
+tar -czf container-images.tar.gz ./container-images
+rm -rf container-images
+cd "$WORKDIR/kubespray"
 
 echo "==> [6/7] 带上 registry:2 镜像（离线机上用它起私有仓库）"
-$CONTAINER pull registry:2
+REGISTRY_SRC="registry:2"
+if [ -n "$IMAGE_MIRROR" ]; then REGISTRY_SRC="$IMAGE_MIRROR/library/registry:2"; fi
+$CONTAINER pull "$REGISTRY_SRC"
+if [ "$REGISTRY_SRC" != "registry:2" ]; then $CONTAINER tag "$REGISTRY_SRC" registry:2; fi
 $CONTAINER save -o "$WORKDIR/registry.tar" registry:2
 
 echo "==> [7/7] 系统依赖包（节点装 conntrack / socat / ipvsadm 等）"
@@ -565,7 +629,7 @@ function readme(form: InstallForm): string {
       `- kubespray 源码（${KUBESPRAY_VERSION}）与本包的 inventory`,
       '- 控制机用的 Python 依赖（wheel 包，离线机上用 `pip install --no-index` 安装）',
       '- 静态文件：kubectl / kubelet / kubeadm / etcd / CNI 插件 / helm 等（`offline-files/`）',
-      '- 容器镜像（`container-images.tar.gz`，含 nginx）与 registry 本体镜像（`registry.tar`）',
+      '- 容器镜像（`container-images.tar.gz`）与 registry 本体镜像（`registry.tar`）',
       '- 节点系统依赖包（rpm / deb）',
       '',
       '### 9.1 在能上网的机器上生成离线包',
@@ -576,6 +640,14 @@ function readme(form: InstallForm): string {
       'chmod +x offline-prepare.sh',
       './offline-prepare.sh',
       '```',
+      '',
+      '准备机连不上 `registry.k8s.io` / `docker.io` / `quay.io` / `gcr.io` 时，回到向导「介质」步填下载源，脚本会带上：',
+      '',
+      '- **镜像**：填「镜像下载源」镜像站前缀（例如 `docker.m.daocloud.io`、内网 Harbor 的代理项目地址）。',
+      '  脚本按 `<镜像源>/<原镜像名>` 拉取（`docker.io/` 前缀会省掉），拉回来再打回原名打进包，',
+      '  **离线侧仍然只认本地 registry**，不受镜像源影响。留空则按官方地址拉。',
+      '- **静态文件 / pip**：填 `http_proxy` / `https_proxy`，脚本会 export 给 wget 与 pip；',
+      '  `no_proxy 追加` 里的主机也会一并带上。',
       '',
       '产出 `<集群名>-offline.tar.gz`。其中系统依赖包那一步要在**与节点同发行版**的机器上跑（脚本按 yum / apt 自动判断）；',
       '准备机发行版不一致时，把脚本第 7 步那两条命令拷到同发行版机器执行，再把 `rpm/`、`deb/` 放回工作目录重新打包。',

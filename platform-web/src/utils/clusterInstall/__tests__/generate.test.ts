@@ -18,7 +18,7 @@ function base(overrides: Partial<InstallForm> = {}): InstallForm {
     lbAddress: '', lbPort: 6443, lbDomain: '',
     cni: 'platform', podCidr: '10.233.64.0/18', serviceCidr: '10.233.0.0/18',
     clusterDomain: 'cluster.local', kubeProxyMode: 'ipvs', nodeSubnet: '',
-    online: true, imageRegistry: '',
+    online: true, imageRegistry: '', imageMirror: '',
     httpProxy: '', httpsProxy: '', noProxyExtra: '',
     ...overrides,
   }
@@ -159,9 +159,8 @@ test('README 写明 SSH 认证方式、跳转机与明文密码提醒', () => {
 test('离线：额外生成 offline-prepare.sh，串起官方的清单生成与下载脚本', () => {
   const sh = file(base({ online: false }), 'offline-prepare.sh')
   assert.match(sh, /clone --depth 1 --branch v2\.32\.0/)
-  assert.match(sh, /generate_list\.sh -i "inventory\/\$\{CLUSTER_NAME\}\/hosts\.yaml"/)
+  assert.match(sh, /generate_list\.sh -i "\$ONLINE_INV\/hosts\.yaml"/)
   assert.match(sh, /manage-offline-files\.sh/)
-  assert.match(sh, /manage-offline-container-images\.sh create/)
   // 在线模式不该有这份脚本
   assert.equal(generate(base()).some((x) => x.path.endsWith('offline-prepare.sh')), false)
 })
@@ -184,11 +183,41 @@ test('离线：准备脚本产出全离线包（pip / 镜像 / registry / 系统
   })
   const sh = file(f, 'offline-prepare.sh')
   assert.match(sh, /pip download -r requirements\.txt/)
-  assert.match(sh, /IMAGES_FROM_FILE=\.\/temp\/images\.list/)
+  // 自己拉镜像：写 register 认的 container-images.txt / container-images.tar.gz
+  assert.match(sh, /while read -r image/)
+  assert.match(sh, /container-images\.txt/)
+  assert.match(sh, /container-images\.tar\.gz/)
   assert.match(sh, /registry:2/)
   assert.match(sh, /--downloadonly/) // rpm 侧
   assert.match(sh, /apt-get install --download-only/) // deb 侧
   assert.match(sh, /tar czf/)
+})
+
+test('离线：清单从去掉 offline.yml 的副本生成，否则下载地址会是离线占位符', () => {
+  const sh = file(base({ online: false }), 'offline-prepare.sh')
+  assert.match(sh, /ONLINE_INV="inventory\/\$\{CLUSTER_NAME\}-online"/)
+  assert.match(sh, /rm -f "\$ONLINE_INV\/group_vars\/all\/offline\.yml"/)
+  assert.match(sh, /rm -rf "\$ONLINE_INV"/)
+})
+
+test('离线：镜像下载源可配（默认官方；配了就从镜像站拉，再打回原名打包）', () => {
+  const mirror = file(base({ online: false, imageMirror: 'docker.m.daocloud.io' }), 'offline-prepare.sh')
+  assert.match(mirror, /IMAGE_MIRROR="docker\.m\.daocloud\.io"/)
+  // docker.io 是默认 registry，镜像站下不带它；其他公共 registry 保留在路径里
+  assert.match(mirror, /docker\.io\/\*\) src="\$IMAGE_MIRROR\/\$\{image#docker\.io\/\}"/)
+  assert.match(mirror, /\$CONTAINER tag "\$src" "\$image"/)
+  // 没配就按官方地址拉
+  assert.match(file(base({ online: false }), 'offline-prepare.sh'), /IMAGE_MIRROR=""/)
+})
+
+test('离线：表单里的代理会导出给准备脚本（拉镜像与下载静态文件都走它）', () => {
+  const sh = file(
+    base({ online: false, httpProxy: 'http://10.0.0.1:8080', httpsProxy: 'http://10.0.0.1:8080', noProxyExtra: 'harbor.local' }),
+    'offline-prepare.sh',
+  )
+  assert.match(sh, /export http_proxy="http:\/\/10\.0\.0\.1:8080"/)
+  assert.match(sh, /export https_proxy="http:\/\/10\.0\.0\.1:8080"/)
+  assert.match(sh, /export no_proxy="localhost,127\.0\.0\.1,harbor\.local"/)
 })
 
 test('离线：生成 deploy-offline.sh（探测 IP、改写 offline.yml、起 registry 与文件服务、跑 playbook）', () => {
