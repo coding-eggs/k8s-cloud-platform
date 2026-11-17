@@ -104,6 +104,28 @@ public class GitCloneNode implements PipelineNode {
             script.append("--branch ").append(shellQuote(revision)).append(' ');
         }
         script.append(shellQuote(repo)).append(' ').append(shellQuote(dir)).append('\n');
+        // 钉住的提交（「先看后跑」的执行契约）：克隆后核对 HEAD，不一致就取该 sha 并 checkout。
+        // ⚠️ 取不到就**失败**，绝不悄悄换成仓库当前的 tip —— 那会让预览看到的和产物不是同一个提交。
+        // ⚠️ 全程**不用命令替换**：这一版 Tekton 不会把 `$$(` 还原成 `$(`（2026-10-16 真跑撞到，
+        //    见 ImagePushNode 那条注释），而裸 `$(` 会被 Tekton 当成它自己的变量。所以用
+        //    「rev-parse 写文件 + read 进普通变量」—— `$VAR` 这种写法 Tekton 从来不碰。
+        String pin = ctx.pin();
+        if (!pin.isEmpty()) {
+            String headFile = "/tmp/.git-head";
+            script.append("git -C ").append(shellQuote(dir)).append(" rev-parse HEAD > ")
+                  .append(shellQuote(headFile)).append('\n');
+            script.append("read -r head < ").append(shellQuote(headFile)).append('\n');
+            script.append("if [ \"$head\" != ").append(shellQuote(pin)).append(" ]; then\n");
+            script.append("  git -C ").append(shellQuote(dir)).append(" fetch --depth 1 origin ")
+                  .append(shellQuote(pin))
+                  .append(" || { echo \"本次运行钉住的提交 ").append(pin)
+                  .append(" 已不可获取（远端可能已前进或清理），请重新预览后再运行\"; exit 1; }\n");
+            script.append("  git -C ").append(shellQuote(dir)).append(" checkout --detach ")
+                  .append(shellQuote(pin)).append('\n');
+            script.append("fi\n");
+        }
+        // 实际构建的 commit **永远出现在日志里**（不依赖 Tekton results；预览核对与排障都靠这行）
+        script.append("git -C ").append(shellQuote(dir)).append(" log -1 --format='commit: %H %.12s'\n");
         // 把短 sha 落下来给下游拼 tag 用。
         // ⚠️ shell 的命令替换必须写成 $$(...) —— Tekton 会把未转义的 $(x) 当成**自己的**变量替换，
         // 解析不到就直接报错（这是 Tekton 脚本最常见的坑）。

@@ -2656,6 +2656,12 @@ export interface PipelineRun {
   completionTime?: string | null
   /** 每个节点的状态与耗时快照（`节点=状态` 逗号分隔），归档时抓下来的 */
   stepsJson?: string | null
+  /**
+   * 本次运行各 git 节点解析出的源码信息（JSON 数组字符串，形状见 {@link PipelineSourceRef}）。
+   * **触发时写一次**；归档后集群对象全被删掉，这里就是「这次到底构建了哪个 commit」的唯一记录。
+   * 老运行没有这个字段（能力上线前的运行）。
+   */
+  sourceJson?: string | null
   /** 触发那一刻的画布 JSON —— 历史运行详情画**它**，不是画今天的流水线。
    *  ⚠️ 列表接口（run/list）**不带**这个字段（几十条记录不该每条都背着画布），详情走 run/get */
   canvasJson?: string | null
@@ -2677,8 +2683,38 @@ export interface PipelineRun {
   createdAt?: string | null
 }
 
-/** 「这个集群能不能跑 CI」—— Tekton 与可动态供应的 StorageClass 缺一不可（spec §9）。 */
-export interface PipelineCapability {
+/**
+ * 一个 git 节点的源码信息 —— **触发前预览**与**运行详情**共用（后端 PipelineSourceRefDTO 的镜像）。
+ *
+ * ⚠️ sha 是**完整 40 位**：它同时是「钉住」的入参，短 sha 不能唯一确定提交，不能拿来 pin。
+ * `error` 非空 = 这条节点没解析出来（仓库不可达 / 分支不存在），但**不影响运行**。
+ */
+export interface PipelineSourceRef {
+  /** 画布节点 id（= Tekton task 名） */
+  nodeId: string
+  repo: string
+  /** 用户填的分支/标签；空 = 默认分支 */
+  revision?: string | null
+  /** branch / tag / default / pinned */
+  kind?: string | null
+  sha?: string | null
+  shortSha?: string | null
+  subject?: string | null
+  author?: string | null
+  committedAt?: string | null
+  /** 对比基线：最近一次成功运行同节点的 sha，没有则为父提交 */
+  baseSha?: string | null
+  /** last-success / parent / none */
+  baseKind?: string | null
+  /** 基线来自哪次运行（last-success 时有） */
+  baseRunName?: string | null
+  /** sha 拿到了、但提交标题/基线不可用时的原因 */
+  warning?: string | null
+  /** 这条节点没解析出来的原因 */
+  error?: string | null
+}
+
+/** 「这个集群能不能跑 CI」—— Tekton 与可动态供应的 StorageClass 缺一不可（spec §9）。 */export interface PipelineCapability {
   available: boolean
   /** 不可用时**一定有**原因：不然用户只看到「功能没了」 */
   reason?: string | null

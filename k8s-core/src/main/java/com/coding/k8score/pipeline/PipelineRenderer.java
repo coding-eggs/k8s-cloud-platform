@@ -105,6 +105,18 @@ public final class PipelineRenderer {
      */
     public PipelineSpec render(PipelineCanvas canvas, String workspaceClaimName,
                                Map<String, PipelineConnectionRef> connections) {
+        return render(canvas, workspaceClaimName, connections, Map.of());
+    }
+
+    /**
+     * @param connections 本次运行可用的连接（已授权、已解密），按 id 索引。
+     *                    空 map = 预览/校验路径（**不该拿到凭据**）。
+     * @param pins        本次运行钉住的 commit（画布节点 id → sha）。空 map = 不钉住
+     *                    （预览/校验路径，以及老客户端）。只有「创建运行」那条路径会带。
+     */
+    public PipelineSpec render(PipelineCanvas canvas, String workspaceClaimName,
+                               Map<String, PipelineConnectionRef> connections,
+                               Map<String, String> pins) {
         if (canvas == null || canvas.nodes() == null || canvas.nodes().isEmpty()) {
             throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID, "流水线至少要有一个节点");
         }
@@ -159,7 +171,8 @@ public final class PipelineRenderer {
         LocalDateTime renderedAt = LocalDateTime.now();
         for (PipelineCanvas.CanvasNode n : canvas.nodes()) {
             PipelineNode impl = nodes.of(n.type());
-            NodeContext ctx = new NodeContext(n.id(), n.id(), workspaceClaimName, n, connections, renderedAt);
+            NodeContext ctx = new NodeContext(n.id(), n.id(), workspaceClaimName, n, connections,
+                    renderedAt, pins == null ? Map.of() : pins);
             RenderedStep rendered = impl.render(ctx);
             // 挂载点**由节点给**（凭据 /creds、缓存 /cache）：以前这里对所有 extra 一律套 CREDS_MOUNT，
             // 加第二个额外 workspace 时就会静默挂错地方

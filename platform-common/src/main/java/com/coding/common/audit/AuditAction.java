@@ -226,6 +226,14 @@ public final class AuditAction {
     public static final String PIPELINE_CANCEL = "pipeline:cancel";
 
     /**
+     * 触发前预览源码：解析 git 节点实际会拉到的 commit，并与上次成功运行对比。
+     *
+     * <p>它虽然是**读**，但会拿解密后的 git 凭据去访问私有仓库（只做 ls-remote / 浅取），
+     * 而且看的是别人的代码 —— 记一条，事后能回答「谁在什么时候用平台凭据读过这个仓库」。
+     */
+    public static final String PIPELINE_PREVIEW_SOURCE = "pipeline:preview-source";
+
+    /**
      * 清掉命名空间的构建缓存（删那块长期卷）。
      *
      * <p>它值得进审计：这一步会让**下一次构建变慢**（依赖要重下一遍），而用户看到的现象是

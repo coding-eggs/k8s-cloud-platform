@@ -62,6 +62,7 @@ import type {
   PipelineRetryPlan,
   PipelineRetryWorkspaces,
   PipelineStepRef,
+  PipelineSourceRef,
   K8sHttpRoute,
   K8sNode,
   K8sPvc,
@@ -1036,8 +1037,25 @@ export const pipelineApi = {
    * 所以它们都要带**生效租户**。租户用户不用给（token 说了算，传别人的反而会被判 TENANT_MISMATCH）；
    * 平台管理员必须给：取顶栏级联里选的那个租户（`state.tenantId`）。
    */
-  run: (pipelineId: string, tenantId?: string, maskedNodeIds?: string[]) =>
-    http.post<never, string>('/pipeline/run', { id: pipelineId, tenantId, maskedNodeIds }),
+  /**
+   * 触发前预览源码：每个 git 节点会拉到哪个 commit（并与上次成功运行对比）。
+   *
+   * <p>⚠️ 这是**只读**的，但仍然要带生效租户：后端按调用者身份解析连接授权。
+   * 单个节点解析失败不会整体报错 —— 该节点带 `error` 返回，运行照旧可走。
+   */
+  previewSource: (pipelineId: string, tenantId?: string, maskedNodeIds?: string[]) =>
+    http.post<never, PipelineSourceRef[]>('/pipeline/run/preview',
+      { id: pipelineId, tenantId, maskedNodeIds }),
+  /**
+   * 触发一次运行。
+   *
+   * @param pinnedShas 预览时看到的 commit（画布节点 id → 完整 sha）。给了就**钉住**：
+   *                   这次按这些 sha 构建，取不到即失败 —— 不会悄悄换成仓库当前的 tip。
+   */
+  run: (pipelineId: string, tenantId?: string, maskedNodeIds?: string[],
+        pinnedShas?: Record<string, string>) =>
+    http.post<never, string>('/pipeline/run',
+      { id: pipelineId, tenantId, maskedNodeIds, pinnedShas }),
   /** 重试计划（只读）：前端据此决定哪些节点有「重试」按钮 */
   retryPlan: (runName: string, tenantId?: string) =>
     http.post<never, PipelineRetryPlan>('/pipeline/run/retry/plan', { runName, tenantId }),

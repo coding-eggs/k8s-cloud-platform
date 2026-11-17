@@ -22,7 +22,7 @@ import type { Edge, Node } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
-import type { Pipeline, PipelineCanvas, PipelineCanvasEdge, PipelineCanvasNode, PipelineRetryPlan, PipelineRun, PipelineStepRef } from '@/types'
+import type { Pipeline, PipelineCanvas, PipelineCanvasEdge, PipelineCanvasNode, PipelineRetryPlan, PipelineRun, PipelineSourceRef, PipelineStepRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useApplicationContext } from '@/composables/useApplicationContext'
@@ -225,6 +225,35 @@ function retryHintFor(id: string): string | undefined {
   return p.blocked[id] ?? undefined
 }
 
+// ---- 本次运行的源码（触发时落库；集群侧对象归档后已删，这里是唯一记录）----
+
+/** 按节点 id 索引的源码信息。老运行没有 sourceJson → 空（卡片上什么都不显示） */
+const sourcesById = computed<Record<string, PipelineSourceRef>>(() => {
+  const out: Record<string, PipelineSourceRef> = {}
+  const raw = run.value?.sourceJson
+  if (!raw) return out
+  try {
+    for (const s of JSON.parse(raw) as PipelineSourceRef[]) {
+      if (s?.nodeId) out[s.nodeId] = s
+    }
+  } catch {
+    /* 坏数据/老数据：不显示即可，不值得让整页报错 */
+  }
+  return out
+})
+
+/** 卡片上那行：`3f2c1ab · fix: ...`；完整 sha / 作者 / 时间放 title */
+function sourceHintFor(id: string): { text: string; title: string } | undefined {
+  const s = sourcesById.value[id]
+  if (!s?.sha) return undefined
+  const short = s.shortSha ?? s.sha.slice(0, 7)
+  return {
+    // 提交标题是 P2 才随「查看变更」一起取的 —— 没有就只显示短 sha，不占位
+    text: s.subject ? `${short} · ${s.subject}` : short,
+    title: [s.repo, s.sha, s.subject, s.author, s.committedAt].filter(Boolean).join('\n'),
+  }
+}
+
 /** DAG：画布 + 每个节点的状态（状态按节点 **id** 对） */
 const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
   const c = canvas.value
@@ -254,6 +283,9 @@ const dag = computed<{ nodes: Node[]; edges: Edge[] }>(() => {
           ? plan.value.retryableNodes.includes(n.id)
           : false,
         retryHint: retryHintFor(n.id),
+        // 这个 git 节点实际构建的 commit（触发时解析并落库）—— 归档后仍然看得到
+        sourceHint: sourceHintFor(n.id)?.text,
+        sourceHintTitle: sourceHintFor(n.id)?.title,
         onRetry: retryNode,
         // 正在看它的日志 —— 卡片描边跟着亮，免得"日志区换了但不知道换成了谁"
         selected: n.id === logNodeId.value,

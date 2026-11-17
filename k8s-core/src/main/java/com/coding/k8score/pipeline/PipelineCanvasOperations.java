@@ -64,8 +64,20 @@ public class PipelineCanvasOperations {
      * （platform-api 侧的 {@code CredentialService.endpointOnlyRef}，不解密）。
      */
     public PipelineSpec render(String canvasJson, Map<String, PipelineConnectionRef> connections) {
+        return render(canvasJson, connections, Map.of());
+    }
+
+    /**
+     * 渲染，额外带上**本次运行钉住的 commit**（画布节点 id → sha）。只有创建运行那条路径会带。
+     *
+     * <p>它不改任何结构规则，只是原样传进 {@code NodeContext} —— 怎么用由节点自己决定
+     * （git 节点：克隆后校验 HEAD，不一致就取该 sha 并 checkout）。
+     */
+    public PipelineSpec render(String canvasJson, Map<String, PipelineConnectionRef> connections,
+                               Map<String, String> pins) {
         return renderer.render(PipelineCanvas.fromJson(canvasJson), WORKSPACE,
-                connections == null ? Map.of() : connections);
+                connections == null ? Map.of() : connections,
+                pins == null ? Map.of() : pins);
     }
 
     /**

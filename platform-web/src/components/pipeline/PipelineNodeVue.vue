@@ -36,6 +36,10 @@ const props = defineProps<{
     onRetry?: (id: string) => void
     /** 不能重试的原因（来自 plan.blocked）—— 没有按钮时总得说清为什么 */
     retryHint?: string
+    /** 运行详情里：这个 git 节点实际构建的 commit（`3f2c1ab · 提交标题`） */
+    sourceHint?: string
+    /** sourceHint 的完整说明（完整 sha / 作者 / 时间）—— 悬停看 */
+    sourceHintTitle?: string
   }
 }>()
 
@@ -97,6 +101,8 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
       <div class="pnode-title">{{ title }}</div>
       <div class="pnode-type">{{ typeLabel }}</div>
       <div v-if="summary" class="pnode-summary">{{ summary }}</div>
+      <!-- 这次实际构建的 commit（触发时解析并落库）—— 「跑的是哪份代码」不用翻日志 -->
+      <div v-if="data.sourceHint" class="pnode-source" :title="data.sourceHintTitle">{{ data.sourceHint }}</div>
       <!-- 不能重试的原因：没有按钮时总得说清为什么（spec §8） -->
       <div v-if="data.retryHint" class="pnode-hint" :title="data.retryHint">{{ data.retryHint }}</div>
     </div>
@@ -198,6 +204,15 @@ const statusText = computed(() => (props.data.status ? STATUS_TEXT[props.data.st
   margin-top: 4px;
   font-size: 10px;
   color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 实际构建的 commit：比配置摘要更「事实」，用主色区分 */
+.pnode-source {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--accent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

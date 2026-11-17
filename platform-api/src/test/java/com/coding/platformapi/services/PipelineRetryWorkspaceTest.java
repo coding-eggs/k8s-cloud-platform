@@ -27,7 +27,8 @@ class PipelineRetryWorkspaceTest {
     private final com.coding.common.security.AuthContext auth =
             mock(com.coding.common.security.AuthContext.class);
     private final PipelineRunService svc =
-            new PipelineRunService(runMapper, logMapper, k8s, credentials, access, auth);
+            new PipelineRunService(runMapper, logMapper, k8s, credentials, access,
+                    mock(SourcePreviewService.class), auth);
 
     @Test
     void theListCarriesCountAndTotalBytes() {

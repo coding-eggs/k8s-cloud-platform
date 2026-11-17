@@ -17,6 +17,7 @@ import com.coding.data.models.system.PlatformPipelineRun;
 import com.coding.data.models.system.PlatformPipelineRunLog;
 import com.coding.platformapi.k8s.K8sPipelineClient;
 import com.coding.platformapi.models.PipelineRunContext;
+import com.coding.platformapi.models.PipelineSourceRefDTO;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
@@ -79,6 +80,8 @@ public class PipelineRunService {
     private final K8sPipelineClient k8s;
     private final CredentialService credentials;
     private final NamespaceAccessGuard access;
+    /** git 节点的源码解析（sha 预览 / 触发时落库）。 */
+    private final SourcePreviewService sourcePreview;
     /**
      * 只用来取「**调用者是谁**」—— 连接授权按它判（见 {@link #resolveConnections}）。
      * K8s 侧的身份仍然用 {@code ctx.tenantId()}，两者不能混。
@@ -90,12 +93,14 @@ public class PipelineRunService {
                               K8sPipelineClient k8s,
                               CredentialService credentials,
                               NamespaceAccessGuard access,
+                              SourcePreviewService sourcePreview,
                               com.coding.common.security.AuthContext auth) {
         this.runMapper = runMapper;
         this.logMapper = logMapper;
         this.k8s = k8s;
         this.credentials = credentials;
         this.access = access;
+        this.sourcePreview = sourcePreview;
         this.auth = auth;
     }
 
@@ -114,11 +119,28 @@ public class PipelineRunService {
      */
     public String run(PipelineDTO pipeline, String user, PipelineRunContext ctx,
                       List<String> maskedNodeIds) {
+        return run(pipeline, user, ctx, maskedNodeIds, Map.of());
+    }
+
+    /**
+     * 触发一次运行，并**钉住**预览到的提交（「先看后跑」的执行契约）。
+     *
+     * @param pinnedShas 画布节点 id → 完整 commit sha（来自 /run/preview 的结果）。
+     *                   非空时这些节点按该 sha 构建，取不到就失败 —— 不会悄悄换成仓库 tip。
+     *                   被屏蔽的节点不在本次画布里，它的 pin 会被忽略（不是错误）。
+     * @return 集群里的 PipelineRun 名（= 归档幂等键）
+     */
+    public String run(PipelineDTO pipeline, String user, PipelineRunContext ctx,
+                      List<String> maskedNodeIds, Map<String, String> pinnedShas) {
         String canvas = pipeline.getCanvasJson();
         Set<String> masked = PipelineCanvasMask.maskedClosure(canvas, maskedNodeIds);
         // ⚠️ 落库的是**完整画布**（详情页要画全图）；发给 k8s-server 的是**裁剪后的子画布**。
         //    这两者从本批起有意不同，别以为写错了。
         String toRun = PipelineCanvasMask.trim(canvas, allBut(canvas, masked), null);
+
+        // 钉住的提交：**形状不对就拒**（不会静默丢掉一个用户以为生效的 pin）；
+        // 不在本次要跑的画布里的节点（被屏蔽）直接忽略。
+        Map<String, String> pins = sanitizePins(toRun, pinnedShas);
 
         // ① 解析连接：**逐条校授权 + 解密**（绕过前端直接打接口也一样）。
         //    只解析**本次真要跑**的子画布 —— 被屏蔽节点的连接不要求授权（它这次不跑）。
@@ -139,6 +161,11 @@ public class PipelineRunService {
         row.setRunName(runName);
         row.setWorkspacePvc(workspacePvcName(runName));
         row.setMaskedNodesJson(masked.isEmpty() ? null : jsonArray(masked));
+        // 本次运行的源码信息：**触发时就落库**。归档会把集群侧对象全删掉，而「这次构建的是哪个
+        // commit」「上次成功的是什么」只有这一份能留住的记录（预览的基线也读它）。
+        // ⚠️ 解析失败不挡运行 —— 预览是附加信息，不是运行前提。
+        row.setSourceJson(sourcePreview.sourceJsonOrNull(
+                pipeline.getId(), toRun, auth.hatTenantId(), pins));
         row.setAttemptNo(1);
         row.setStatus("RUNNING");
         row.setTriggeredBy(user);
@@ -146,8 +173,13 @@ public class PipelineRunService {
 
         // ④ 再创建。失败就把刚写的那行撤掉 —— 库里不能留一条 RUNNING 的孤儿
         try {
-            k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
-                    runName, toRun, connections, workspacePvcName(runName), false);
+            if (pins.isEmpty()) {
+                k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
+                        runName, toRun, connections, workspacePvcName(runName), false);
+            } else {
+                k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
+                        runName, toRun, connections, workspacePvcName(runName), false, pins);
+            }
         } catch (RuntimeException e) {
             log.warn("创建 PipelineRun 失败，回滚刚落的库：{}", runName, e);
             runMapper.deleteById(row.getId());
@@ -254,13 +286,23 @@ public class PipelineRunService {
         row.setMaskedNodesJson(masked.isEmpty() ? null : jsonArray(masked));
         row.setReusedNodesJson(reused.isEmpty() ? null : jsonArray(reused));
         row.setWorkspacePvc(parent.getWorkspacePvc());
+        // 重试是**同一条链**：源码信息沿用父运行（它记的就是这块工作区里的那份代码）。
+        // 同时把父运行钉住的 sha 继续钉给本次要跑的 git 节点 —— 重试不该在「同一块工作区」上
+        // 悄悄换成仓库现在的 tip。
+        row.setSourceJson(parent.getSourceJson());
+        Map<String, String> pins = sanitizePins(trimmed, pinsOf(parent.getSourceJson()));
         row.setStatus("RUNNING");
         row.setTriggeredBy(user);
         runMapper.insert(row);
 
         try {
-            k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
-                    newRunName, trimmed, connections, parent.getWorkspacePvc(), true);
+            if (pins.isEmpty()) {
+                k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
+                        newRunName, trimmed, connections, parent.getWorkspacePvc(), true);
+            } else {
+                k8s.createRun(ctx.clusterId(), ctx.tenantId(), ctx.namespace(),
+                        newRunName, trimmed, connections, parent.getWorkspacePvc(), true, pins);
+            }
         } catch (RuntimeException e) {
             log.warn("创建重试运行失败，回滚刚落的库：{}", newRunName, e);
             runMapper.deleteById(row.getId());
@@ -717,6 +759,76 @@ public class PipelineRunService {
             out.add(credentials.resolveForPipeline(ref.id(), ref.expectedType(), callerTenantId));
         }
         return out;
+    }
+
+    /**
+     * 触发前预览源码：把画布按**与触发完全相同的规则**裁剪（屏蔽闭包）后，逐 git 节点解析
+     * 「分支/标签 → 实际 commit」。
+     *
+     * <p>裁剪规则只有一份（{@link PipelineCanvasMask}）：预览给人看的节点集合，必须就是
+     * 这次触发真会跑的节点集合，否则「看到的不等于跑的」。
+     */
+    public List<PipelineSourceRefDTO> preview(
+            String pipelineId, String canvasJson, List<String> maskedNodeIds) {
+        Set<String> masked = PipelineCanvasMask.maskedClosure(canvasJson,
+                maskedNodeIds == null ? List.of() : maskedNodeIds);
+        String toRun = PipelineCanvasMask.trim(canvasJson, allBut(canvasJson, masked), null);
+        return sourcePreview.preview(pipelineId, toRun, auth.hatTenantId());
+    }
+
+    /**
+     * 钉住的提交：**形状不对就拒**；不在本次画布里的节点（被屏蔽）忽略。
+     *
+     * <p>为什么不拒绝「未知节点」：屏蔽是触发框里的交互，前端会把预览到的所有 git 节点连同 pin
+     * 一起提交，被屏蔽的那个自然不在子画布里 —— 那不是错误。而 sha 形状不对是**客户端算错了**，
+     * 静默丢掉会让用户以为「钉住生效了」，所以直接拒。
+     */
+    private Map<String, String> sanitizePins(String canvasJson, Map<String, String> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        Set<String> gitNodes = new LinkedHashSet<>();
+        for (SourcePreviewService.GitNode node : sourcePreview.gitNodes(canvasJson)) {
+            gitNodes.add(node.nodeId());
+        }
+        Map<String, String> out = new LinkedHashMap<>();
+        raw.forEach((nodeId, sha) -> {
+            if (sha == null || sha.isBlank()) {
+                return;
+            }
+            if (!SourcePreviewService.isFullSha(sha)) {
+                throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                        "钉住的提交 sha 不合法（需要完整的 40 位十六进制）：" + nodeId);
+            }
+            if (gitNodes.contains(nodeId)) {
+                out.put(nodeId, sha.trim().toLowerCase());
+            }
+        });
+        return out;
+    }
+
+    /** 从 {@code source_json} 还原「节点 id → sha」（重试沿用时用）。解析不了就当没有。 */
+    static Map<String, String> pinsOf(String sourceJson) {
+        if (sourceJson == null || sourceJson.isBlank()) {
+            return Map.of();
+        }
+        try {
+            JsonNode arr = JSON.readTree(sourceJson);
+            if (!arr.isArray()) {
+                return Map.of();
+            }
+            Map<String, String> out = new LinkedHashMap<>();
+            for (JsonNode n : arr) {
+                String nodeId = n.path("nodeId").asString(null);
+                String sha = n.path("sha").asString(null);
+                if (nodeId != null && sha != null && !sha.isBlank()) {
+                    out.put(nodeId, sha);
+                }
+            }
+            return out;
+        } catch (RuntimeException e) {
+            return Map.of();
+        }
     }
 
     /**

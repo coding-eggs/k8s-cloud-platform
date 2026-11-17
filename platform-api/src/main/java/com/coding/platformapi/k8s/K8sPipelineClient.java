@@ -82,6 +82,23 @@ public class K8sPipelineClient {
                                    String runName, String canvasJson,
                                    java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections,
                                    String workspacePvc, boolean reuseWorkspace) {
+        return createRun(clusterId, tenantId, namespace, runName, canvasJson, connections,
+                workspacePvc, reuseWorkspace, null);
+    }
+
+    /**
+     * 同上，额外带上**本次运行钉住的 commit**（画布节点 id → 完整 sha）。
+     *
+     * <p>它是「先看后跑」的执行契约：k8s-server 会把每个 pin 交给对应 git 节点，节点克隆后
+     * 核对 HEAD，不一致就取该 sha 并 checkout，取不到就失败 —— 不会悄悄换成仓库当前的 tip。
+     *
+     * @param sourcePins null / 空 = 不钉住（老客户端与预览路径的行为）
+     */
+    public PipelineRunDTO createRun(String clusterId, String tenantId, String namespace,
+                                   String runName, String canvasJson,
+                                   java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections,
+                                   String workspacePvc, boolean reuseWorkspace,
+                                   java.util.Map<String, String> sourcePins) {
         PipelineRunDTO dto = new PipelineRunDTO();
         dto.setClusterId(clusterId);
         dto.setTenantId(tenantId);
@@ -91,6 +108,7 @@ public class K8sPipelineClient {
         dto.setConnections(connections);
         dto.setWorkspacePvc(workspacePvc);
         dto.setReuseWorkspace(reuseWorkspace);
+        dto.setSourcePins(sourcePins == null || sourcePins.isEmpty() ? null : sourcePins);
         return k8s.create(dto);
     }
 

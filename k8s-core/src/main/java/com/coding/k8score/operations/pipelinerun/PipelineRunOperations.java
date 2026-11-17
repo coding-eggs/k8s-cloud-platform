@@ -485,7 +485,7 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                 byId.put(c.id(), c);
             }
         }
-        PipelineSpec spec = canvasOps.render(dto.getPipelineCanvasJson(), byId);
+        PipelineSpec spec = canvasOps.render(dto.getPipelineCanvasJson(), byId, dto.getSourcePins());
 
         PipelineRun pr = new PipelineRun();
         // ⚠️ tekton-model 不初始化 metadata —— 不先 setMetadata 就 NPE

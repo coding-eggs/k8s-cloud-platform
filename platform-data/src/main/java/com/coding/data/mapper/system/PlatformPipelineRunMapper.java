@@ -34,6 +34,15 @@ public interface PlatformPipelineRunMapper {
                                              @Param("clusterId") String clusterId,
                                              @Param("namespace") String namespace);
 
+    /**
+     * 最近的几次**成功**运行（按开始时间倒序）—— 「源码预览」找基线的唯一入口。
+     *
+     * <p>只取几列（含 {@code source_json}），不带画布与 YAML：传 {@code limit} 把范围卡死，
+     * 调用方在 Java 里找「同一条流水线里最近一次留下了该 git 节点 sha 的成功运行」。
+     */
+    List<PlatformPipelineRun> listRecentSucceeded(@Param("pipelineId") String pipelineId,
+                                                  @Param("limit") int limit);
+
     /** 全部（跨命名空间/流水线）。保留清理与启动对账用 */
     List<PlatformPipelineRun> listAll();
 

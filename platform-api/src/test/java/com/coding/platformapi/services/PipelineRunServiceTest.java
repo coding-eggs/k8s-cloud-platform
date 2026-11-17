@@ -43,8 +43,11 @@ class PipelineRunServiceTest {
     private final com.coding.common.security.AuthContext auth =
             mock(com.coding.common.security.AuthContext.class);
 
+    private final SourcePreviewService sourcePreview = mock(SourcePreviewService.class);
+
     private final PipelineRunService svc =
-            new PipelineRunService(runMapper, logMapper, k8s, credentials, access, auth);
+            new PipelineRunService(runMapper, logMapper, k8s, credentials, access,
+                    sourcePreview, auth);
 
     private final PipelineRunContext ctx = new PipelineRunContext("c1", "ns1", "t1");
 
@@ -202,6 +205,58 @@ class PipelineRunServiceTest {
 
         assertThat(a).isNotEqualTo(b);
         assertThat(a).matches("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$");   // K8s 对象名的规矩
+    }
+
+    // ---- 源码预览 / 钉住（P1）----
+
+    @Test
+    void aPreviewedCommitIsPinnedIntoTheRunAndRecordedOnTheRow() {
+        // ⭐ 「先看后跑」：预览到的 sha 钉进这次运行，并落库到 source_json（归档后仍能追溯）
+        when(k8s.createRun(anyString(), any(), anyString(), anyString(), anyString(), any(),
+                anyString(), anyBoolean(), any())).thenReturn(new PipelineRunDTO());
+        when(sourcePreview.gitNodes(anyString())).thenReturn(List.of(
+                new SourcePreviewService.GitNode("n0", "https://gitlab.example.com/g/r.git", "main", "conn-1")));
+        String sha = "3f2c1ab9d4e5f60718293a4b5c6d7e8f90123456";
+        when(sourcePreview.sourceJsonOrNull(anyString(), anyString(), any(), any()))
+                .thenReturn("[{\"nodeId\":\"n0\",\"sha\":\"" + sha + "\"}]");
+
+        svc.run(pipeline(canvas("conn-1")), "alice", ctx, List.of(), Map.of("n0", sha));
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, String>> pins = ArgumentCaptor.forClass(Map.class);
+        verify(k8s).createRun(anyString(), any(), anyString(), anyString(), anyString(), any(),
+                anyString(), anyBoolean(), pins.capture());
+        assertThat(pins.getValue()).containsEntry("n0", sha);
+
+        ArgumentCaptor<PlatformPipelineRun> row = ArgumentCaptor.forClass(PlatformPipelineRun.class);
+        verify(runMapper).insert(row.capture());
+        assertThat(row.getValue().getSourceJson()).contains(sha);
+    }
+
+    @Test
+    void aMalformedPinnedShaIsRejectedInsteadOfSilentlyDropped() {
+        // sha 形状不对 = 客户端算错了。静默丢掉会让用户以为「钉住生效了」
+        assertThatThrownBy(() -> svc.run(pipeline(canvas("conn-1")), "alice", ctx,
+                List.of(), Map.of("n0", "deadbeef")))
+                .isInstanceOf(CloudPlatformException.class)
+                .hasMessageContaining("sha 不合法");
+
+        verify(k8s, never()).createRun(anyString(), any(), anyString(), anyString(), anyString(),
+                any(), anyString(), anyBoolean(), any());
+    }
+
+    @Test
+    void aPinForANodeThatIsNotRunningIsIgnored() {
+        // 被屏蔽的 git 节点不在子画布里 —— 它的 pin 不是错误，只是不生效
+        when(sourcePreview.gitNodes(anyString())).thenReturn(List.of());
+
+        svc.run(pipeline(canvas("conn-1")), "alice", ctx, List.of(),
+                Map.of("n0", "3f2c1ab9d4e5f60718293a4b5c6d7e8f90123456"));
+
+        verify(k8s).createRun(anyString(), any(), anyString(), anyString(), anyString(), any(),
+                anyString(), anyBoolean());
+        verify(k8s, never()).createRun(anyString(), any(), anyString(), anyString(), anyString(),
+                any(), anyString(), anyBoolean(), any());
     }
 
     // ---- 历史 ----

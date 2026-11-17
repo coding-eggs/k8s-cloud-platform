@@ -8,6 +8,7 @@
     <result column="cluster_id"      jdbcType="VARCHAR"     property="clusterId" />
     <result column="namespace"       jdbcType="VARCHAR"     property="namespace" />
     <result column="canvas_json"     jdbcType="LONGVARCHAR" property="canvasJson" />
+    <result column="source_json"     jdbcType="LONGVARCHAR" property="sourceJson" />
     <result column="run_name"        jdbcType="VARCHAR"     property="runName" />
     <result column="status"          jdbcType="VARCHAR"     property="status" />
     <result column="reason"          jdbcType="VARCHAR"     property="reason" />
@@ -28,7 +29,8 @@
   <sql id="Base_Column_List">
     id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by,
     start_time, completion_time, steps_json, run_yaml, created_at,
-    parent_run_id, attempt_no, retry_from_node, masked_nodes_json, reused_nodes_json, workspace_pvc
+    parent_run_id, attempt_no, retry_from_node, masked_nodes_json, reused_nodes_json, workspace_pvc,
+    source_json
   </sql>
 
   <!-- 列表用：**不带 canvas_json / run_yaml 两个大字段** —— 一次历史几十条，
@@ -42,13 +44,15 @@
   <insert id="insert" parameterType="com.coding.data.models.system.PlatformPipelineRun">
     insert into platform_pipeline_run
       (id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by,
-       parent_run_id, attempt_no, retry_from_node, masked_nodes_json, reused_nodes_json, workspace_pvc)
+       parent_run_id, attempt_no, retry_from_node, masked_nodes_json, reused_nodes_json, workspace_pvc,
+       source_json)
     values (#{id,jdbcType=VARCHAR}, #{pipelineId,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR},
       #{namespace,jdbcType=VARCHAR}, #{canvasJson,jdbcType=LONGVARCHAR}, #{runName,jdbcType=VARCHAR},
       #{status,jdbcType=VARCHAR}, #{reason,jdbcType=VARCHAR}, #{triggeredBy,jdbcType=VARCHAR},
       #{parentRunId,jdbcType=VARCHAR}, #{attemptNo,jdbcType=INTEGER},
       #{retryFromNode,jdbcType=VARCHAR}, #{maskedNodesJson,jdbcType=LONGVARCHAR},
-      #{reusedNodesJson,jdbcType=LONGVARCHAR}, #{workspacePvc,jdbcType=VARCHAR})
+      #{reusedNodesJson,jdbcType=LONGVARCHAR}, #{workspacePvc,jdbcType=VARCHAR},
+      #{sourceJson,jdbcType=LONGVARCHAR})
   </insert>
 
   <!-- 归档回写：只写结果列。run_name / pipeline_id / cluster_id / namespace / canvas_json
@@ -87,6 +91,18 @@
       and cluster_id = #{clusterId,jdbcType=VARCHAR}
       and namespace = #{namespace,jdbcType=VARCHAR}
     order by created_at desc, id desc
+  </select>
+
+  <!-- 最近的几次成功运行 —— 只给「源码预览找基线」用（上次成功运行用的是哪个 commit）。
+       只取几列、且**只取 source_json**：这条查询不需要画布与 YAML。 -->
+  <select id="listRecentSucceeded" resultMap="BaseResultMap">
+    select id, pipeline_id, cluster_id, namespace, run_name, status, start_time, completion_time,
+           source_json, created_at
+    from platform_pipeline_run
+    where pipeline_id = #{pipelineId,jdbcType=VARCHAR}
+      and status = 'SUCCEEDED'
+    order by start_time desc, created_at desc, id desc
+    limit #{limit}
   </select>
 
   <select id="listAll" resultMap="BaseResultMap">

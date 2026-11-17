@@ -34,6 +34,18 @@ public class PipelineRunDTO extends BaseResources {
     private java.util.List<com.coding.common.models.pipeline.PipelineConnectionRef> connections;
 
     /**
+     * 本次运行**钉住**的 git 提交：画布节点 id → 完整 commit sha。只有 create 那条路径会带。
+     *
+     * <p>「先看后跑」的执行契约：用户触发前看到的那个提交，就是这次真正构建的那个。渲染层把它
+     * 交给 git 节点 —— 克隆后校验 HEAD，不一致就取该 sha 并 checkout；取不到就**失败**，
+     * 绝不悄悄换成别的提交（那样预览与产物就对不上了）。
+     *
+     * <p>⚠️ 只对<b>本次真要跑的</b> git 节点生效：被屏蔽的节点不在裁剪后的画布里，渲染器根本看不到它。
+     */
+    @Schema(description = "钉住的 git 提交（画布节点 id → 完整 sha）。仅 create 时传")
+    private java.util.Map<String, String> sourcePins;
+
+    /**
      * 本次运行绑定的工作区 PVC 名。**创建时必填**：
      * 首跑由 platform-api 生成 {@code platform-pipeline-ws-<runName>}；重试沿用父运行那一块。
      *

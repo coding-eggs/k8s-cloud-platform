@@ -14,7 +14,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPlay } from '@element-plus/icons-vue'
 import { pipelineApi } from '@/api'
-import type { Pipeline, PipelineCanvas } from '@/types'
+import type { Pipeline, PipelineCanvas, PipelineSourceRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useApplicationContext } from '@/composables/useApplicationContext'
@@ -105,13 +105,36 @@ async function openRun(row: Pipeline) {
   }
   runTarget.value = row
   runDialogOpen.value = true
+  void loadPreview(row)
 }
 
-async function confirmRun(maskedNodeIds: string[]) {
+// ---- 源码预览（触发前：这次会构建哪个 commit）—— 失败不挡运行 ----
+
+const previewSources = ref<PipelineSourceRef[]>([])
+const previewLoading = ref(false)
+const previewError = ref<string | null>(null)
+
+async function loadPreview(row: Pipeline) {
+  previewSources.value = []
+  previewError.value = null
+  if (!row.id) return
+  previewLoading.value = true
+  try {
+    previewSources.value = (await pipelineApi.previewSource(row.id, tenantId.value)) ?? []
+  } catch (e) {
+    // 拦截器已提示；这里只留一句话，运行按钮照常可用
+    previewError.value = (e as Error)?.message || '无法解析仓库'
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function confirmRun(maskedNodeIds: string[], pinnedShas: Record<string, string>) {
   const row = runTarget.value
   if (!row?.id) return
   try {
-    const runName = await pipelineApi.run(row.id, tenantId.value, maskedNodeIds)
+    const pins = Object.keys(pinnedShas ?? {}).length ? pinnedShas : undefined
+    const runName = await pipelineApi.run(row.id, tenantId.value, maskedNodeIds, pins)
     ElMessage.success(`已触发：${runName}`)
     runDialogOpen.value = false
     toRuns(row)
@@ -189,6 +212,9 @@ usePaletteAction({
       v-model="runDialogOpen"
       :nodes="runCanvas.nodes"
       :edges="runCanvas.edges"
+      :sources="previewSources"
+      :preview-loading="previewLoading"
+      :preview-error="previewError"
       :title="`触发运行 · ${runTarget?.name ?? ''}`"
       @confirm="confirmRun"
     />

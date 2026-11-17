@@ -48,6 +48,16 @@
             <artifactId>commons-pool2</artifactId>
         </dependency>
 
+        <!-- 流水线源码预览：在进程内 ls-remote / 浅取两个 commit / 算文件差异。
+             用 JGit 而不是起 `git` 子进程：镜像里不必装 git，凭据只在内存里
+             （不写临时 .netrc），超时与临时目录也由我们控制。只装在本模块 ——
+             k8s-server 零业务，不该知道「仓库」这回事。 -->
+        <dependency>
+            <groupId>org.eclipse.jgit</groupId>
+            <artifactId>org.eclipse.jgit</artifactId>
+            <version>6.10.0.202406032230-r</version>
+        </dependency>
+
 
         <!--Pod exec 中继：对前端暴露 WS，向 k8s-server 建客户端 WS（不引 fabric8）-->
         <dependency>

@@ -15,7 +15,7 @@ class PlatformPipelineRunMapperXmlTest {
 
     private static final List<String> NEW_COLUMNS = List.of(
             "parent_run_id", "attempt_no", "retry_from_node",
-            "masked_nodes_json", "reused_nodes_json", "workspace_pvc");
+            "masked_nodes_json", "reused_nodes_json", "workspace_pvc", "source_json");
 
     private static String xml() throws Exception {
         try (var in = PlatformPipelineRunMapperXmlTest.class

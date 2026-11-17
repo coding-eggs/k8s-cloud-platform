@@ -62,6 +62,17 @@ public class PlatformPipelineRun {
     private String stepsJson;
 
     /**
+     * 本次运行各 git 节点解析出的源码信息（JSON 数组，见 platform-api 的
+     * {@code PipelineSourceRefDTO}）：repo / 分支或标签 / 实际 commit sha / 提交标题 /
+     * 基线 sha。**触发时写一次**（归档回写不碰它）。
+     *
+     * <p>为什么必须落库：归档会把集群里的 PipelineRun / TaskRun / Pod 全删掉，而
+     * 「这次到底构建了哪个 commit」「上次成功运行用的是哪个」只有这一份能留住的记录。
+     * 预览的「先看后跑」也是靠它把预览到的 sha 钉进运行（pin）并事后追溯。
+     */
+    private String sourceJson;
+
+    /**
      * 归档那一刻抓下来的 {@code PipelineRun} YAML。**只写一次**（归档时），之后不再变。
      *
      * <p>为什么必须在那一刻抓：同一时刻 k8s-server 就把集群里的对象删了（spec §4.1），

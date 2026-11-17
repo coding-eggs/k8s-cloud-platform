@@ -17,7 +17,7 @@ import { Controls } from '@vue-flow/controls'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
-import type { PipelineCanvasEdge, PipelineCanvasNode } from '@/types'
+import type { PipelineCanvasEdge, PipelineCanvasNode, PipelineSourceRef } from '@/types'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
 
@@ -26,10 +26,15 @@ const props = defineProps<{
   nodes: PipelineCanvasNode[]
   edges: PipelineCanvasEdge[]
   title?: string
+  /** 触发前预览到的源码信息（父组件在打开时拉；失败不影响运行） */
+  sources?: PipelineSourceRef[]
+  previewLoading?: boolean
+  previewError?: string | null
 }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
-  (e: 'confirm', maskedNodeIds: string[]): void
+  /** 第二个参数 = 本次要**钉住**的 commit（节点 id → 完整 sha），只含仍在跑且解析成功的 git 节点 */
+  (e: 'confirm', maskedNodeIds: string[], pinnedShas: Record<string, string>): void
 }>()
 
 /** 节点清单（图标 / 类型名 / 配色）—— 图上的卡片与编辑器里是同一套 */
@@ -165,8 +170,41 @@ const runnableCount = computed(
 )
 const masked = computed(() => (props.nodes ?? []).filter((n) => !selected.value.has(n.id)))
 
+// ---- 源码预览 ----
+
+/** 本次要钉住的提交：**仍在跑**且解析出完整 sha 的 git 节点（被屏蔽的节点不传）。 */
+const pinnedShas = computed(() => {
+  const out: Record<string, string> = {}
+  for (const s of props.sources ?? []) {
+    if (s.sha && selected.value.has(s.nodeId)) out[s.nodeId] = s.sha
+  }
+  return out
+})
+
+/** `https://gitlab.x/group/repo.git` → `group/repo`（一眼看出是哪个仓库，不用读整条 URL） */
+function repoShort(repo: string): string {
+  const parts = (repo ?? '').replace(/\/+$/, '').replace(/\.git$/, '').split('/')
+  return parts.length <= 1 ? repo : parts.slice(-2).join('/')
+}
+
+/** 分支/标签那一栏：默认分支与「已钉住」要说人话 */
+function refText(s: PipelineSourceRef): string {
+  if (s.kind === 'default') return '默认分支'
+  if (s.kind === 'pinned') return '已钉住的提交'
+  if (s.kind === 'tag') return `标签 ${s.revision ?? ''}`
+  return `分支 ${s.revision ?? ''}`
+}
+
+/** 与上次成功运行的对比：**相同**比「较上次 +N」更值得强调（那意味着这次没有新代码可构建） */
+function baseText(s: PipelineSourceRef): string {
+  if (!s.baseSha) return '首次运行'
+  if (s.sha && s.baseSha === s.sha) return '与上次成功构建相同'
+  if (s.baseKind === 'parent') return '较上一提交'
+  return `较上次成功 ${s.baseSha.slice(0, 7)}`
+}
+
 function confirm() {
-  emit('confirm', masked.value.map((n) => n.id))
+  emit('confirm', masked.value.map((n) => n.id), pinnedShas.value)
 }
 </script>
 
@@ -179,6 +217,32 @@ function confirm() {
   >
     <div class="hint">
       点击节点 = <b>屏蔽它和它的全部下游</b>（只影响这一次运行，流水线定义不变）；再点一次 = 恢复它和它的上游。
+    </div>
+
+    <!-- 源码：这次到底会构建哪个提交（「先看后跑」——运行按这里显示的 sha 钉住） -->
+    <div v-if="previewLoading || previewError || (sources ?? []).length" class="sources">
+      <div class="sources-title">源码</div>
+      <div v-if="previewLoading" class="src-note">正在解析仓库…</div>
+      <div v-else-if="previewError" class="src-note src-bad">源码预览不可用：{{ previewError }}</div>
+      <template v-else>
+        <div
+          v-for="s in sources"
+          :key="s.nodeId"
+          class="src-row"
+          :class="{ 'is-off': !selected.has(s.nodeId) }"
+        >
+          <span class="src-repo">{{ repoShort(s.repo) }}</span>
+          <span class="src-ref">{{ refText(s) }}</span>
+          <template v-if="s.sha">
+            <code class="src-sha" :title="s.sha">{{ s.shortSha }}</code>
+            <!-- 提交标题要浅取一个 commit 才有（P2 与「查看变更」一起取）—— 没有就不占位 -->
+            <span v-if="s.subject" class="src-subject" :title="s.subject">{{ s.subject }}</span>
+            <span class="src-base">{{ baseText(s) }}</span>
+          </template>
+          <span v-else class="src-bad">{{ s.error || '未解析出提交' }}</span>
+          <span v-if="s.warning" class="src-warn" :title="s.warning">提交信息不可用</span>
+        </div>
+      </template>
     </div>
 
     <div class="graph">
@@ -254,5 +318,73 @@ function confirm() {
 .reset {
   margin-left: 8px;
   font-size: 12px;
+}
+
+/* ---- 源码预览 ---- */
+.sources {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+.sources-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 6px;
+}
+.src-note {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.src-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 20px;
+}
+/* 被屏蔽的 git 节点：灰掉，表示这次不跑（它的 pin 也不会生效） */
+.src-row.is-off {
+  opacity: .45;
+}
+.src-repo {
+  color: var(--text-1);
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.src-ref {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.src-sha {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--panel-hover);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.src-subject {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.src-base {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--text-3);
+}
+.src-bad {
+  color: var(--danger);
+}
+.src-warn {
+  flex-shrink: 0;
+  color: var(--warning);
 }
 </style>

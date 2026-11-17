@@ -46,6 +46,13 @@ class BuiltinNodesTest {
                         id, endpoint, "u", "p", project)));
     }
 
+    /** 钉住一个 commit（「先看后跑」：预览到的 sha 必须就是这次构建的那个）。 */
+    private static NodeContext ctxPinned(String type, Map<String, String> config, String sha) {
+        return new NodeContext("n1", "n1", "ws",
+                new PipelineCanvas.CanvasNode("n1", type, null, config),
+                Map.of(), LocalDateTime.now(), Map.of("n1", sha));
+    }
+
     @Test
     void noNodeFieldLeaksMarkdownIntoItsPlainTextText() {
         // ⭐ 表单里的 help / label / 下拉项 都是**纯文本**渲染的 —— 写进去的 markdown `**`
@@ -88,6 +95,35 @@ class BuiltinNodesTest {
         assertThat(step.steps().get(0).getScript()).contains("https://gitlab.example.com/g/r.git");
         // 源码写进共享 workspace —— 下游节点不用做任何事就能看到
         assertThat(step.steps().get(0).getWorkingDir()).startsWith("/workspace");
+    }
+
+    /**
+     * 钉住的提交 = 执行契约（spec §6）：克隆后核对 HEAD，不一致就取该 sha 并 checkout；
+     * 取不到就失败。⚠️ 脚本里**不能出现命令替换** —— 这一版 Tekton 不还原 `$$(`（见 ImagePushNode）。
+     */
+    @Test
+    void gitNodePinsTheCommitWhenTheRunCarriesOne() {
+        String sha = "3f2c1ab9d4e5f60718293a4b5c6d7e8f90123456";
+        RenderedStep step = new GitCloneNode().render(ctxPinned("git",
+                Map.of("repo", "https://gitlab.example.com/g/r.git", "revision", "main", "dir", "src"), sha));
+
+        String script = step.steps().get(0).getScript();
+        assertThat(script).contains("fetch --depth 1 origin").contains(sha);
+        assertThat(script).contains("checkout --detach").contains(sha);
+        // 实际构建的 commit 永远出现在日志里（预览核对与排障都靠它）
+        assertThat(script).contains("commit: %H");
+        // 不用命令替换：`$$(` 不还原、裸 `$(` 会被 Tekton 当自己的变量
+        assertThat(script).doesNotContain("$$(").doesNotContain("$(git");
+    }
+
+    @Test
+    void gitNodeWithoutAPinKeepsTheBranchHead() {
+        RenderedStep step = new GitCloneNode().render(ctx("git",
+                Map.of("repo", "https://gitlab.example.com/g/r.git", "revision", "main", "dir", "src")));
+
+        String script = step.steps().get(0).getScript();
+        assertThat(script).doesNotContain("checkout --detach").doesNotContain("fetch --depth 1 origin");
+        assertThat(script).contains("commit: %H");
     }
 
     @Test

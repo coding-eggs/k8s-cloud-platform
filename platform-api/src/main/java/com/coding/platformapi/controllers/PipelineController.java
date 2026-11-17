@@ -190,14 +190,24 @@ public class PipelineController {
      * 触发一次的入参。
      *
      * <p>字段名保持 {@code id}（审计 target 与前端都在用）；{@code maskedNodeIds} 空/缺省 = 不屏蔽。
+     *
+     * @param pinnedShas 预览时看到的 commit（画布节点 id → 完整 sha）。给了就**钉住**：
+     *                   这次运行按这些 sha 构建，取不到就失败，不会悄悄换成仓库 tip。
      */
-    public record RunRequest(String id, String tenantId, List<String> maskedNodeIds) {
+    public record RunRequest(String id, String tenantId, List<String> maskedNodeIds,
+                             java.util.Map<String, String> pinnedShas) {
+
+        /** 老客户端（不带 pin）的兼容形态。 */
+        public RunRequest(String id, String tenantId, List<String> maskedNodeIds) {
+            this(id, tenantId, maskedNodeIds, null);
+        }
     }
 
     @PostMapping("/run")
     @Operation(summary = "触发一次运行",
             description = "先生成 run 名并落库、再创建集群对象（幂等键从源头就有）。"
                     + "`maskedNodeIds` 里的节点**连同其全部下游**本次不执行；"
+                    + "`pinnedShas` 给了就把预览到的 commit 钉进本次运行（取不到即失败）；"
                     + "画布引用的每条连接都必须已授权，否则当场拒（**不静默降级成匿名**）")
     @Auditable(action = AuditAction.PIPELINE_RUN, target = "#request.id")
     public ResponseData<String> run(@RequestBody RunRequest request) {
@@ -205,7 +215,28 @@ public class PipelineController {
         return new ResponseData<>(runService.run(pipeline, currentUser(),
                 new PipelineRunContext(pipeline.getClusterId(), pipeline.getNamespace(),
                         auth.effectiveTenantId(request.tenantId())),
-                request.maskedNodeIds() == null ? List.of() : request.maskedNodeIds()));
+                request.maskedNodeIds() == null ? List.of() : request.maskedNodeIds(),
+                request.pinnedShas()));
+    }
+
+    /**
+     * 触发前预览源码：每个 git 节点会拉到哪个 commit、相对上次成功运行是不是新的。
+     *
+     * <p>裁剪规则与触发**完全一致**（屏蔽闭包在服务端再展开一次，不信任前端）。
+     * 解析失败不是错误 —— 每个节点各自带 {@code error}，运行照旧可走。
+     */
+    public record PreviewRequest(String id, String tenantId, List<String> maskedNodeIds) {
+    }
+
+    @PostMapping("/run/preview")
+    @Operation(summary = "触发前预览源码（分支/标签对应的 commit）",
+            description = "复用触发那条连接授权与裁剪规则；仓库不可达/分支不存在时该节点带 error，不影响运行")
+    @Auditable(action = AuditAction.PIPELINE_PREVIEW_SOURCE, target = "#request.id")
+    public ResponseData<List<com.coding.platformapi.models.PipelineSourceRefDTO>> previewRun(
+            @RequestBody PreviewRequest request) {
+        PipelineDTO pipeline = pipelineService.get(request.id());   // 顺带校验归属
+        return new ResponseData<>(runService.preview(pipeline.getId(), pipeline.getCanvasJson(),
+                request.maskedNodeIds()));
     }
 
     /** 从断点继续的入参。 */
