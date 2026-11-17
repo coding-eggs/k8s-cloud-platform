@@ -17,6 +17,9 @@
     python3 scripts/harbor-replication.py --dry-run            # 只看会做什么
     python3 scripts/harbor-replication.py --only quay.io --trigger
     python3 scripts/harbor-replication.py --status             # 看最近的执行结果
+    python3 scripts/harbor-replication.py --stop               # 停掉正在跑的复制执行
+    python3 scripts/harbor-replication.py --delete-policy NAME # 删规则（删 IMAGES 条目**不会**删 Harbor 里的规则）
+    python3 scripts/harbor-replication.py --delete-repo P/R    # 删仓库及其全部 tag
 
 维护：新版本上线时改下面的 ``IMAGES`` 表（加 tag 或加一整行），重跑 ``--all`` 即可。
 已存在的项目/endpoint/规则会被跳过或更新，不会重复创建。
@@ -32,16 +35,23 @@ import urllib.parse
 import urllib.request
 
 # ---------------------------------------------------------------------------
-# 平台支持的集群 minor（与 platform-web/src/utils/clusterInstall/kubespray.ts 的
+# 平台支持的集群 patch 版本（与 platform-web/src/utils/clusterInstall/kubespray.ts 的
 # KUBE_VERSIONS 同源，kubespray 升级时两边一起看）。
 #
-# 为什么单独声明：kube-prometheus-stack 的 CRD 升级 Job 把**集群的 K8s 版本**当 kubectl
+# 为什么需要它：kube-prometheus-stack 的 CRD 升级 Job 把**集群的 K8s 版本**当 kubectl
 # 镜像的 tag（chart 的 crds/templates/upgrade/job.yaml：`tag | default
-# .Capabilities.KubeVersion.Version`）。同一份 chart 装到 1.34 / 1.35 / 1.36 的集群，
-# 就要三个不同的镜像。按 minor 通配同步整条分支，minor 内任何 patch 都能命中，
-# kubespray 往 KUBE_VERSIONS 里加新 patch 时不用回来改这里。
+# .Capabilities.KubeVersion.Version`）。同一份 chart 装到不同版本的集群要不同的镜像。
+#
+# ⚠️ 这里**逐 tag 枚举**，不用 `v1.35.*` 这种通配：2026-11-17 实测，加了三条通配规则后
+#    同步完 Harbor 里仍然只有一个 tag —— registry.k8s.io 是 redirector（307 到
+#    europe-west3-docker.pkg.dev），复制规则的通配枚举拿不到完整 tag 列表。
 # ---------------------------------------------------------------------------
-SUPPORTED_K8S_MINORS = ['1.34', '1.35', '1.36']
+KUBE_VERSIONS = [
+    '1.36.4', '1.36.3', '1.36.2', '1.36.1', '1.36.0',
+    '1.35.8', '1.35.7', '1.35.6', '1.35.5', '1.35.4', '1.35.3', '1.35.2', '1.35.1', '1.35.0',
+    '1.34.11', '1.34.10', '1.34.9', '1.34.8', '1.34.7', '1.34.6', '1.34.5',
+    '1.34.4', '1.34.3', '1.34.2', '1.34.1', '1.34.0',
+]
 
 # ---------------------------------------------------------------------------
 # 需要维护的表：上游 → 仓库:tag。
@@ -142,9 +152,9 @@ IMAGES = {
         'kube-state-metrics/kube-state-metrics:v2.20.0',
         'metrics-server/metrics-server:v0.9.0',
         # kube-prometheus-stack 的 CRD 升级 Job —— recipe 强制 crds.upgradeJob.enabled=true，
-        # 每次装/升级都会跑。它的 kubectl 镜像 tag = 集群的 K8s 版本，所以按支持的 minor
-        # 整条分支同步（见上面的 SUPPORTED_K8S_MINORS）。
-        *[f'kubectl:v{m}.*' for m in SUPPORTED_K8S_MINORS],
+        # 每次装/升级都会跑。它的 kubectl 镜像 tag = 集群的 K8s 版本，逐个 patch 枚举
+        # （为什么不用通配见上面的 KUBE_VERSIONS 注释）。
+        *[f'kubectl:v{v}' for v in KUBE_VERSIONS],
         # csi-driver-nfs（含 snapshot-controller）
         'sig-storage/csi-node-driver-registrar:v2.17.0',
         'sig-storage/csi-provisioner:v6.3.0',
@@ -327,6 +337,31 @@ class Harbor:
         executions.sort(key=lambda e: e['id'], reverse=True)
         return executions[:limit]
 
+    def stop_running(self):
+        """停掉所有正在执行的复制（Harbor 只能按 execution 停，不能按规则停）。
+
+        状态名两种都认：Harbor 2.x 的 API 里是 {@code InProgress}，早期文档写的是 running。
+        """
+        running = [e for e in self.paged('/api/v2.0/replication/executions')
+                   if str(e.get('status', '')).lower() in ('inprogress', 'running')]
+        for e in running:
+            self.call('PATCH', f'/api/v2.0/replication/executions/{e["id"]}', {'status': 'Stopped'})
+        return running
+
+    def delete_policy(self, name):
+        """按名字删一条复制规则（删 IMAGES 条目不会删 Harbor 里已有的规则，得显式删）。"""
+        for p in self.policies():
+            if p['name'] == name:
+                self.call('DELETE', f'/api/v2.0/replication/policies/{p["id"]}')
+                return p['id']
+        return None
+
+    def delete_repository(self, project, repo):
+        """删 Harbor 里的一个仓库及其全部 artifact（blob 要等 GC 才回收）。"""
+        enc = urllib.parse.quote(urllib.parse.quote(repo, safe=''), safe='')
+        self.call('DELETE', f'/api/v2.0/projects/{urllib.parse.quote(project, safe="")}/repositories/{enc}',
+                  allow=(200, 202, 204, 404))
+
 
 def credential_of(upstream):
     """Docker Hub 的凭据来自环境变量（PAT 不进脚本、不进仓库）。"""
@@ -413,6 +448,9 @@ def main():
     parser.add_argument('--sequential', action='store_true',
                         help='配合 --trigger：一条跑完再触发下一条（Docker Hub 限额紧张时用）')
     parser.add_argument('--status', action='store_true', help='只看最近的执行结果')
+    parser.add_argument('--stop', action='store_true', help='停掉正在跑的复制执行')
+    parser.add_argument('--delete-policy', metavar='NAME', help='删除指定名字的复制规则')
+    parser.add_argument('--delete-repo', metavar='PROJECT/REPO', help='删除 Harbor 里的仓库（含全部 tag）')
     parser.add_argument('--only', metavar='UPSTREAM', help='只处理某个上游，如 quay.io')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
@@ -420,7 +458,7 @@ def main():
     url = os.environ.get('HARBOR_URL', 'http://127.0.0.1:30002')
     user = os.environ.get('HARBOR_ADMIN_USER', 'admin')
     password = os.environ.get('HARBOR_ADMIN_PASSWORD')
-    if not password and not args.status:
+    if not password and not (args.status or args.stop):
         sys.exit('缺少 HARBOR_ADMIN_PASSWORD（平台生成，见 Secret harbor/platform-harbor-secrets）')
 
     harbor = Harbor(url, user, password or '', args.dry_run)
@@ -436,6 +474,26 @@ def main():
         for e in harbor.recent_executions():
             print(f'  exec {e["id"]} policy {e["policy_id"]} {e["status"]} '
                   f'ok={e.get("succeed")} failed={e.get("failed")}')
+        return
+
+    if args.stop:
+        stopped = harbor.stop_running()
+        for e in stopped:
+            print(f'  已停止 exec {e["id"]}（policy {e["policy_id"]}）')
+        print(f'共停止 {len(stopped)} 条正在执行的复制')
+        return
+
+    if args.delete_policy:
+        pid = harbor.delete_policy(args.delete_policy)
+        print(f'规则 {args.delete_policy}：' + (f'已删除（id={pid}）' if pid else '不存在'))
+        return
+
+    if args.delete_repo:
+        project, _, repo = args.delete_repo.partition('/')
+        if not repo:
+            sys.exit('--delete-repo 要写成 PROJECT/REPO，如 ghcr.io/tektoncd/plumbing/tkn')
+        harbor.delete_repository(project.strip(), repo.strip())
+        print(f'已删除仓库 {project}/{repo}（blob 等 Harbor 的 GC 回收）')
         return
 
     do_all = args.all or not (args.ensure_projects or args.ensure_registries or args.ensure_policies)
