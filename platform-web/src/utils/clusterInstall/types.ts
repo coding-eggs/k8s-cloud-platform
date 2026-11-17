@@ -58,8 +58,6 @@ export interface InstallForm {
   nodeSubnet: string
   online: boolean
   imageRegistry: string
-  filesRepo: string
-  registryHost: string
   httpProxy: string
   httpsProxy: string
   noProxyExtra: string

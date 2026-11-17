@@ -50,6 +50,11 @@ export function osLabel(value: string): string {
   return OS_OPTIONS.find((o) => o.value === value)?.label ?? value
 }
 
+/** 离线准备脚本用：按 OS 决定下载 rpm 还是 deb 依赖包 */
+export function osFamily(value: string): OsFamily {
+  return OS_OPTIONS.find((o) => o.value === value)?.family ?? 'rpm'
+}
+
 /** `kube_network_plugin` 的取值：平台的 `platform` 映射为 `cni`（不装 CNI） */
 export type KubesprayCni = 'cni' | Exclude<CniMode, 'platform'>
 
@@ -97,6 +102,11 @@ export interface KubesprayVars {
   /** 仅作为用户可读的镜像根地址保留；真正生效的是下面四个 *_url 覆盖 */
   files_repo?: string
   registry_host?: string
+  /** HTTP（无证书）自建 registry：containerd 需要走 http 并跳过校验 */
+  containerd_registries_mirrors?: Array<{
+    prefix: string
+    mirrors: Array<{ host: string; capabilities: string[]; skip_verify: boolean }>
+  }>
   github_url?: string
   dl_k8s_io_url?: string
   storage_googleapis_url?: string

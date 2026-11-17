@@ -202,15 +202,11 @@ export function validate(form: InstallForm): Issue[] {
   }
 
   // ---- 介质 ----
-  if (!form.online) {
-    if (!form.filesRepo.trim()) err('filesRepo', '离线模式需要填写静态文件仓库地址')
-    if (!form.registryHost.trim()) err('registryHost', '离线模式需要填写内网 registry')
-    if (form.arch === 'auto') {
-      warn(
-        'arch',
-        '离线镜像按下载主机的架构准备（download_run_once）：与节点架构不同时请显式选择 amd64 / arm64',
-      )
-    }
+  if (!form.online && form.arch === 'auto') {
+    warn(
+      'arch',
+      '离线镜像按下载主机的架构准备（download_run_once）：与节点架构不同时请显式选择 amd64 / arm64',
+    )
   }
 
   return issues

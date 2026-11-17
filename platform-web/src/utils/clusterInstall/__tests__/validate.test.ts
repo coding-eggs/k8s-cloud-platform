@@ -18,7 +18,7 @@ function base(overrides: Partial<InstallForm> = {}): InstallForm {
     lbAddress: '', lbPort: 6443, lbDomain: '',
     cni: 'platform', podCidr: '10.233.64.0/18', serviceCidr: '10.233.0.0/18',
     clusterDomain: 'cluster.local', kubeProxyMode: 'ipvs', nodeSubnet: '',
-    online: true, imageRegistry: '', filesRepo: '', registryHost: '',
+    online: true, imageRegistry: '',
     httpProxy: '', httpsProxy: '', noProxyExtra: '',
     ...overrides,
   }
@@ -86,7 +86,7 @@ test('节点没选操作系统非法', () => {
 })
 
 test('离线 + 架构「自动」给 warning，显式选架构后不再提示', () => {
-  const offline = base({ online: false, filesRepo: 'http://10.0.0.5/kubespray', registryHost: 'harbor.local/k8s' })
+  const offline = base({ online: false })
   assert.ok(validate(offline).some((i) => i.level === 'warning' && i.field === 'arch'))
   assert.equal(
     validate({ ...offline, arch: 'amd64' }).some((i) => i.field === 'arch'),

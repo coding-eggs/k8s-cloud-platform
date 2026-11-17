@@ -18,7 +18,7 @@ function base(overrides: Partial<InstallForm> = {}): InstallForm {
     lbAddress: '', lbPort: 6443, lbDomain: '',
     cni: 'platform', podCidr: '10.233.64.0/18', serviceCidr: '10.233.0.0/18',
     clusterDomain: 'cluster.local', kubeProxyMode: 'ipvs', nodeSubnet: '',
-    online: true, imageRegistry: '', filesRepo: '', registryHost: '',
+    online: true, imageRegistry: '',
     httpProxy: '', httpsProxy: '', noProxyExtra: '',
     ...overrides,
   }
@@ -89,15 +89,15 @@ test('外部 etcd：空的 etcd 组 + endpoints + 自备证书（cert_management
   assert.match(readme, /\/etc\/ssl\/etcd\/ssl\/ca\.pem/)
 })
 
-test('离线：生成 offline.yml（四个 URL 覆盖 + github 镜像仓）；在线不生成', () => {
-  const off = base({ online: false, filesRepo: 'http://10.0.0.5/kubespray', registryHost: 'harbor.local/k8s' })
-  const offline = file(off, 'group_vars/all/offline.yml')
-  assert.match(offline, /github_url: "http:\/\/10\.0\.0\.5\/kubespray\/github\.com"/)
-  assert.match(offline, /dl_k8s_io_url: "http:\/\/10\.0\.0\.5\/kubespray\/dl\.k8s\.io"/)
-  assert.match(offline, /storage_googleapis_url: "http:\/\/10\.0\.0\.5\/kubespray\/storage\.googleapis\.com"/)
-  assert.match(offline, /get_helm_url: "http:\/\/10\.0\.0\.5\/kubespray\/get\.helm\.sh"/)
-  assert.match(offline, /github_image_repo: "harbor\.local\/k8s"/)
-  assert.match(offline, /registry_host: "harbor\.local\/k8s"/)
+test('离线：offline.yml 地址用占位符（部署脚本按控制机 IP 替换）；在线不生成', () => {
+  const offline = file(base({ online: false }), 'group_vars/all/offline.yml')
+  assert.match(offline, /files_repo: "http:\/\/__CONTROL_HOST__:8080"/)
+  assert.match(offline, /github_url: "http:\/\/__CONTROL_HOST__:8080\/github\.com"/)
+  assert.match(offline, /dl_k8s_io_url: "http:\/\/__CONTROL_HOST__:8080\/dl\.k8s\.io"/)
+  assert.match(offline, /storage_googleapis_url: "http:\/\/__CONTROL_HOST__:8080\/storage\.googleapis\.com"/)
+  assert.match(offline, /get_helm_url: "http:\/\/__CONTROL_HOST__:8080\/get\.helm\.sh"/)
+  assert.match(offline, /registry_host: "__CONTROL_HOST__:5000"/)
+  assert.match(offline, /github_image_repo: "__CONTROL_HOST__:5000"/)
   assert.equal(generate(base({ online: true })).some((x) => x.path.endsWith('/offline.yml')), false)
 })
 
@@ -154,4 +154,74 @@ test('README 写明 SSH 认证方式、跳转机与明文密码提醒', () => {
   assert.match(readme, /明文密码/)
   assert.match(readme, /跳转机自身的认证走控制机的 `ssh` 配置/)
   assert.match(file(base(), 'README.md'), /SSH：密钥认证（节点已预置部署机公钥）；直连/)
+})
+
+test('离线：额外生成 offline-prepare.sh，串起官方的清单生成与下载脚本', () => {
+  const sh = file(base({ online: false }), 'offline-prepare.sh')
+  assert.match(sh, /clone --depth 1 --branch v2\.32\.0/)
+  assert.match(sh, /generate_list\.sh -i "inventory\/\$\{CLUSTER_NAME\}\/hosts\.yaml"/)
+  assert.match(sh, /manage-offline-files\.sh/)
+  assert.match(sh, /manage-offline-container-images\.sh create/)
+  // 在线模式不该有这份脚本
+  assert.equal(generate(base()).some((x) => x.path.endsWith('offline-prepare.sh')), false)
+})
+
+test('离线：containerd 走 http registry（mirrors + skip_verify）', () => {
+  const off = file(base({ online: false }), 'group_vars/all/offline.yml')
+  assert.match(off, /containerd_registries_mirrors:/)
+  assert.match(off, /- prefix: "__CONTROL_HOST__:5000"/)
+  assert.match(off, /host: "http:\/\/__CONTROL_HOST__:5000"/)
+  assert.match(off, /skip_verify: true/)
+})
+
+test('离线：准备脚本产出全离线包（pip / 镜像 / registry / 系统依赖 / 统一打包）', () => {
+  const f = base({
+    online: false,
+    nodes: [
+      node('cp-1', '10.0.0.11', ['control-plane'], 'rocky9'),
+      node('w-1', '10.0.0.21', ['worker'], 'ubuntu2204'),
+    ],
+  })
+  const sh = file(f, 'offline-prepare.sh')
+  assert.match(sh, /pip download -r requirements\.txt/)
+  assert.match(sh, /IMAGES_FROM_FILE=\.\/temp\/images\.list/)
+  assert.match(sh, /registry:2/)
+  assert.match(sh, /--downloadonly/) // rpm 侧
+  assert.match(sh, /apt-get install --download-only/) // deb 侧
+  assert.match(sh, /tar czf/)
+})
+
+test('离线：生成 deploy-offline.sh（探测 IP、改写 offline.yml、起 registry 与文件服务、跑 playbook）', () => {
+  const sh = file(base({ online: false }), 'deploy-offline.sh')
+  assert.match(sh, /__CONTROL_HOST__/)
+  assert.match(sh, /sed -i "s\/__CONTROL_HOST__\/\$HOST_IP\/g"/)
+  assert.match(sh, /registry:2/)
+  assert.match(sh, /manage-offline-container-images\.sh register/)
+  assert.match(sh, /http\.server/)
+  assert.match(sh, /ansible-playbook -i "\$INV\/hosts\.yaml" -b cluster\.yml/)
+  // 在线模式不该有这份脚本
+  assert.equal(generate(base()).some((x) => x.path.endsWith('deploy-offline.sh')), false)
+})
+
+test('离线：README 第 9 节按全离线写（离线包内容 + 一键部署脚本）', () => {
+  const readme = file(base({ online: false }), 'README.md')
+  assert.match(readme, /## 9\. 离线模式/)
+  assert.match(readme, /registry:2/)
+  assert.match(readme, /http\.server/)
+  assert.match(readme, /deploy-offline\.sh/)
+  assert.match(readme, /系统依赖/)
+  assert.doesNotMatch(readme, /仍需另行配置/)
+})
+
+test('离线声明放在 README 最上面，且不再有名词介绍', () => {
+  const offline = file(base({ online: false }), 'README.md')
+  const head = offline.slice(0, offline.indexOf('## 1.'))
+  assert.match(head, /全离线/)
+  assert.match(head, /不能上网/)
+  assert.match(head, /第 9 节/)
+  // 名词介绍整节删掉
+  assert.doesNotMatch(offline, /三个名词/)
+  // 在线包开头不该出现离线声明
+  const online = file(base(), 'README.md')
+  assert.doesNotMatch(online.slice(0, online.indexOf('## 1.')), /全离线/)
 })

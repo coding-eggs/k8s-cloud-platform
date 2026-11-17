@@ -1,7 +1,14 @@
 <script setup lang="ts">
 /**
- * 集群拓扑预览：纯 SVG，不引图库。颜色全部走 Element Plus 语义变量，亮/暗主题自动成立。
+ * 集群拓扑预览：HTML/CSS 画，不用 SVG。颜色全部走 Element Plus 语义变量，亮/暗主题自动成立。
  * 只负责画，不做校验——非法组合由页面右侧的问题列表提示。
+ *
+ * <p><b>为什么不是 SVG</b>：SVG 是等比缩放的。右栏只有 420~680px，而一行放下 3 台机器
+ * 的 viewBox 就有 570+，整体缩到 0.7 倍后 13px 的标题在屏幕上只剩 9px，根本读不了。
+ * 换成 HTML 格子后字号恒等于 CSS 里写的 px，窄栏只是每行少放一格（grid auto-fit 自动折行）。
+ *
+ * <p><b>大集群</b>：一行最多画 {@link MAX_COLS} 台，超出的折成「+N 台」一格，
+ * 100 个 worker 也只占一格；总数与各角色分布在底部那行。
  */
 import { computed } from 'vue'
 import type { InstallForm, InstallNode } from '@/utils/clusterInstall/types'
@@ -17,13 +24,49 @@ const etcd = computed(() =>
   props.form.etcdMode === 'dedicated' ? props.form.nodes.filter((n) => n.roles.includes('etcd')) : [],
 )
 
-const BOX_W = 150
-const BOX_H = 54
-const GAP = 16
-const PAD = 16
-const ROW_GAP = 24
-const ENTRY_H = 36
-const ENTRY_GAP = 20
+const MAX_COLS = 3
+
+interface Tile {
+  key: string
+  title: string
+  sub: string
+  role: string
+  /** more = 折叠出来的「+N 台」 */
+  more?: boolean
+}
+
+function roleLabel(n: InstallNode): string {
+  const parts: string[] = []
+  if (n.roles.includes('control-plane')) parts.push('control-plane')
+  if (n.roles.includes('worker')) parts.push('worker')
+  if (n.roles.includes('etcd')) parts.push('etcd')
+  if (props.form.etcdMode === 'stacked' && n.roles.includes('control-plane')) parts.push('etcd')
+  return parts.join(' · ')
+}
+
+function tile(n: InstallNode): Tile {
+  return { key: n.hostname, title: clip(n.hostname), sub: n.ip || 'IP 未填', role: roleLabel(n) }
+}
+
+/** 一行一个节点；超过 MAX_COLS 时只留前 MAX_COLS-1 个，后面折成一格 */
+function toTiles(nodes: InstallNode[], label: string): Tile[] {
+  if (nodes.length <= MAX_COLS) return nodes.map(tile)
+  const shown = nodes.slice(0, MAX_COLS - 1)
+  return [
+    ...shown.map(tile),
+    {
+      key: `more-${label}`,
+      title: `+${nodes.length - shown.length} 台`,
+      sub: '同角色',
+      role: label,
+      more: true,
+    },
+  ]
+}
+
+const cpTiles = computed(() => toTiles(cps.value, 'control-plane'))
+const workerTiles = computed(() => toTiles(workers.value, 'worker'))
+const etcdTiles = computed(() => toTiles(etcd.value, 'etcd'))
 
 const hasEntry = computed(() => props.form.apiEntry !== 'direct')
 const entryLabel = computed(() => {
@@ -39,148 +82,160 @@ const entryLabel = computed(() => {
   }
 })
 
-const maxCols = computed(() => Math.max(1, cps.value.length, workers.value.length, etcd.value.length))
-const width = computed(
-  () => PAD * 2 + maxCols.value * BOX_W + Math.max(0, maxCols.value - 1) * GAP,
-)
-const rowCount = computed(
-  () => (cps.value.length ? 1 : 0) + (workers.value.length ? 1 : 0) + (etcd.value.length ? 1 : 0),
-)
-const top = computed(() => PAD + (hasEntry.value ? ENTRY_H + ENTRY_GAP : 0))
-const height = computed(
-  () => top.value + Math.max(1, rowCount.value) * BOX_H + Math.max(0, rowCount.value - 1) * ROW_GAP + PAD,
-)
-
-const cpRow = computed(() => top.value)
-const workerRow = computed(() => top.value + (cps.value.length ? BOX_H + ROW_GAP : 0))
-const etcdRow = computed(
-  () => top.value + (cps.value.length ? BOX_H + ROW_GAP : 0) + (workers.value.length ? BOX_H + ROW_GAP : 0),
-)
-
-function xAt(count: number, index: number): number {
-  const rowWidth = count * BOX_W + Math.max(0, count - 1) * GAP
-  return (width.value - rowWidth) / 2 + index * (BOX_W + GAP)
-}
-
-function roleLabel(n: InstallNode): string {
-  const parts: string[] = []
-  if (n.roles.includes('control-plane')) parts.push('control-plane')
-  if (n.roles.includes('worker')) parts.push('worker')
-  if (n.roles.includes('etcd')) parts.push('etcd')
-  if (props.form.etcdMode === 'stacked' && n.roles.includes('control-plane')) parts.push('etcd')
-  return parts.join(' · ')
-}
-
-function clip(v: string, max = 20): string {
+function clip(v: string, max = 18): string {
   return v.length > max ? `${v.slice(0, max - 1)}…` : v
 }
+
+/** 卡片底部那句话：总数与各角色分布，节点很多时一眼能看出规模 */
+const caption = computed(() => {
+  const parts: string[] = [`共 ${props.form.nodes.length} 台`]
+  if (cps.value.length) parts.push(`控制面 ${cps.value.length}`)
+  if (workers.value.length) parts.push(`worker ${workers.value.length}`)
+  if (etcd.value.length) parts.push(`etcd ${etcd.value.length}`)
+  return parts.join(' · ')
+})
 </script>
 
 <template>
-  <svg :viewBox="`0 0 ${width} ${height}`" class="topo" role="img" aria-label="集群拓扑预览">
-    <g v-if="hasEntry">
-      <rect
-        :x="(width - 280) / 2"
-        :y="PAD"
-        width="280"
-        :height="ENTRY_H"
-        rx="8"
-        class="topo__entry"
-      />
-      <text :x="width / 2" :y="PAD + 23" text-anchor="middle" class="topo__entry-text">
-        {{ entryLabel }}
-      </text>
-      <line
-        :x1="width / 2"
-        :y1="PAD + ENTRY_H"
-        :x2="width / 2"
-        :y2="cpRow"
-        class="topo__link"
-      />
-    </g>
+  <div class="topo" role="img" :aria-label="`集群拓扑：${caption}`">
+    <template v-if="hasEntry">
+      <div class="topo__entry">{{ entryLabel }}</div>
+      <div class="topo__link" />
+    </template>
 
-    <g v-for="(n, i) in cps" :key="`cp-${n.hostname}`">
-      <rect :x="xAt(cps.length, i)" :y="cpRow" :width="BOX_W" :height="BOX_H" rx="8" class="topo__box" />
-      <text :x="xAt(cps.length, i) + 10" :y="cpRow + 19" class="topo__title">{{ clip(n.hostname) }}</text>
-      <text :x="xAt(cps.length, i) + 10" :y="cpRow + 34" class="topo__sub">{{ n.ip || 'IP 未填' }}</text>
-      <text :x="xAt(cps.length, i) + 10" :y="cpRow + 47" class="topo__role">{{ roleLabel(n) }}</text>
-    </g>
+    <div v-if="cpTiles.length" class="topo__row">
+      <div v-for="t in cpTiles" :key="`cp-${t.key}`" class="topo__box" :title="t.title">
+        <div class="topo__title">{{ t.title }}</div>
+        <div class="topo__sub">{{ t.sub }}</div>
+        <div class="topo__role">{{ t.role }}</div>
+      </div>
+    </div>
 
-    <line
-      v-if="cps.length && workers.length"
-      :x1="width / 2"
-      :y1="cpRow + BOX_H"
-      :x2="width / 2"
-      :y2="workerRow"
-      class="topo__link"
-    />
+    <div v-if="cpTiles.length && (workerTiles.length || etcdTiles.length)" class="topo__link" />
 
-    <g v-for="(n, i) in workers" :key="`w-${n.hostname}`">
-      <rect :x="xAt(workers.length, i)" :y="workerRow" :width="BOX_W" :height="BOX_H" rx="8" class="topo__box" />
-      <text :x="xAt(workers.length, i) + 10" :y="workerRow + 19" class="topo__title">{{ clip(n.hostname) }}</text>
-      <text :x="xAt(workers.length, i) + 10" :y="workerRow + 34" class="topo__sub">{{ n.ip || 'IP 未填' }}</text>
-      <text :x="xAt(workers.length, i) + 10" :y="workerRow + 47" class="topo__role">{{ roleLabel(n) }}</text>
-    </g>
+    <div v-if="workerTiles.length" class="topo__row">
+      <div
+        v-for="t in workerTiles"
+        :key="`w-${t.key}`"
+        :class="['topo__box', { 'topo__box--more': t.more }]"
+        :title="t.title"
+      >
+        <div class="topo__title">{{ t.title }}</div>
+        <div class="topo__sub">{{ t.sub }}</div>
+        <div class="topo__role">{{ t.role }}</div>
+      </div>
+    </div>
 
-    <line
-      v-if="etcd.length"
-      :x1="width / 2"
-      :y1="workerRow + (workers.length ? BOX_H : -ROW_GAP)"
-      :x2="width / 2"
-      :y2="etcdRow"
-      class="topo__link topo__link--dashed"
-    />
+    <div v-if="workerTiles.length && etcdTiles.length" class="topo__link topo__link--dashed" />
 
-    <g v-for="(n, i) in etcd" :key="`e-${n.hostname}`">
-      <rect :x="xAt(etcd.length, i)" :y="etcdRow" :width="BOX_W" :height="BOX_H" rx="8" class="topo__box topo__box--etcd" />
-      <text :x="xAt(etcd.length, i) + 10" :y="etcdRow + 19" class="topo__title">{{ clip(n.hostname) }}</text>
-      <text :x="xAt(etcd.length, i) + 10" :y="etcdRow + 34" class="topo__sub">{{ n.ip || 'IP 未填' }}</text>
-      <text :x="xAt(etcd.length, i) + 10" :y="etcdRow + 47" class="topo__role">{{ roleLabel(n) }}</text>
-    </g>
-  </svg>
+    <div v-if="etcdTiles.length" class="topo__row">
+      <div
+        v-for="t in etcdTiles"
+        :key="`e-${t.key}`"
+        :class="['topo__box', 'topo__box--etcd', { 'topo__box--more': t.more }]"
+        :title="t.title"
+      >
+        <div class="topo__title">{{ t.title }}</div>
+        <div class="topo__sub">{{ t.sub }}</div>
+        <div class="topo__role">{{ t.role }}</div>
+      </div>
+    </div>
+
+    <div class="topo__caption">{{ caption }}</div>
+  </div>
 </template>
 
 <style scoped>
 .topo {
-  display: block;
-  width: 100%;
-  height: auto;
-  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 .topo__entry {
-  fill: var(--el-fill-color-light);
-  stroke: var(--el-border-color);
-}
-.topo__entry-text {
-  fill: var(--el-text-color-primary);
-  font-size: 12px;
+  align-self: center;
+  max-width: 100%;
+  padding: 8px 16px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+  color: var(--el-text-color-primary);
+  font-size: 13px;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.topo__box {
-  fill: var(--el-fill-color-light);
-  stroke: var(--el-border-color);
-}
-.topo__box--etcd {
-  stroke: var(--el-color-warning);
-}
-.topo__title {
-  fill: var(--el-text-color-primary);
-  font-size: 11px;
-  font-weight: 600;
-}
-.topo__sub {
-  fill: var(--el-text-color-secondary);
-  font-size: 10px;
-}
-.topo__role {
-  fill: var(--el-text-color-secondary);
-  font-size: 9.5px;
-}
+/* 行间连接线：拓扑只表达「谁在上谁在下」，一条居中的竖线足够 */
 .topo__link {
-  stroke: var(--el-border-color);
-  stroke-width: 1.5;
+  width: 2px;
+  height: 16px;
+  margin: 0 auto;
+  background: var(--el-border-color);
+  flex: none;
 }
 .topo__link--dashed {
-  stroke-dasharray: 4 4;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--el-border-color) 0 4px,
+    transparent 4px 8px
+  );
+}
+/* 一行节点：auto-fit + 110px 下限，窄栏自动少放一格，字号不跟着缩 */
+.topo__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  justify-items: center;
+  gap: 10px;
+  width: 100%;
+  max-width: 540px;
+  margin: 0 auto;
+}
+.topo__box {
+  width: 100%;
+  max-width: 200px;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-light);
+}
+.topo__box--more {
+  border-style: dashed;
+  border-color: var(--el-border-color-darker);
+}
+.topo__box--etcd {
+  border-color: var(--el-color-warning);
+}
+.topo__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topo__sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topo__role {
+  margin-top: 1px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.topo__caption {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--el-text-color-secondary);
+  text-align: center;
 }
 </style>

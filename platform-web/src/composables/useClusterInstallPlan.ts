@@ -40,8 +40,6 @@ export function createDefaultForm(): InstallForm {
     nodeSubnet: '',
     online: true,
     imageRegistry: '',
-    filesRepo: '',
-    registryHost: '',
     httpProxy: '',
     httpsProxy: '',
     noProxyExtra: '',

@@ -1,12 +1,12 @@
 <script setup lang="ts">
 /**
  * 新建集群向导：纯前端生成 kubespray 部署包，不执行、不落库、不发请求。
- * 左侧四步表单，右侧拓扑 + 校验 + 产物。
+ * 五步表单；第 5 步「部署包」只做展示：拓扑、校验、部署包文件都在这一步（不存在右栏）。
  *
  * 路由是**免登录**的（/clusters/new 挂在 PublicLayout 下），所以这里不能依赖权限、
  * 租户上下文或任何后端接口；只有已登录用户才给「返回集群列表」。
  */
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
@@ -37,7 +37,7 @@ watch(
   },
 )
 
-const STEPS = ['基础', '节点', '网络与入口', '介质'] as const
+const STEPS = ['基础', '节点', '网络与入口', '介质', '部署包'] as const
 const step = ref(0)
 const formRef = ref<HTMLElement | null>(null)
 
@@ -45,9 +45,6 @@ const formRef = ref<HTMLElement | null>(null)
 watch(step, () => {
   formRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 })
-const generated = ref(false)
-const issuesRef = ref<HTMLElement | null>(null)
-const artifactRef = ref<HTMLElement | null>(null)
 
 const kubeVersionGroups = computed(() => {
   const groups = new Map<string, string[]>()
@@ -60,8 +57,11 @@ const kubeVersionGroups = computed(() => {
   return [...groups.entries()].map(([minor, versions]) => ({ minor, versions }))
 })
 
-/** 表单合法就主动展示产物；点「生成产物」也强制展示 */
-const showArtifacts = computed(() => generated.value || errors.value.length === 0)
+/**
+ * 部署包是 computed 实时生成的，没有「点一下才开始算」这回事：
+ * 表单合法就有、改一个字就跟着变。所以这里没有「生成」按钮，只按校验结果决定显不显示。
+ */
+const showArtifacts = computed(() => errors.value.length === 0)
 
 const CNI_OPTIONS = [
   { value: 'platform', label: '平台管理（安装后到组件页装 Calico）' },
@@ -77,16 +77,6 @@ function next(): void {
 function prev(): void {
   if (step.value > 0) step.value -= 1
 }
-
-function generateArtifacts(): void {
-  if (errors.value.length) {
-    ElMessage.warning(`还有 ${errors.value.length} 个错误，先按右侧提示处理`)
-    issuesRef.value?.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    return
-  }
-  generated.value = true
-  void nextTick(() => artifactRef.value?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
-}
 </script>
 
 <template>
@@ -96,12 +86,25 @@ function generateArtifacts(): void {
     </PageHeader>
 
     <el-steps :active="step" finish-status="success" align-center class="install__steps">
-      <el-step v-for="s in STEPS" :key="s" :title="s" />
+      <el-step v-for="(s, i) in STEPS" :key="s">
+        <template #title>
+          <span>{{ s }}</span>
+          <!-- 校验结果只在最后一步展示，步骤条上带个数字，免得人走到最后一步才发现填错 -->
+          <el-tag
+            v-if="i === STEPS.length - 1 && errors.length"
+            type="danger"
+            size="small"
+            class="install__step-badge"
+          >
+            {{ errors.length }}
+          </el-tag>
+        </template>
+      </el-step>
     </el-steps>
 
     <div class="install__grid">
       <section ref="formRef" class="install__form">
-        <el-form label-width="130px" label-position="right">
+        <el-form v-if="step < STEPS.length - 1" label-width="130px" label-position="right">
           <!-- 1. 基础 -->
           <template v-if="step === 0">
             <el-form-item label="集群名称" required>
@@ -270,7 +273,7 @@ function generateArtifacts(): void {
           </template>
 
           <!-- 4. 介质 -->
-          <template v-else>
+          <template v-else-if="step === 3">
             <el-form-item label="镜像架构">
               <el-radio-group v-model="form.arch">
                 <el-radio value="auto">自动（按主机探测）</el-radio>
@@ -293,11 +296,11 @@ function generateArtifacts(): void {
               <el-input v-model="form.imageRegistry" placeholder="留空 = 官方源；可填内网 registry / 加速地址" style="max-width: 420px" />
             </el-form-item>
             <template v-else>
-              <el-form-item label="静态文件仓库">
-                <el-input v-model="form.filesRepo" placeholder="例如 http://10.0.0.5/kubespray" style="max-width: 420px" />
-              </el-form-item>
-              <el-form-item label="内网 registry">
-                <el-input v-model="form.registryHost" placeholder="例如 harbor.local/k8s" style="max-width: 420px" />
+              <el-form-item label="离线部署">
+                <span class="install__hint">
+                  离线地址不用填：`deploy-offline.sh` 会按控制机 IP 写入 inventory（文件服务 :8080、registry :5000），
+                  并起本地 registry / 文件服务器、给节点装系统依赖，最后跑 playbook。
+                </span>
               </el-form-item>
             </template>
 
@@ -314,42 +317,47 @@ function generateArtifacts(): void {
           </template>
         </el-form>
 
+        <!-- 第 5 步「部署包」：拓扑、校验、部署包文件都在这里，前四步只管填 -->
+        <template v-if="step === STEPS.length - 1">
+          <div class="install__review">
+            <div class="install__card">
+              <div class="install__card-title">拓扑</div>
+              <TopologyPreview :form="form" />
+            </div>
+
+            <div class="install__card">
+              <div class="install__card-title">
+                校验
+                <el-tag v-if="errors.length" type="danger" size="small">{{ errors.length }} 个错误</el-tag>
+                <el-tag v-else-if="warnings.length" type="warning" size="small">{{ warnings.length }} 条提示</el-tag>
+                <el-tag v-else type="success" size="small">通过</el-tag>
+              </div>
+              <ul v-if="issues.length" class="install__issues">
+                <li v-for="(i, idx) in issues" :key="idx">
+                  <el-tag :type="i.level === 'error' ? 'danger' : 'warning'" size="small">
+                    {{ i.level === 'error' ? '错误' : '提示' }}
+                  </el-tag>
+                  <span>{{ i.message }}</span>
+                </li>
+              </ul>
+              <div v-else class="install__ok">没有发现问题</div>
+            </div>
+
+            <div v-if="showArtifacts" class="install__card install__card--wide">
+              <div class="install__card-title">部署包文件</div>
+              <p class="install__card-hint">
+                这就是要拷进 kubespray 检出里 inventory/ 的文件（目录层次已排好）。选好文件点「全屏查看」读全文，「下载」存单个文件。
+              </p>
+              <ArtifactPanel :files="artifacts" />
+            </div>
+          </div>
+        </template>
+
         <div class="install__actions">
           <el-button :disabled="step === 0" @click="prev">上一步</el-button>
           <el-button v-if="step < STEPS.length - 1" type="primary" @click="next">下一步</el-button>
-          <el-button type="primary" @click="generateArtifacts">生成产物</el-button>
         </div>
       </section>
-
-      <aside class="install__aside">
-        <div class="install__card">
-          <div class="install__card-title">拓扑</div>
-          <TopologyPreview :form="form" />
-        </div>
-
-        <div ref="issuesRef" class="install__card">
-          <div class="install__card-title">
-            校验
-            <el-tag v-if="errors.length" type="danger" size="small">{{ errors.length }} 个错误</el-tag>
-            <el-tag v-else-if="warnings.length" type="warning" size="small">{{ warnings.length }} 条提示</el-tag>
-            <el-tag v-else type="success" size="small">通过</el-tag>
-          </div>
-          <ul v-if="issues.length" class="install__issues">
-            <li v-for="(i, idx) in issues" :key="idx">
-              <el-tag :type="i.level === 'error' ? 'danger' : 'warning'" size="small">
-                {{ i.level === 'error' ? '错误' : '提示' }}
-              </el-tag>
-              <span>{{ i.message }}</span>
-            </li>
-          </ul>
-          <div v-else class="install__ok">没有发现问题</div>
-        </div>
-
-        <div v-if="showArtifacts" ref="artifactRef" class="install__card">
-          <div class="install__card-title">产物</div>
-          <ArtifactPanel :files="artifacts" />
-        </div>
-      </aside>
     </div>
   </div>
 </template>
@@ -357,47 +365,48 @@ function generateArtifacts(): void {
 <style scoped>
 .install {
   padding: 0 2px 24px;
-  /* 超宽屏别把表单拉到 1800px 还让右栏贴着边 */
-  max-width: 1720px;
-  margin: 0 auto;
+  /* 不设上限：这页就是拿来读配置的，窗口多宽就用多宽 */
+  max-width: none;
 }
 .install__steps {
   margin: 4px 0 18px;
 }
+.install__step-badge {
+  margin-left: 6px;
+  vertical-align: 1px;
+}
 .install__grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) clamp(380px, 30%, 560px);
+  /* 单列：拓扑与部署包都在最后一步里全宽展示，不再有右栏 */
+  grid-template-columns: minmax(0, 1fr);
   gap: 20px;
   align-items: start;
 }
 .install__form {
   min-width: 0;
 }
-.install__aside {
-  position: sticky;
-  top: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-height: calc(100vh - 120px);
-  overflow: auto;
+/* 最后一步的汇总区：拓扑与校验并排，部署包文件占满整行 */
+.install__review {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 16px;
+  margin-top: 22px;
+  align-items: start;
 }
-/* 窄屏（笔记本半屏、分屏窗口）：右侧汇总挤不出空间，退回单列上下叠放 */
-@media (max-width: 1100px) {
-  .install__grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .install__aside {
-    position: static;
-    max-height: none;
-    overflow: visible;
-  }
+.install__card--wide {
+  grid-column: 1 / -1;
 }
 .install__card {
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   padding: 12px;
   background: var(--el-bg-color);
+}
+.install__card-hint {
+  margin: -4px 0 10px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--el-text-color-secondary);
 }
 .install__card-title {
   display: flex;
