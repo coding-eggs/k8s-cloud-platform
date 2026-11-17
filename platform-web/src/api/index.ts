@@ -62,6 +62,7 @@ import type {
   PipelineRetryPlan,
   PipelineRetryWorkspaces,
   PipelineStepRef,
+  PipelineFilePatch,
   PipelineSourceRef,
   K8sHttpRoute,
   K8sNode,
@@ -1046,7 +1047,10 @@ export const pipelineApi = {
   previewSource: (pipelineId: string, tenantId?: string, maskedNodeIds?: string[],
                   withDiff?: boolean) =>
     http.post<never, PipelineSourceRef[]>('/pipeline/run/preview',
-      { id: pipelineId, tenantId, maskedNodeIds, withDiff }),
+      { id: pipelineId, tenantId, maskedNodeIds, withDiff },
+      // 轻档是并行的、每个节点 30s 上限 —— 45s 还没回就是真出问题了，
+      // 不该让用户对着默认的 120s 超时干等。重档要下整棵树，留足时间。
+      { timeout: withDiff ? 120_000 : 45_000 }),
   /**
    * 一次**历史运行**的变更清单（按落库的 sha/baseSha 现算）。
    *
@@ -1056,6 +1060,22 @@ export const pipelineApi = {
   runDiff: (runName: string, nodeId: string, tenantId?: string) =>
     http.post<never, PipelineSourceRef>('/pipeline/run/diff',
       { runName, nodeId, tenantId }),
+  /**
+   * **单个文件**的补丁正文（清单里点开某一行时才调）。
+   *
+   * `runName` = 历史运行（sha 从运行行读）；`pipelineId` = 触发前预览（sha/baseSha 由这里带回）。
+   * 补丁可能很大，所以按文件按需取 —— 不跟着清单一起返回。
+   */
+  filePatch: (body: {
+    runName?: string
+    pipelineId?: string
+    nodeId: string
+    path: string
+    sha?: string | null
+    baseSha?: string | null
+    tenantId?: string
+  }) =>
+    http.post<never, PipelineFilePatch>('/pipeline/run/diff/file', body, { timeout: 120_000 }),
   /**
    * 触发一次运行。
    *

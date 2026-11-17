@@ -78,4 +78,17 @@ class PipelineRunSourceMigrationTest {
     void theDiffRowIsBoundToWhoeverCanTriggerRuns() {
         assertThat(DIFF_SQL).contains("WHERE rp.permission_id = 'perm_pipeline_run'");
     }
+
+    // ---- V2026_11_18_3：单文件补丁端点 ----
+
+    private static final String PATCH_SQL = readFile("V2026_11_18_3__pipeline_run_diff_file.sql");
+
+    @Test
+    void theFilePatchEndpointHasAPermissionRowToo() {
+        assertThat(PATCH_SQL).contains("'/pipeline/run/diff/file'");
+        assertThat(PATCH_SQL).contains("'tenant:pipeline:run'");
+        assertThat(PATCH_SQL).contains("'perm_pipeline_runpatch'");
+        // 看不到绑定，新端点对非内置角色就是 403
+        assertThat(PATCH_SQL).contains("WHERE rp.permission_id = 'perm_pipeline_run'");
+    }
 }

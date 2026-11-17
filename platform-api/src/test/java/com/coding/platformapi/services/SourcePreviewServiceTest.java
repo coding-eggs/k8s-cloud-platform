@@ -2,6 +2,7 @@ package com.coding.platformapi.services;
 
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.platformapi.models.PipelineFileChangeDTO;
+import com.coding.platformapi.models.PipelineFilePatchDTO;
 import com.coding.platformapi.models.PipelineSourceRefDTO;
 import com.coding.platformapi.outbound.OutboundProxy;
 import org.eclipse.jgit.api.Git;
@@ -196,6 +197,42 @@ class SourcePreviewServiceTest {
         } finally {
             deleteQuietly(repo);
         }
+    }
+
+    @Test
+    void thePatchOfASingleFileOnlyContainsThatFile() throws Exception {
+        Path repo = Files.createTempDirectory("src-preview-repo-");
+        try (Git git = openRepo(repo)) {
+            String base = writeAndCommit(git, "first", f -> {
+                f.write("keep.txt", "a\nb\nc\n");
+                f.write("other.txt", "untouched\n");
+            });
+            String head = writeAndCommit(git, "second", f -> {
+                f.write("keep.txt", "a\nB\nc\nd\n");
+                f.write("added.txt", "hello\n");
+            });
+
+            PipelineFilePatchDTO p = svc.patch(repo.toUri().toString(), "", head, base,
+                    "keep.txt", "t1");
+
+            assertThat(p.error()).isNull();
+            assertThat(p.binary()).isFalse();
+            assertThat(p.truncated()).isFalse();
+            // unified diff：hunk 头 + 被删的那行 + 新增的两行
+            assertThat(p.text()).contains("@@").contains("-b").contains("+B").contains("+d");
+            // 只回这一个文件 —— 清单里点谁就只取谁
+            assertThat(p.text()).doesNotContain("added.txt").doesNotContain("other.txt");
+        } finally {
+            deleteQuietly(repo);
+        }
+    }
+
+    @Test
+    void aPatchRequestWithoutFullShasIsRejectedInsteadOfGuessing() {
+        PipelineFilePatchDTO p = svc.patch("https://example.com/r.git", "", "3f2c1ab", null,
+                "a.txt", "t1");
+        assertThat(p.text()).isNull();
+        assertThat(p.error()).contains("sha 不完整");
     }
 
     // ------------------------------------------------------------------ 本地仓库小工具

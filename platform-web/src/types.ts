@@ -2741,6 +2741,22 @@ export interface PipelineFileChange {
   binary: boolean
 }
 
+/**
+ * 单个文件的补丁正文（点开清单里某一行才取）。
+ *
+ * ⚠️ 与清单分开取：一个大文件的补丁可能几百 KB，没人点就不该下。
+ * `text` 是 unified diff（`@@ … @@` 开头）；二进制文件没有正文，只有 `binary=true`。
+ */
+export interface PipelineFilePatch {
+  path: string
+  text?: string | null
+  /** 行数超上限，只给了前一部分 */
+  truncated: boolean
+  binary: boolean
+  /** 取不到补丁的原因（仓库不可达 / 连接不可用 / 自建源不许按 sha 取） */
+  error?: string | null
+}
+
 /** 「这个集群能不能跑 CI」—— Tekton 与可动态供应的 StorageClass 缺一不可（spec §9）。 */export interface PipelineCapability {
   available: boolean
   /** 不可用时**一定有**原因：不然用户只看到「功能没了」 */

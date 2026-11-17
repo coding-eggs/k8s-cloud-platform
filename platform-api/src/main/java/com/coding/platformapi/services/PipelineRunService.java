@@ -16,6 +16,7 @@ import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
 import com.coding.data.models.system.PlatformPipelineRunLog;
 import com.coding.platformapi.k8s.K8sPipelineClient;
+import com.coding.platformapi.models.PipelineFilePatchDTO;
 import com.coding.platformapi.models.PipelineRunContext;
 import com.coding.platformapi.models.PipelineSourceRefDTO;
 import lombok.extern.slf4j.Slf4j;
@@ -813,6 +814,42 @@ public class PipelineRunService {
                 src.path("baseKind").asString("none"),
                 src.path("baseRunName").asString(null));
         return sourcePreview.diff(target, auth.hatTenantId());
+    }
+
+    /**
+     * 历史运行里**某个文件**的补丁正文（变更清单点开一行时才走这里）。
+     *
+     * <p>输入与 {@link #diff} 完全相同，只是把「整份清单」换成「这一个文件的补丁」。
+     */
+    public PipelineFilePatchDTO filePatchOfRun(String runName, String nodeId, String path) {
+        PlatformPipelineRun run = get(runName);
+        JsonNode src = sourceEntryOf(run.getSourceJson(), nodeId);
+        String sha = src == null ? null : src.path("sha").asString(null);
+        if (sha == null || sha.isBlank()) {
+            throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                    "这次运行没有为这个节点记录 commit（本能力上线前的运行，或当时没解析成功）");
+        }
+        return sourcePreview.patch(src.path("repo").asString(""),
+                connectionIdOf(run.getCanvasJson(), nodeId), sha,
+                src.path("baseSha").asString(null), path, auth.hatTenantId());
+    }
+
+    /**
+     * 触发前预览里**某个文件**的补丁正文。
+     *
+     * @param sha/baseSha 预览时算出来的那两个提交 —— 它们是**展示用**的，这里只用来取补丁，
+     *                    不参与任何执行决策（真正钉住的是触发请求里的 {@code pinnedShas}）
+     */
+    public PipelineFilePatchDTO filePatchOfPreview(String canvasJson, String nodeId,
+                                                   String sha, String baseSha, String path) {
+        for (SourcePreviewService.GitNode node : sourcePreview.gitNodes(canvasJson)) {
+            if (nodeId.equals(node.nodeId())) {
+                return sourcePreview.patch(node.repo(), node.connectionId(), sha, baseSha, path,
+                        auth.hatTenantId());
+            }
+        }
+        throw new CloudPlatformException(EnumResponseType.PIPELINE_INVALID,
+                "画布上没有这个 git 节点：" + nodeId);
     }
 
     /** {@code source_json} 里某节点的那条记录；找不到/解析不了回 null。 */

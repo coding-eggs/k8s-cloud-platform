@@ -14,7 +14,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { VideoPlay } from '@element-plus/icons-vue'
 import { pipelineApi } from '@/api'
-import type { Pipeline, PipelineCanvas, PipelineCacheStatus, PipelineRetryWorkspaces, PipelineSourceRef } from '@/types'
+import type { Pipeline, PipelineCanvas, PipelineCacheStatus, PipelineFilePatch, PipelineRetryWorkspaces, PipelineSourceRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useApplicationContext } from '@/composables/useApplicationContext'
@@ -157,6 +157,25 @@ async function loadPreview(row: Pipeline, withDiff = false) {
 
 function requestDiff() {
   if (runTarget.value) void loadPreview(runTarget.value, true)
+}
+
+/**
+ * 取某个文件的补丁（在对话框的变更清单里点开一行时才调）。
+ *
+ * <p>触发前还没有运行行，所以走 {@code pipelineId} + 预览回来的那两个 sha —— 它们只用于
+ * 取补丁展示，不参与执行决策（真正钉住的是确认时发出去的 {@code pinnedShas}）。
+ */
+function loadSourcePatch(source: PipelineSourceRef, path: string): Promise<PipelineFilePatch> {
+  const id = runTarget.value?.id
+  if (!id) return Promise.reject(new Error('没有正在预览的流水线'))
+  return pipelineApi.filePatch({
+    pipelineId: id,
+    nodeId: source.nodeId,
+    path,
+    sha: source.sha,
+    baseSha: source.baseSha,
+    tenantId: tenantId.value,
+  })
 }
 
 async function confirmRun(maskedNodeIds: string[], pinnedShas: Record<string, string>) {
@@ -425,6 +444,7 @@ usePaletteAction({
       :preview-loading="previewLoading"
       :preview-error="previewError"
       :diff-loading="previewDiffLoading"
+      :patch-loader="loadSourcePatch"
       :title="`触发运行 · ${runTarget?.name ?? ''}`"
       @confirm="confirmRun"
       @request-diff="requestDiff"

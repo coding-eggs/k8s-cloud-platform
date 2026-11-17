@@ -13,6 +13,7 @@ import com.coding.common.models.system.ResponseData;
 import com.coding.data.models.system.PlatformPipelineRun;
 import com.coding.common.audit.AuditAction;
 import com.coding.common.audit.Auditable;
+import com.coding.platformapi.models.PipelineFilePatchDTO;
 import com.coding.platformapi.models.PipelineRunContext;
 import com.coding.common.security.AuthContext;
 import com.coding.data.models.system.TokenUserInfo;
@@ -261,6 +262,35 @@ public class PipelineController {
     public ResponseData<com.coding.platformapi.models.PipelineSourceRefDTO> runDiff(
             @RequestBody RunDiffRequest request) {
         return new ResponseData<>(runService.diff(request.runName(), request.nodeId()));
+    }
+
+    /**
+     * 变更清单里**某个文件**的补丁正文。
+     *
+     * <p>两种来源走同一个端点：
+     * <ul>
+     *   <li>{@code runName} —— 历史运行：sha/baseSha 从运行行读；</li>
+     *   <li>{@code pipelineId} —— 触发前预览：sha/baseSha 由请求带回（**只用于取补丁展示**，
+     *       不参与执行决策；真正钉住的是触发请求里的 {@code pinnedShas}）。</li>
+     * </ul>
+     * 补丁可能很大，所以**不跟着清单一起返回** —— 点开哪个取哪个。
+     */
+    public record FilePatchRequest(String runName, String pipelineId, String nodeId, String path,
+                                   String sha, String baseSha, String tenantId) {
+    }
+
+    @PostMapping("/run/diff/file")
+    @Operation(summary = "变更文件的补丁正文（unified diff）",
+            description = "runName=历史运行，pipelineId=触发前预览。超长截断/二进制都会明确标出来")
+    @Auditable(action = AuditAction.PIPELINE_PREVIEW_SOURCE, target = "#request.nodeId")
+    public ResponseData<PipelineFilePatchDTO> filePatch(@RequestBody FilePatchRequest request) {
+        if (request.runName() != null && !request.runName().isBlank()) {
+            return new ResponseData<>(runService.filePatchOfRun(
+                    request.runName(), request.nodeId(), request.path()));
+        }
+        PipelineDTO pipeline = pipelineService.get(request.pipelineId());   // 顺带校验归属
+        return new ResponseData<>(runService.filePatchOfPreview(pipeline.getCanvasJson(),
+                request.nodeId(), request.sha(), request.baseSha(), request.path()));
     }
 
     /** 从断点继续的入参。 */

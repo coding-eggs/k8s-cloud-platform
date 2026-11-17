@@ -22,7 +22,7 @@ import type { Edge, Node } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import { pipelineApi } from '@/api'
-import type { Pipeline, PipelineCanvas, PipelineCanvasEdge, PipelineCanvasNode, PipelineRetryPlan, PipelineRun, PipelineSourceRef, PipelineStepRef } from '@/types'
+import type { Pipeline, PipelineCanvas, PipelineCanvasEdge, PipelineCanvasNode, PipelineFilePatch, PipelineRetryPlan, PipelineRun, PipelineSourceRef, PipelineStepRef } from '@/types'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 import { useApplicationContext } from '@/composables/useApplicationContext'
@@ -286,6 +286,24 @@ function isDiffLoading(id: string): boolean {
 
 function diffErrorText(id: string): string | null {
   return diffError.value[id] ?? null
+}
+
+/**
+ * 取某个文件的补丁（在变更清单里点开一行时才调）。
+ *
+ * <p>历史运行走 {@code runName}：sha/baseSha 由后端从运行行读，前端带的那两个只是同一份值。
+ */
+function loadRunPatch(source: PipelineSourceRef, path: string): Promise<PipelineFilePatch> {
+  const name = run.value?.runName
+  if (!name) return Promise.reject(new Error('没有运行名，取不到补丁'))
+  return pipelineApi.filePatch({
+    runName: name,
+    nodeId: source.nodeId,
+    path,
+    sha: source.sha,
+    baseSha: source.baseSha,
+    tenantId: effectiveTenantId.value,
+  })
 }
 
 async function loadDiff(s: PipelineSourceRef) {
@@ -871,7 +889,13 @@ function jumpToLogBottom(): void {
               查看变更
             </el-button>
           </div>
-          <PipelineSourceFiles v-if="c.diff" :source="c.diff" :max-height="240" class="src-files" />
+          <PipelineSourceFiles
+            v-if="c.diff"
+            :source="c.diff"
+            :max-height="240"
+            :patch-loader="loadRunPatch"
+            class="src-files"
+          />
           <div v-if="diffErrorText(c.ref.nodeId)" class="src-note src-warn">
             {{ diffErrorText(c.ref.nodeId) }}
           </div>

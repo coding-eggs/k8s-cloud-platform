@@ -17,7 +17,7 @@ import { Controls } from '@vue-flow/controls'
 import '@vue-flow/controls/dist/style.css'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
-import type { PipelineCanvasEdge, PipelineCanvasNode, PipelineSourceRef } from '@/types'
+import type { PipelineCanvasEdge, PipelineCanvasNode, PipelineFilePatch, PipelineSourceRef } from '@/types'
 import { usePipelineNodeTypes } from '@/composables/usePipelineNodeTypes'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
 import PipelineSourceFiles from '@/components/pipeline/PipelineSourceFiles.vue'
@@ -34,6 +34,8 @@ const props = defineProps<{
   previewError?: string | null
   /** 「查看变更」那一次请求在飞（它要下载整棵快照，比打开时那次慢得多） */
   diffLoading?: boolean
+  /** 取某个文件的补丁（点开清单里一行时才调；来源由父组件决定：预览走 pipelineId） */
+  patchLoader?: (source: PipelineSourceRef, path: string) => Promise<PipelineFilePatch>
 }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
@@ -211,7 +213,7 @@ function confirm() {
     <!-- 源码：这次到底会构建哪个提交（「先看后跑」——运行按这里显示的 sha 钉住） -->
     <div v-if="previewLoading || previewError || (sources ?? []).length" class="sources">
       <div class="sources-title">源码</div>
-      <div v-if="previewLoading" class="src-note">正在解析仓库…</div>
+      <div v-if="previewLoading" class="src-note">正在解析仓库…（要连远端仓库，最多约 30 秒）</div>
       <div v-else-if="previewError" class="src-note src-bad">源码预览不可用：{{ previewError }}</div>
       <template v-else>
         <div
@@ -247,6 +249,7 @@ function confirm() {
             v-if="s.files && s.files.length"
             :source="s"
             :max-height="220"
+            :patch-loader="patchLoader"
             class="src-files"
           />
           <!-- 拿不到变更/提交信息的原因 —— 不影响运行，所以只是说明 -->

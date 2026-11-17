@@ -5,6 +5,7 @@ import com.coding.common.exception.EnumResponseType;
 import com.coding.data.mapper.system.PlatformPipelineRunMapper;
 import com.coding.data.models.system.PlatformPipelineRun;
 import com.coding.platformapi.models.PipelineFileChangeDTO;
+import com.coding.platformapi.models.PipelineFilePatchDTO;
 import com.coding.platformapi.models.PipelineSourceRefDTO;
 import com.coding.platformapi.outbound.OutboundProxy;
 import lombok.extern.slf4j.Slf4j;
@@ -32,12 +33,14 @@ import org.eclipse.jgit.transport.http.HttpConnection;
 import org.eclipse.jgit.transport.http.HttpConnectionFactory2;
 import org.eclipse.jgit.transport.http.JDKHttpConnectionFactory;
 import org.eclipse.jgit.treewalk.CanonicalTreeParser;
+import org.eclipse.jgit.treewalk.filter.PathFilter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.Proxy;
@@ -51,6 +54,10 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
@@ -99,6 +106,10 @@ public class SourcePreviewService {
     private final int timeoutSeconds;
     /** 读提交头部（找 parent 行）时最多看这么多字节 —— 头部就那么几行。 */
     private static final int PARENT_PROBE_BYTES = 64 * 1024;
+
+    /** 单个文件的补丁最多回多少行 / 多少字节（超了标 truncated，界面说清楚）。 */
+    private static final int MAX_PATCH_LINES = 400;
+    private static final int MAX_PATCH_BYTES = 512 * 1024;
 
     /** 一次最多回多少条文件变更（多的只算总数，界面标「另有 N 个未显示」）。 */
     private final int maxFiles;
@@ -155,10 +166,42 @@ public class SourcePreviewService {
     public List<PipelineSourceRefDTO> resolve(String pipelineId, String canvasJson,
                                               String callerTenantId, Map<String, String> pins,
                                               boolean withDiff) {
-        List<PipelineSourceRefDTO> out = new ArrayList<>();
-        for (GitNode node : gitNodes(canvasJson)) {
-            String pin = pins == null ? null : pins.get(node.nodeId());
-            out.add(resolveOne(pipelineId, node, callerTenantId, pin, withDiff));
+        List<GitNode> nodes = gitNodes(canvasJson);
+        if (nodes.isEmpty()) {
+            return List.of();
+        }
+        // ⚠️ **并行**：每个节点是一次网络往返，超时是按**每条命令**算的（默认 30s）。
+        //    串行的话 N 个 git 节点最坏就是 N × 30s —— 界面上就是「一直在解析仓库」。
+        //    虚拟线程：这活全是阻塞 IO，不值得占一个平台线程池。
+        List<PipelineSourceRefDTO> out = new ArrayList<>(nodes.size());
+        try (ExecutorService pool = Executors.newVirtualThreadPerTaskExecutor()) {
+            List<Future<PipelineSourceRefDTO>> futures = new ArrayList<>(nodes.size());
+            for (GitNode node : nodes) {
+                String pin = pins == null ? null : pins.get(node.nodeId());
+                futures.add(pool.submit(
+                        () -> resolveOne(pipelineId, node, callerTenantId, pin, withDiff)));
+            }
+            for (int i = 0; i < nodes.size(); i++) {
+                GitNode node = nodes.get(i);
+                PipelineSourceRefDTO dto;
+                try {
+                    dto = futures.get(i).get();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    dto = PipelineSourceRefDTO.failed(node.nodeId(), node.repo(), node.revision(),
+                            "解析被中断");
+                } catch (ExecutionException e) {
+                    // resolveOne 自己兜异常；走到这里说明是没料到的运行时错误 —— 也别让整次预览塌掉
+                    dto = PipelineSourceRefDTO.failed(node.nodeId(), node.repo(), node.revision(),
+                            "解析出错：" + messageOf(e.getCause() == null ? e : e.getCause()));
+                }
+                if (dto.error() != null) {
+                    // 这一条**必须打**：失败只回给前端的话，运维在日志里看不到任何痕迹
+                    log.warn("解析 git 节点源码失败：pipeline={} node={} repo={} err={}",
+                            pipelineId, dto.nodeId(), dto.repo(), dto.error());
+                }
+                out.add(dto);
+            }
         }
         return out;
     }
@@ -235,6 +278,51 @@ public class SourcePreviewService {
     /** 钉住值形状校验；不合法直接拒（不会静默丢掉一个用户以为生效的 pin）。 */
     public static boolean isFullSha(String s) {
         return s != null && FULL_SHA.matcher(s.trim()).matches();
+    }
+
+    /**
+     * 单个文件的补丁正文 —— 变更清单里点开某一行时才走这里。
+     *
+     * <p>注意代价：JGit 要先把两棵树取进来才比得出来，所以**和 {@link #diff} 一样重**
+     * （差别只在返回体）。这也是它不跟着清单一起返回的原因。
+     */
+    public PipelineFilePatchDTO patch(String repo, String connectionId, String sha, String baseSha,
+                                      String path, String callerTenantId) {
+        if (!StringUtils.hasText(repo) || !StringUtils.hasText(path)) {
+            return PipelineFilePatchDTO.failed(path, "缺少仓库地址或文件路径");
+        }
+        if (!isFullSha(sha) || !isFullSha(baseSha)) {
+            return PipelineFilePatchDTO.failed(path, "提交 sha 不完整，取不到补丁");
+        }
+        if (sha.equals(baseSha)) {
+            return PipelineFilePatchDTO.failed(path, "与基线是同一个提交，没有变更");
+        }
+        CredentialsProvider cred;
+        try {
+            cred = credentialsFor(connectionId, callerTenantId);
+        } catch (RuntimeException e) {
+            return PipelineFilePatchDTO.failed(path, "连接不可用：" + messageOf(e));
+        }
+        RepoSession session;
+        try {
+            session = new RepoSession(normalizeRepo(repo), cred, timeoutSeconds);
+        } catch (RuntimeException e) {
+            return PipelineFilePatchDTO.failed(path, "创建临时仓库失败：" + messageOf(e));
+        }
+        try {
+            if (session.readCommit(sha) == null) {
+                return PipelineFilePatchDTO.failed(path,
+                        "取不到提交信息（可能是不允许按 sha 浅取的仓库）");
+            }
+            PatchText p = session.patchOf(baseSha, sha, path, MAX_PATCH_LINES);
+            String error = p.text() == null && !p.binary()
+                    ? "这个文件在两个提交之间没有变化" : null;
+            return new PipelineFilePatchDTO(path, p.text(), p.truncated(), p.binary(), error);
+        } catch (Exception e) {
+            return PipelineFilePatchDTO.failed(path, "取不到补丁：" + messageOf(e));
+        } finally {
+            session.close();
+        }
     }
 
     /** 历史运行按需算 diff 需要的全部输入（都来自运行行，不来自今天的流水线定义）。 */
@@ -582,6 +670,57 @@ public class SourcePreviewService {
             }
         }
 
+        /**
+         * 单个文件的补丁正文（点开某个文件时按需取）。
+         *
+         * <p>和 {@link #diff} 用同一套两棵树，只是加了 {@link PathFilter} 并把补丁**写出来**
+         * 而不是只数行。行数/字节数上限由常量控制，超出明确标 {@code truncated}
+         * —— 截断要让人看得见，不能悄悄少几行。
+         */
+        private PatchText patchOf(String baseSha, String headSha, String path, int maxLines)
+                throws Exception {
+            fetch(baseSha, "refs/preview/base");
+            Repository repo = git.getRepository();
+            ByteArrayOutputStream buf = new ByteArrayOutputStream();
+            try (ObjectReader reader = repo.newObjectReader();
+                 RevWalk walk = new RevWalk(repo);
+                 DiffFormatter df = new DiffFormatter(buf)) {
+                RevCommit base = walk.parseCommit(ObjectId.fromString(baseSha));
+                RevCommit head = walk.parseCommit(ObjectId.fromString(headSha));
+                CanonicalTreeParser a = new CanonicalTreeParser();
+                a.reset(reader, base.getTree());
+                CanonicalTreeParser b = new CanonicalTreeParser();
+                b.reset(reader, head.getTree());
+
+                df.setRepository(repo);
+                df.setDetectRenames(true);
+                df.setPathFilter(PathFilter.create(path));
+
+                List<DiffEntry> entries = df.scan(a, b);
+                if (entries.isEmpty()) {
+                    return new PatchText(null, false, false);
+                }
+                // 二进制没有可读的补丁：别把「Binary files differ」当成内容给人看
+                if (df.toFileHeader(entries.get(0)).getPatchType() == FileHeader.PatchType.BINARY) {
+                    return new PatchText(null, false, true);
+                }
+                df.format(entries);
+            }
+
+            String raw = buf.toString(StandardCharsets.UTF_8);
+            boolean truncated = buf.size() > MAX_PATCH_BYTES;
+            if (truncated) {
+                // 先按字节砍到上限附近，再按行切一次 —— 免得把多字节字符砍成半个
+                raw = raw.substring(0, Math.min(raw.length(), MAX_PATCH_BYTES));
+                raw = raw.substring(0, raw.lastIndexOf('\n') + 1);
+            }
+            List<String> lines = raw.lines().toList();
+            if (lines.size() > maxLines) {
+                return new PatchText(String.join("\n", lines.subList(0, maxLines)), true, false);
+            }
+            return new PatchText(raw, truncated, false);
+        }
+
         private static String statusOf(DiffEntry entry) {
             return switch (entry.getChangeType()) {
                 case ADD -> "A";
@@ -685,11 +824,21 @@ public class SourcePreviewService {
                               int additions, int deletions, boolean truncated) {
     }
 
+    /** 一个文件的补丁：正文 + 截断/二进制标记。 */
+    private record PatchText(String text, boolean truncated, boolean binary) {
+    }
+
     /**
      * JGit 的 HTTP 连接工厂：**按 OutboundProxy 的白名单选代理**，其余直连。
      *
      * <p>JGit 的 {@code Transport} 没有 setProxy，代理只能从连接工厂这一层给。实现
      * {@link HttpConnectionFactory2} 是为了保住 git 协议 v2（只实现基础接口会退回 v0）。
+     *
+     * <p>⚠️ <b>必须实现的是两个参数的 {@code create(url, proxy)}</b>：JGit 6.10 的
+     * {@code TransportHttp} 在构造时取 {@code ProxySelector.getDefault()} 自己先算一遍代理，
+     * 再调 {@code factory.create(u, proxy)} —— 默认选择器不知道我们的白名单，传进来的永远是
+     * {@code DIRECT}。只实现 {@code create(url)} 是**死代码**（2026-11-18 实测：github 直连超时，
+     * 报 {@code connection failed}，日志里看不出任何代理痕迹）。
      */
     private static final class ProxyAwareConnectionFactory implements HttpConnectionFactory2 {
 
@@ -702,13 +851,18 @@ public class SourcePreviewService {
 
         @Override
         public HttpConnection create(URL url) throws IOException {
-            Proxy proxy = proxyFor(url);
-            return proxy == null ? delegate.create(url) : delegate.create(url, proxy);
+            Proxy chosen = proxyFor(url);
+            return chosen == null ? delegate.create(url) : delegate.create(url, chosen);
         }
 
         @Override
         public HttpConnection create(URL url, Proxy proxy) throws IOException {
-            return delegate.create(url, proxy);
+            // 白名单命中才覆盖 JGit 传进来的（通常是 DIRECT）；没命中就照它说的直连
+            Proxy chosen = proxyFor(url);
+            if (chosen != null) {
+                log.debug("git 出站走代理：{} -> {}", url.getHost(), chosen.address());
+            }
+            return delegate.create(url, chosen == null ? proxy : chosen);
         }
 
         @Override

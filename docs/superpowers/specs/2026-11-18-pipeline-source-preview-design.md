@@ -26,7 +26,8 @@
 
 - 不做 Webhook / 定时触发的“预检”（目前不存在这类触发）。
 - 不做“必须看过 diff 才能运行”的硬门禁。
-- 不做完整 diff（不带上下文补丁），只做文件清单 + 统计。
+- 清单只到**文件级**（谁变了、多少行）；单个文件的 unified diff **按需取**（点开某一行才去拉），
+  不整份返回 —— 一次格式化能改几千个文件，整份补丁没有上限。
 - 不引入 GitLab/GitHub Compare API（多方言 + 凭据二次暴露）。
 
 ## 3. 总体设计
@@ -248,3 +249,18 @@ ALTER TABLE platform_pipeline_run
   不是任何 ref 的尖端）—— 这同时也说明自建源不开这项时，预览会如实降级成「变更清单不可用」。
 - **前端文案与清单各只有一份**：`sourceRefText.ts`（repo/分支/基线文案）与
   `PipelineSourceFiles.vue`（文件表），触发对话框与运行详情共用，避免两处口径分叉。
+- **JGit 的代理只有 `create(url, proxy)` 那条路有效**（2026-11-18 真环境撞到）：`TransportHttp`
+  构造时取 `ProxySelector.getDefault()` 自己算一遍，再调 `factory.create(u, proxy)`；默认选择器
+  不知道我们的白名单，传进来的永远是 `DIRECT`。只实现单参数的 `create(url)` 是**死代码** ——
+  症状是直连外网 git host 超时，报一句没有上下文的 `connection failed`（`SocketException`），
+  日志里连"代理"两个字都不会出现。改法：在 `create(url, proxy)` 里按白名单**覆盖**它。
+- **多个 git 节点必须并行解析**：超时是按**每条 JGit 命令**算的（默认 30s），串行的话
+  N 个节点最坏 N × 30s，界面上就是「一直在解析仓库」。前端轻档的超时收紧到 45s
+  （axios 全局是 120s，等不到任何反馈）。
+- **解析失败要打日志**：失败只回给前端的话，运维在日志里看不到任何痕迹（真环境排障时
+  正是这一行指出问题）；现在每个 `error` 都有一条 `WARN 解析 git 节点源码失败 …`。
+- **单文件补丁走 `POST /pipeline/run/diff/file`**（2026-11-18 追加，用户要「能看改啥了」）：
+  历史运行用 `runName`（sha 从运行行读），触发前预览用 `pipelineId` + 预览回来的 sha/baseSha
+  （**只用于展示**，不参与执行决策）。`PathFilter` 只比那一个文件，补丁正文按
+  400 行 / 512 KB 封顶并标 `truncated`。状态徽标改用单字母（A/M/D/R/C）—— 中文「修改」在窄列里
+  会竖着折行。
