@@ -73,6 +73,11 @@
 12. **用户/角色管理没有开放**：Milvus 本身支持（RESTful `/v2/vectordb/users/{create,list,drop,grant_role}`、
     `/v2/vectordb/roles/*`），平台目前只提供 root 一个账号 + 改口令。要加用户得决定口令怎么发、
     权限怎么在 UI 上表达，属于下一批的事。
+13. **REST 认证头必须是 `Basic`，不是 `Bearer`（2026-11-17 真集群实测）**：开鉴权的实例上，
+    `Authorization: Bearer base64(root:口令)` 会被拒成 `401 {"code":1800,"message":"user hasn't authenticated"}`；
+    `Basic base64(root:口令)` 或 `Bearer root:<明文口令>` 才是 200。平台的 `MilvusRest`（用户管理）与
+    `MilvusPasswordClient`（改口令）都发 Basic。改口令**必须**带这个头 —— 只在 body 里给旧口令，
+    Milvus 仍然先回 401。
 
 ## 5. 业务指标
 

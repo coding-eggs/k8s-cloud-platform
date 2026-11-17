@@ -22,7 +22,9 @@ import java.util.Map;
  * <p>改 root 口令沿用 {@link MilvusPasswordClient#update}（详情页的"改密码"也走那条）；
  * 本类补上列表 / 新增 / 删除 / 角色查询。
  *
- * <p><b>认证</b>：开了鉴权的实例，v2 REST 要带 {@code Authorization: Bearer base64(root:口令)}；
+ * <p><b>认证</b>：开了鉴权的实例，v2 REST 要带 {@code Authorization: Basic base64(root:口令)}
+ * （**不是 Bearer** —— Milvus 会按 Base64 解码 Basic 的凭据，而 Bearer 期望明文
+ * {@code root:口令}；平台手里是 Base64，所以只能走 Basic。见 {@link MilvusRest}）；
  * 凭据从 {@code <实例名>-milvus-auth} 读（拿不到 = 没开鉴权，不带认证头）。
  *
  * <p>角色：实测实例 {@code roles/list} 只有 {@code admin} / {@code public}，而 {@code public}
@@ -51,7 +53,7 @@ public class MilvusUserAdapter implements MiddlewareUserAdapter {
         Map<String, String> roles = UsersSecret.roles(usersSecret);
 
         List<String> names = parseNames(MilvusRest.post(baseUrl(ref.instanceName(), ref.namespace()),
-                USERS_PATH, Map.of(), bearer(client, ref)).toString());
+                USERS_PATH, Map.of(), credential(client, ref)).toString());
 
         List<MiddlewareUserView> out = new ArrayList<>();
         out.add(view(BUILTIN, "admin", true, ref));
@@ -72,15 +74,15 @@ public class MilvusUserAdapter implements MiddlewareUserAdapter {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "角色 " + role + " 在该实例上不可用（实测可选：" + String.join(" / ", roles) + "）");
         }
-        MilvusRest.post(base, CREATE_PATH, createBody(username, password), bearer(client, ref));
-        MilvusRest.post(base, GRANT_PATH, grantBody(role, username), bearer(client, ref));
+        MilvusRest.post(base, CREATE_PATH, createBody(username, password), credential(client, ref));
+        MilvusRest.post(base, GRANT_PATH, grantBody(role, username), credential(client, ref));
         return password;
     }
 
     @Override
     public void drop(KubernetesClient client, MiddlewareUserRef ref, String username) {
         MilvusRest.post(baseUrl(ref.instanceName(), ref.namespace()), DROP_PATH,
-                Map.of("userName", username), bearer(client, ref));
+                Map.of("userName", username), credential(client, ref));
     }
 
     @Override
@@ -108,7 +110,7 @@ public class MilvusUserAdapter implements MiddlewareUserAdapter {
 
     List<String> rolesFrom(KubernetesClient client, MiddlewareUserRef ref) {
         return assignableRoles(parseNames(MilvusRest.post(baseUrl(ref.instanceName(), ref.namespace()),
-                ROLES_PATH, Map.of(), bearer(client, ref)).toString()));
+                ROLES_PATH, Map.of(), credential(client, ref)).toString()));
     }
 
     // ---------- 纯函数 ----------
@@ -153,8 +155,8 @@ public class MilvusUserAdapter implements MiddlewareUserAdapter {
 
     // ---------- 内部 ----------
 
-    /** {@code Base64("root:口令")}；实例没开鉴权时返回 null（REST 不需要认证）。 */
-    private static String bearer(KubernetesClient client, MiddlewareUserRef ref) {
+    /** {@code Base64("root:口令")}，作为 {@code Authorization: Basic} 凭据；实例没开鉴权时返回 null（REST 不需要认证）。 */
+    private static String credential(KubernetesClient client, MiddlewareUserRef ref) {
         Secret secret = client.secrets().inNamespace(ref.namespace())
                 .withName(ref.instanceName() + AUTH_SECRET_SUFFIX).get();
         if (secret == null || secret.getData() == null) {

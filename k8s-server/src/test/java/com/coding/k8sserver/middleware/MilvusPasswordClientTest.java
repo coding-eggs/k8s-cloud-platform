@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -36,6 +37,26 @@ class MilvusPasswordClientTest {
                     .contains("\"userName\":\"root\"")
                     .contains("\"password\":\"old-pw\"")
                     .contains("\"newPassword\":\"new-pw\"");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    /**
+     * 开鉴权的实例上，update_password 不带 Authorization 会直接 401（真集群实测
+     * {@code {"code":1800,"message":"user hasn't authenticated"}}）；必须用当前口令做 Basic 认证。
+     */
+    @Test
+    void updateAuthenticatesWithBasicUsingTheCurrentPassword() {
+        AtomicReference<String> authorization = new AtomicReference<>();
+        HttpServer server = server("/v2/vectordb/users/update_password", 200, "{\"code\":0,\"data\":{}}",
+                new AtomicReference<>(), new AtomicReference<>(), new AtomicReference<>(), authorization);
+        try {
+            MilvusPasswordClient.update(base(server), "root", "old-pw", "new-pw");
+
+            String expected = "Basic " + Base64.getEncoder()
+                    .encodeToString("root:old-pw".getBytes(StandardCharsets.UTF_8));
+            assertThat(authorization.get()).isEqualTo(expected);
         } finally {
             server.stop(0);
         }
@@ -95,11 +116,19 @@ class MilvusPasswordClientTest {
     private static HttpServer server(String context, int status, String response,
                                      AtomicReference<String> path, AtomicReference<String> body,
                                      AtomicReference<String> contentType) {
+        return server(context, status, response, path, body, contentType, new AtomicReference<>());
+    }
+
+    private static HttpServer server(String context, int status, String response,
+                                     AtomicReference<String> path, AtomicReference<String> body,
+                                     AtomicReference<String> contentType,
+                                     AtomicReference<String> authorization) {
         try {
             HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
             server.createContext(context, exchange -> {
                 path.set(exchange.getRequestURI().getPath());
                 contentType.set(exchange.getRequestHeaders().getFirst("Content-Type"));
+                authorization.set(exchange.getRequestHeaders().getFirst("Authorization"));
                 body.set(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
                 exchange.sendResponseHeaders(status, bytes.length);

@@ -11,6 +11,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -52,12 +53,20 @@ final class MilvusPasswordClient {
     /**
      * 改口令。成功 = 2xx 且响应 code（若给出）为 0；否则抛异常，消息里带 Milvus 的原文。
      *
+     * <p><b>必须带 Basic 认证</b>：开鉴权的实例上，不带 {@code Authorization} 会直接
+     * 401 {@code {"code":1800,"message":"user hasn't authenticated"}}（真集群实测），
+     * 哪怕请求体里有旧口令也一样。凭据用「用户名 + 当前口令」，也就是 body 里的 {@code password}。
+     *
      * @param baseUrl 形如 {@code http://mw-milvus-xxxx-milvus.ns.svc:19530}（不带尾斜杠）
      */
     static void update(String baseUrl, String username, String oldPassword, String newPassword) {
+        String credential = Base64.getEncoder().encodeToString(
+                ((username == null || username.isBlank() ? "root" : username) + ":" + oldPassword)
+                        .getBytes(StandardCharsets.UTF_8));
         HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + PATH))
                 .timeout(TIMEOUT)
                 .header("Content-Type", "application/json")
+                .header("Authorization", "Basic " + credential)
                 .POST(HttpRequest.BodyPublishers.ofString(
                         body(username, oldPassword, newPassword), StandardCharsets.UTF_8))
                 .build();

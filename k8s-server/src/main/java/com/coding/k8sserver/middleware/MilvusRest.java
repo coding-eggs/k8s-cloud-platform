@@ -33,9 +33,14 @@ final class MilvusRest {
     }
 
     /**
-     * @param bearer 形如 {@code Base64("root:口令")}；null = 不带认证（实例没开鉴权）
+     * @param credential 形如 {@code Base64("root:口令")}；null / 空 = 不带认证（实例没开鉴权）
+     *
+     * <p><b>必须是 {@code Basic}</b>：2026-11-17 在真集群（Milvus 2.6.25、开鉴权）实测，
+     * {@code Bearer <base64(root:口令)>} 会被拒成 401 {@code {"code":1800,"message":"user hasn't authenticated"}}；
+     * {@code Basic <base64(root:口令)>} 或 {@code Bearer root:<明文口令>} 才是 200。
+     * 平台手里是 base64 凭据，所以只能走 Basic。
      */
-    static JsonNode post(String baseUrl, String path, Map<String, Object> body, String bearer) {
+    static JsonNode post(String baseUrl, String path, Map<String, Object> body, String credential) {
         String payload;
         try {
             payload = JSON.writeValueAsString(body == null ? new LinkedHashMap<>() : body);
@@ -45,8 +50,8 @@ final class MilvusRest {
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(baseUrl + path))
                 .timeout(TIMEOUT)
                 .header("Content-Type", "application/json");
-        if (bearer != null && !bearer.isBlank()) {
-            builder.header("Authorization", "Bearer " + bearer);
+        if (credential != null && !credential.isBlank()) {
+            builder.header("Authorization", "Basic " + credential);
         }
         HttpRequest request = builder
                 .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
