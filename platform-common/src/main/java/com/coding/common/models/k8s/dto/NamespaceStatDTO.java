@@ -56,4 +56,8 @@ public class NamespaceStatDTO {
     private BigDecimal quotaLimitCpuUsed;
     /** ResourceQuota status.used["limits.memory"]（字节）；未设 → null */
     private BigDecimal quotaLimitMemUsed;
+    private BigDecimal quotaPodsHard;
+    private BigDecimal quotaPodsUsed;
+    private BigDecimal quotaPvcHard;
+    private BigDecimal quotaPvcUsed;
 }

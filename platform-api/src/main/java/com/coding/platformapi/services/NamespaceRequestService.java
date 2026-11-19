@@ -6,6 +6,7 @@ import com.coding.common.security.AuthContext;
 import com.coding.common.utils.K8sNaming;
 import com.coding.data.mapper.auth.*;
 import com.coding.data.models.auth.NamespaceRequest;
+import com.coding.data.models.auth.NamespaceRequest.QuotaItem;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.platformapi.k8s.K8sLifecycleClient;
 import com.coding.platformapi.models.AllocationCreateRequest;
@@ -18,13 +19,17 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 
 @Service
 @RequiredArgsConstructor
 public class NamespaceRequestService {
+    private static final tools.jackson.databind.json.JsonMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
     private static final Set<String> QUOTAS = Set.of("requestsCpu","limitsCpu","requestsMemory","limitsMemory","pods","persistentVolumeClaims");
     private final AuthContext auth;
     private final NamespaceRequestMapper requests;
@@ -34,7 +39,8 @@ public class NamespaceRequestService {
     private final K8sLifecycleClient lifecycle;
     private final TransactionTemplate transaction;
 
-    public record Review(String id, boolean approve, String clusterId, String reason, BigDecimal approvedValue) {}
+    public record Review(String id, boolean approve, String clusterId, String reason, BigDecimal approvedValue,
+                         Map<String, BigDecimal> approvedQuotas) {}
     public record Recovery(String allocationId, String uid, String confirmation) {}
 
     public void submit(NamespaceRequest r) {
@@ -62,10 +68,27 @@ public class NamespaceRequestService {
                 throw new IllegalArgumentException("分配已到期或正在回收");
         }
         if (r.getExpiresAt() != null && r.getExpiresAt() <= System.currentTimeMillis()) throw new IllegalArgumentException("申请期限已过");
-        if (r.getQuotaKey() != null || "EXPAND".equals(r.getKind())) {
-            if (r.getQuotaKey() == null || !QUOTAS.contains(r.getQuotaKey()) || r.getTargetValue() == null || r.getTargetValue().signum() <= 0
-                    || ("EXPAND".equals(r.getKind()) && (r.getBaseline() == null || r.getTargetValue().compareTo(r.getBaseline()) <= 0)))
-                throw new IllegalArgumentException("请填写当前上限及更高的目标总量");
+        var items = r.getQuotaItems();
+        if (items != null && r.getQuotaKey() != null)
+            throw new IllegalArgumentException("配额请使用同一种提交格式");
+        var requested = quotaItems(r);
+        boolean expand = "EXPAND".equals(r.getKind());
+        if ((expand && requested.isEmpty()) || ("RENEW".equals(r.getKind()) && !requested.isEmpty()))
+            throw new IllegalArgumentException("申请类型与配额内容不符");
+        var keys = new HashSet<String>();
+        for (var item : requested) {
+            if (item == null || item.key() == null || !QUOTAS.contains(item.key()) || !keys.add(item.key()))
+                throw new IllegalArgumentException("配额项无效或重复");
+            validateAmount(item.key(), item.targetValue());
+            if (expand && (item.baseline() == null || item.baseline().signum() < 0
+                    || item.targetValue().compareTo(item.baseline()) <= 0))
+                throw new IllegalArgumentException("扩容目标必须高于当前上限");
+            if (!expand && item.baseline() != null)
+                throw new IllegalArgumentException("开通申请无需填写原配额");
+        }
+        if (items != null) {
+            r.setQuotaItemsJson(JSON.writeValueAsString(items.stream()
+                    .map(item -> new QuotaItem(item.key(), item.baseline(), item.targetValue(), null)).toList()));
         }
         try { requests.insert(r); }
         catch (DuplicateKeyException e) {
@@ -75,7 +98,7 @@ public class NamespaceRequestService {
     }
 
     public List<NamespaceRequest> mine() {
-        return requests.mine(auth.hatTenantId(), auth.current().getUsername());
+        return requests.mine(auth.hatTenantId(), auth.current().getUsername()).stream().map(this::withQuotaItems).toList();
     }
 
     @Transactional
@@ -90,7 +113,7 @@ public class NamespaceRequestService {
 
     public List<NamespaceRequest> list(String tenantId) {
         requireAdmin();
-        return requests.list(tenantId);
+        return requests.list(tenantId).stream().map(this::withQuotaItems).toList();
     }
 
     public void review(Review decision) {
@@ -102,8 +125,7 @@ public class NamespaceRequestService {
             if ("OPEN".equals(request.getKind()) && "PENDING".equals(request.getStatus()) && decision.approve()) {
                 if (decision.clusterId() == null || decision.clusterId().isBlank()) throw new IllegalArgumentException("请选择集群");
                 request.setClusterId(decision.clusterId());
-                request.setApprovedValue(decision.approvedValue() == null ? request.getTargetValue() : decision.approvedValue());
-                if (request.getQuotaKey() != null) validateAmount(request);
+                approveQuotaItems(withQuotaItems(request), decision);
                 if (request.getExpiresAt() != null && request.getExpiresAt() <= System.currentTimeMillis())
                     throw new IllegalArgumentException("申请截止时间已过");
                 request.setStatus("PROVISIONING");
@@ -133,6 +155,8 @@ public class NamespaceRequestService {
         if (!Set.of("PENDING","PROVISIONING").contains(r.getStatus())) return;
         if ("PROVISIONING".equals(r.getStatus()) && (!decision.approve() || !Objects.equals(r.getClusterId(), decision.clusterId())))
             throw new IllegalArgumentException("空间正在开通，请在原集群继续执行");
+        withQuotaItems(r);
+        if (decision.approve() && "PENDING".equals(r.getStatus())) approveQuotaItems(r, decision);
         r.setReviewer(auth.current().getUsername());
         r.setReason(decision.reason());
         if (!decision.approve()) {
@@ -159,9 +183,8 @@ public class NamespaceRequestService {
                         || !Set.of("ACTIVE","EXPIRED","STOPPED").contains(row.getLifecycle()))
                     throw new IllegalArgumentException("续期目标已变化或正在回收");
                 allocations.renew(row.getId(), r.getExpiresAt(), "ACTIVE".equals(row.getLifecycle()) && !expired(row) ? "ACTIVE" : "RESTORING");
-            } else if (r.getQuotaKey() != null) {
+            } else if (!quotaItems(r).isEmpty()) {
                 if (expired(row) || !"ACTIVE".equals(Objects.requireNonNullElse(row.getLifecycle(), "ACTIVE"))) throw new IllegalArgumentException("分配已到期");
-                if (!"OPEN".equals(r.getKind())) r.setApprovedValue(decision.approvedValue() == null ? r.getTargetValue() : decision.approvedValue());
                 applyQuota(r);
             }
             r.setStatus("APPROVED");
@@ -169,32 +192,81 @@ public class NamespaceRequestService {
         requests.reviewed(r);
     }
 
-    private static void validateAmount(NamespaceRequest r) {
-        BigDecimal value = r.getApprovedValue();
-        if (value.signum() <= 0 || value.compareTo(r.getTargetValue()) > 0 ||
-                (r.getBaseline() != null && value.compareTo(r.getBaseline()) <= 0)) throw new IllegalArgumentException("批准总量超出申请范围");
-        if (Set.of("pods","persistentVolumeClaims").contains(r.getQuotaKey())) value.intValueExact();
+    private NamespaceRequest withQuotaItems(NamespaceRequest request) {
+        if (request.getQuotaItemsJson() != null)
+            request.setQuotaItems(Arrays.asList(JSON.readValue(request.getQuotaItemsJson(), QuotaItem[].class)));
+        return request;
     }
 
-    private void applyQuota(NamespaceRequest r) {
-        validateAmount(r);
-        BigDecimal value = r.getApprovedValue();
+    private static List<QuotaItem> quotaItems(NamespaceRequest request) {
+        if (request.getQuotaItems() != null) return request.getQuotaItems();
+        if (request.getQuotaKey() == null) return List.of();
+        return List.of(new QuotaItem(request.getQuotaKey(), request.getBaseline(),
+                request.getTargetValue(), request.getApprovedValue()));
+    }
+
+    private void approveQuotaItems(NamespaceRequest request, Review decision) {
+        var items = quotaItems(request);
+        var values = decision.approvedQuotas() == null ? Map.<String, BigDecimal>of() : decision.approvedQuotas();
+        if (values.keySet().stream().anyMatch(key -> items.stream().noneMatch(item -> item.key().equals(key))))
+            throw new IllegalArgumentException("审批包含未申请的配额项");
+        var approved = items.stream().map(item -> {
+            BigDecimal value = values.get(item.key());
+            if (value == null && request.getQuotaItems() == null) value = decision.approvedValue();
+            if (value == null) value = item.targetValue();
+            validateAmount(item.key(), value);
+            if (value.compareTo(item.targetValue()) > 0 || (item.baseline() != null && value.compareTo(item.baseline()) <= 0))
+                throw new IllegalArgumentException("批准总量超出申请范围：" + item.key());
+            return new QuotaItem(item.key(), item.baseline(), item.targetValue(), value);
+        }).toList();
+        if (request.getQuotaItems() != null) {
+            request.setQuotaItems(approved);
+            request.setQuotaItemsJson(JSON.writeValueAsString(approved));
+        } else if (!approved.isEmpty()) {
+            request.setApprovedValue(approved.getFirst().approvedValue());
+        }
+    }
+
+    private static void validateAmount(String key, BigDecimal value) {
+        if (value == null || value.signum() <= 0 || value.precision() - value.scale() > 18
+                || value.stripTrailingZeros().scale() > (key.endsWith("Cpu") ? 3 : 0))
+            throw new IllegalArgumentException("配额必须为正数，并符合该资源的单位：" + key);
+        if (("pods".equals(key) || "persistentVolumeClaims".equals(key))
+                && value.compareTo(BigDecimal.valueOf(Integer.MAX_VALUE)) > 0)
+            throw new IllegalArgumentException("数量配额超出范围：" + key);
+    }
+
+    void applyQuota(NamespaceRequest r) {
+        var items = quotaItems(r);
         ResourceQuotaDTO quota = namespaces.quotaGet(r.getClusterId(), r.getNamespace());
         if (quota == null) quota = new ResourceQuotaDTO();
         if (Boolean.TRUE.equals(quota.getMultiple())) throw new IllegalArgumentException("空间有多份配额，请核对其他约束");
         var fields = new BeanWrapperImpl(quota);
-        Object old = fields.getPropertyValue(r.getQuotaKey());
-        if (old != null && new BigDecimal(old.toString()).compareTo(value) == 0) return;
-        if (old == null ? r.getBaseline() != null : r.getBaseline() == null || new BigDecimal(old.toString()).compareTo(r.getBaseline()) != 0)
-            throw new IllegalArgumentException("当前上限已变化，请重新核对");
-        fields.setPropertyValue(r.getQuotaKey(), value);
+        var changed = items.stream()
+                .filter(item -> !matchesAmount(fields.getPropertyValue(item.key()), item.approvedValue())).toList();
+        if (changed.isEmpty()) return;
+        for (var item : changed) {
+            if (!matchesAmount(fields.getPropertyValue(item.key()), item.baseline()))
+                throw new IllegalArgumentException("当前上限已变化，请重新核对：" + item.key());
+        }
+        changed.forEach(item -> fields.setPropertyValue(item.key(), item.approvedValue()));
         var update = new NamespaceQuotaUpsertRequest();
         update.setClusterId(r.getClusterId());
         update.setNamespace(r.getNamespace());
         update.setQuota(quota);
         namespaces.quotaUpsert(update);
-        Object actual = new BeanWrapperImpl(namespaces.quotaGet(r.getClusterId(), r.getNamespace())).getPropertyValue(r.getQuotaKey());
-        if (actual == null || new BigDecimal(actual.toString()).compareTo(value) != 0) throw new IllegalStateException("配额尚未生效");
+        var saved = namespaces.quotaGet(r.getClusterId(), r.getNamespace());
+        if (saved == null) throw new IllegalStateException("配额尚未生效");
+        var actual = new BeanWrapperImpl(saved);
+        for (var item : items) {
+            if (!matchesAmount(actual.getPropertyValue(item.key()), item.approvedValue()))
+                throw new IllegalStateException("配额尚未生效：" + item.key());
+        }
+    }
+
+    private static boolean matchesAmount(Object actual, BigDecimal expected) {
+        if (actual == null || expected == null) return actual == null && expected == null;
+        return new BigDecimal(actual.toString()).compareTo(expected) == 0;
     }
 
     private static boolean expired(PlatformTenantNamespace row) {

@@ -3,6 +3,8 @@ package com.coding.data.models.auth;
 import lombok.Data;
 import java.math.BigDecimal;
 import java.util.Date;
+import java.util.List;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 
 @Data
 public class NamespaceRequest {
@@ -19,6 +21,12 @@ public class NamespaceRequest {
     private BigDecimal baseline;
     private BigDecimal targetValue;
     private BigDecimal approvedValue;
+    private List<QuotaItem> quotaItems;
+    @JsonIgnore
+    private String quotaItemsJson;
+
+    public record QuotaItem(String key, BigDecimal baseline, BigDecimal targetValue, BigDecimal approvedValue) {}
+
     private String reviewer;
     private String reason;
     private String status;

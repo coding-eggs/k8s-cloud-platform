@@ -159,6 +159,10 @@ export interface K8sNamespaceResourceStat {
   quotaLimitMemHard?: number | null
   quotaLimitCpuUsed?: number | null
   quotaLimitMemUsed?: number | null
+  quotaPodsHard?: number | null
+  quotaPodsUsed?: number | null
+  quotaPvcHard?: number | null
+  quotaPvcUsed?: number | null
 }
 
 /** 异常 Pod 明细行；reason 是归组用的最严重原因（CrashLoopBackOff > OOMKilled > … > Pending） */

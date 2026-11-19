@@ -669,6 +669,12 @@ public class ClusterAggregationOperations {
      * 两边取同一份数据，概览表的配额列才不会和命名空间页对不上。
      */
     private static void applyQuota(NsAcc acc, ResourceQuota rq) {
+        var hard = rq.getSpec() == null ? null : rq.getSpec().getHard();
+        var used = rq.getStatus() == null ? null : rq.getStatus().getUsed();
+        acc.quotaPodsHard = merge(acc.quotaPodsHard, base(hard, "pods"));
+        acc.quotaPodsUsed = merge(acc.quotaPodsUsed, base(used, "pods"));
+        acc.quotaPvcHard = merge(acc.quotaPvcHard, base(hard, "persistentvolumeclaims"));
+        acc.quotaPvcUsed = merge(acc.quotaPvcUsed, base(used, "persistentvolumeclaims"));
         acc.quotaCpuHard = merge(acc.quotaCpuHard, rq.getSpec() == null ? null : base(rq.getSpec().getHard(), QUOTA_CPU));
         acc.quotaMemHard = merge(acc.quotaMemHard, rq.getSpec() == null ? null : base(rq.getSpec().getHard(), QUOTA_MEMORY));
         var st = rq.getStatus();
@@ -772,6 +778,10 @@ public class ClusterAggregationOperations {
         private BigDecimal memRequest;
         private BigDecimal cpuLimit;
         private BigDecimal memLimit;
+        private BigDecimal quotaPodsHard;
+        private BigDecimal quotaPodsUsed;
+        private BigDecimal quotaPvcHard;
+        private BigDecimal quotaPvcUsed;
         private BigDecimal quotaCpuHard;
         private BigDecimal quotaMemHard;
         private BigDecimal quotaCpuUsed;
@@ -797,6 +807,10 @@ public class ClusterAggregationOperations {
             d.setMemRequest(memRequest);
             d.setCpuLimit(cpuLimit);
             d.setMemLimit(memLimit);
+            d.setQuotaPodsHard(quotaPodsHard);
+            d.setQuotaPodsUsed(quotaPodsUsed);
+            d.setQuotaPvcHard(quotaPvcHard);
+            d.setQuotaPvcUsed(quotaPvcUsed);
             d.setQuotaCpuHard(quotaCpuHard);
             d.setQuotaMemHard(quotaMemHard);
             d.setQuotaCpuUsed(quotaCpuUsed);

@@ -16,9 +16,9 @@ public interface NamespaceRequestMapper {
     int deliver(@Param("allocation") String allocation, @Param("until") long until, @Param("days") int days, @Param("user") String user);
     @Insert("""
         INSERT INTO platform_namespace_request(id, tenant_id, applicant, kind, allocation_id, namespace, cluster_id,
-          purpose, expires_at, quota_key, baseline, target_value)
+          purpose, expires_at, quota_key, baseline, target_value, quota_items_json)
         VALUES(#{id}, #{tenantId}, #{applicant}, #{kind}, #{allocationId}, #{namespace}, #{clusterId},
-          #{purpose}, #{expiresAt}, #{quotaKey}, #{baseline}, #{targetValue})
+          #{purpose}, #{expiresAt}, #{quotaKey}, #{baseline}, #{targetValue}, #{quotaItemsJson})
         """)
     int insert(NamespaceRequest row);
 
@@ -33,7 +33,7 @@ public interface NamespaceRequestMapper {
 
     @Update("""
         UPDATE platform_namespace_request SET status=#{status},reason=#{reason},reviewer=#{reviewer},
-          cluster_id=#{clusterId},allocation_id=#{allocationId},approved_value=#{approvedValue} WHERE id=#{id}
+          cluster_id=#{clusterId},allocation_id=#{allocationId},approved_value=#{approvedValue},quota_items_json=#{quotaItemsJson} WHERE id=#{id}
         """)
     int reviewed(NamespaceRequest row);
 }
