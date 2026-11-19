@@ -415,7 +415,7 @@ const clusterDesc = computed(() => {
     </template>
 
     <!-- 详情 -->
-    <el-drawer v-model="drawerVisible" :title="`告警 · ${detail?.alertname ?? ''}`" size="640px">
+    <el-drawer v-model="drawerVisible" :title="`告警 · ${detail?.alertname ?? ''}`" size="min(640px, 100vw)">
       <el-descriptions :column="1" border>
         <el-descriptions-item label="状态">
           <el-tag v-if="detail?.status === 'firing'" size="small" type="danger" effect="plain">firing</el-tag>
@@ -453,7 +453,7 @@ const clusterDesc = computed(() => {
         </el-descriptions-item>
       </el-descriptions>
 
-      <div v-if="detail">
+      <div v-if="detail" class="alert-resource-actions">
         <el-button v-if="target.kind === 'pod' && target.name && perm.has(pageCodes.pod.detail)" @click="resourcePage('pod-detail',{name:target.name})">Pod 详情</el-button>
         <el-button v-if="['workload','deployment','statefulset','daemonset'].includes(target.kind) && target.name && perm.has(pageCodes.workload.detail)" @click="resourcePage('workload-detail',{name:target.name,kind:target.kind})">工作负载详情</el-button>
         <el-button v-if="['pvc','persistentvolumeclaim'].includes(target.kind) && target.name && perm.has(pageCodes.pvc.list)" @click="resourcePage('pvcs',{open:target.name})">查看卷状态</el-button>
@@ -463,14 +463,35 @@ const clusterDesc = computed(() => {
         <router-link v-if="target.kind === 'namespace' && perm.has(pageCodes.namespace.detail)" :to="{ name: 'namespace-detail', query: { clusterId: detail.clusterId, name: detail.namespace } }">查看空间配额</router-link>
         <el-button v-if="target.kind === 'namespace' && perm.currentTenant && perm.has('tenant:overview:view')" @click="resourcePage('overview',{})">租户空间用量</el-button>
         <router-link v-if="(target.kind === 'cluster' || !detail.namespace) && perm.has(pageCodes.cluster)" :to="{ name: 'cluster-detail', query: { clusterId: detail.clusterId } }">集群概览</router-link>
-        <h4>处理记录</h4>
-        <p v-for="(entry, i) in handling" :key="i">{{ fmtDate(entry.createdAt) }} · {{ entry.actor }} · {{ entry.kind === 'CLAIM' ? '已认领' : entry.note }}</p>
-        <template v-if="perm.has('tenant:alert:handle')">
-          <el-button v-if="!handling.some(e => e.kind === 'CLAIM')" @click="handle('CLAIM')">认领</el-button>
-          <el-input v-model="note" maxlength="1000" placeholder="处理备注" />
-          <el-button :disabled="!note.trim()" @click="handle('NOTE')">添加备注</el-button>
-        </template>
       </div>
+
+      <section v-if="detail" class="alert-handling" aria-labelledby="alert-handling-title">
+        <header class="alert-handling-header">
+          <h4 id="alert-handling-title">处理记录</h4>
+          <el-button
+            v-if="perm.has('tenant:alert:handle') && !handling.some(entry => entry.kind === 'CLAIM')"
+            @click="handle('CLAIM')"
+          >认领告警</el-button>
+        </header>
+        <ul v-if="handling.length" class="alert-handling-list">
+          <li v-for="(entry, index) in handling" :key="index">
+            <div class="alert-handling-meta">
+              <strong>{{ entry.actor }}</strong>
+              <span>{{ entry.kind === 'CLAIM' ? '已认领' : '追加了备注' }}</span>
+              <time>{{ fmtDate(entry.createdAt) }}</time>
+            </div>
+            <p v-if="entry.kind === 'NOTE'" class="alert-handling-note">{{ entry.note }}</p>
+          </li>
+        </ul>
+        <p v-else class="alert-handling-empty">暂无处理记录</p>
+
+        <div v-if="perm.has('tenant:alert:handle')" class="alert-note-editor">
+          <label for="alert-note-input">处理备注</label>
+          <el-input id="alert-note-input" v-model="note" type="textarea" :rows="3" maxlength="1000" placeholder="记录排查进展或处理结果" />
+          <el-button type="primary" :disabled="!note.trim()" @click="handle('NOTE')">添加备注</el-button>
+        </div>
+      </section>
+
       <div class="section-title">标签 labels</div>
       <el-table v-if="detailLabels" :data="kvRows(detailLabels)" size="small" stripe>
         <el-table-column prop="k" label="键" width="220" />
@@ -524,6 +545,69 @@ const clusterDesc = computed(() => {
 }
 .muted {
   color: var(--text-3);
+}
+.alert-resource-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.alert-resource-actions:not(:empty) {
+  margin-top: 16px;
+}
+.alert-resource-actions :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+.alert-handling {
+  display: grid;
+  gap: 12px;
+  margin-block: 24px;
+  padding-block: 16px;
+  border-block: 1px solid var(--el-border-color-light);
+}
+.alert-handling-header,
+.alert-handling-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.alert-handling-header {
+  justify-content: space-between;
+}
+.alert-handling-header h4,
+.alert-handling-empty,
+.alert-handling-list,
+.alert-handling-note {
+  margin: 0;
+}
+.alert-handling-header h4 {
+  font-size: 14px;
+  font-weight: 600;
+}
+.alert-handling-meta,
+.alert-handling-empty {
+  font-size: 13px;
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+.alert-handling-list {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+.alert-handling-note {
+  margin-top: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.alert-note-editor {
+  display: grid;
+  gap: 8px;
+}
+.alert-note-editor > .el-button {
+  justify-self: end;
 }
 .section-title {
   font-size: 13px;
