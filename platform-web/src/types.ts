@@ -406,6 +406,9 @@ export interface TenantMemberView {
 
 /** 命名空间分配 */
 export interface NamespaceAllocation {
+  expiresAt?: number
+  lifecycle?: string
+  lifecycleError?: string
   id: string
   tenantId: string
   clusterId: string
@@ -2643,6 +2646,8 @@ export interface Pipeline {
 
 /** 一次运行。**归档后集群对象就没了，库是运行历史的唯一来源**。 */
 export interface PipelineRun {
+  artifactsJson?: string | null
+  tenantId?: string | null
   id: string
   pipelineId: string
   clusterId: string
@@ -3163,6 +3168,7 @@ export interface AppServiceMesh {
 
 /** 服务期望配置（desired_json）。后端白名单，未知字段会被拒绝 */
 export interface AppServiceDesired {
+  buildSource?: { runName: string; pipelineId: string; nodeName: string; commits?: string[] }
   imageRepo: string
   imageTag: string
   port?: number | null

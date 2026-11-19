@@ -28,10 +28,12 @@
     <select id="hasClusterAccess" resultType="boolean">
       select count(1) > 0 from platform_tenant_namespace
       where tenant_id = #{tenantId} and cluster_id = #{clusterId}
+        and lifecycle='ACTIVE' and (expires_at is null or expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))*1000)
     </select>
     <select id="listClusterIdsByTenant" resultType="java.lang.String">
       select distinct cluster_id from platform_tenant_namespace
       where tenant_id = #{tenantId}
+        and lifecycle='ACTIVE' and (expires_at is null or expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))*1000)
     </select>
   <select id="listAll" resultType="com.coding.data.models.auth.PlatformTenant">
     select * from platform_tenant where deleted_at is null
@@ -41,6 +43,7 @@
       where tenant_id = #{tenantId}
         and cluster_id = #{clusterId}
         and namespace = #{namespace}
+        and lifecycle='ACTIVE' and (expires_at is null or expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))*1000)
     </select>
     <!-- 归属反查（不是授权）：唯一键改二元组之前可能有多行，按「保留最早」同一口径取一条 -->
     <select id="selectTenantIdByClusterAndNs" resultType="java.lang.String">

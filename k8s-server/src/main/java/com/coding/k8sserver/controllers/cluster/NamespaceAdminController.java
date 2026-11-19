@@ -33,6 +33,16 @@ public class NamespaceAdminController implements AccessBoundaryAware {
 
     private final K8sProvisioningService provisioning;
 
+    @PostMapping("/uid")
+    public ResponseData<String> uid(@RequestBody AdminNamespaceKeyRequest req) {
+        return new ResponseData<>(provisioning.namespaceUid(req.getClusterId(), req.getNamespace()));
+    }
+
+    @PostMapping("/recovery-preview")
+    public ResponseData<com.coding.common.models.k8s.dto.admin.NamespaceRecoveryPreview> preview(@RequestBody AdminNamespaceKeyRequest req) {
+        return new ResponseData<>(provisioning.recoveryPreview(req.getClusterId(), req.getNamespace()));
+    }
+
     @PostMapping("/create")
     @Operation(summary = "创建命名空间（幂等）", description = "不存在则创建并打 managed-by 标签；已存在直接返回")
     public ResponseData<Void> create(@RequestBody AdminNamespaceKeyRequest req) {

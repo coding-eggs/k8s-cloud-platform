@@ -8,12 +8,26 @@ import TenantSwitcher from '@/components/TenantSwitcher.vue'
 import CommandPalette from '@/components/CommandPalette.vue'
 import SearchFab from '@/components/SearchFab.vue'
 import { usePermission } from '@/stores/permission'
+import http from '@/api/http'
+import type { NamespaceAllocation } from '@/types'
+import { ElNotification } from 'element-plus'
 import { buildNav, labelOf, resolveNavLocation, type NavDomain, type NavDomainKey, type NavFace } from '@/nav'
 
 const route = useRoute()
 const router = useRouter()
 const theme = ref(getTheme())
 const perm = usePermission()
+let reminderTimer: number | undefined
+async function checkExpirations() {
+  if (document.hidden || !perm.has('tenant:namespace:reminders')) return
+  try {
+    const due = await http.post<never,NamespaceAllocation[]>('/namespace-requests/reminders')
+    for (const row of due) ElNotification({ type:'warning', title:'命名空间即将到期',
+      message:row.namespace + ' · ' + new Date(row.expiresAt!).toLocaleString(), duration:10000 })
+  } catch { /* 下次轮询重试 */ }
+}
+onMounted(() => { void checkExpirations(); reminderTimer = window.setInterval(checkExpirations, 300000) })
+onBeforeUnmount(() => window.clearInterval(reminderTimer))
 
 // ---------- 导航：域 → 菜单项，全部来自 nav.ts ----------
 // 菜单不再手写：显隐与归属由路由上的 meta（domain / platformDomain / icon / order / nav）

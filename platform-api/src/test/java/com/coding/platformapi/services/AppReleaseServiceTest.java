@@ -174,6 +174,31 @@ class AppReleaseServiceTest {
     }
 
     @Test
+    void archivedDigestIsPinnedToTheServiceAndBoundToTheTenant() {
+        var runs = mock(PipelineRunService.class);
+        org.springframework.test.util.ReflectionTestUtils.setField(service, "runs", runs);
+        var run = new com.coding.data.models.system.PlatformPipelineRun();
+        run.setRunName("build-1");
+        run.setPipelineId("pipeline");
+        run.setStatus("SUCCEEDED");
+        run.setClusterId("c1");
+        run.setNamespace("demo");
+        run.setTenantId("other");
+        String digest = "sha256:" + "a".repeat(64);
+        run.setArtifactsJson(JSON.writeValueAsString(List.of(Map.of("nodeName","push","image","harbor.local/demo/x:main","digest",digest))));
+        when(runs.get("build-1")).thenReturn(run);
+        var artifact = new com.coding.platformapi.models.AppReleaseRequest.BuildArtifact("build-1","push","api");
+        var target = row("api",svc("1"),false);
+        when(services.selectByApp("app1")).thenReturn(List.of(target));
+        when(services.selectByKey("app1","api")).thenReturn(target);
+        when(services.updateWithVersion(any())).thenReturn(1);
+        assertThatThrownBy(() -> service.preview("app1",List.of("api"),Map.of(),"t1",artifact)).isInstanceOf(RuntimeException.class);
+        run.setTenantId("t1");
+        service.create("app1",List.of("api"),Map.of(),null,"bob","t1",artifact);
+        assertThat(createdSnapshot()).contains("main@" + digest, "build-1", "push");
+    }
+
+    @Test
     void releasesNeverCreateInstancesOrRunInit() {
         when(services.selectByApp("app1")).thenReturn(List.of(row("api", svc("1"), false)));
         when(services.selectByKey("app1", "api")).thenReturn(row("api", svc("1"), false));

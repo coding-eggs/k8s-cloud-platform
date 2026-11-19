@@ -17,6 +17,10 @@ import { fmtDate } from '@/utils/format'
 import type { AppEnvRow, AppRelease } from '@/types'
 import { canRollbackTo, errMsg, RELEASE_STATUS } from './releaseUtil'
 
+import { usePermission } from '@/stores/permission'
+import { apiCodes } from '@/apiCodes'
+import { pageCodes } from '@/pageCodes'
+const perm = usePermission()
 const props = defineProps<{
   appId: string
   tenantId?: string
@@ -189,6 +193,11 @@ const CANARY_TYPE: Record<string, string> = {
             <div class="app-rel-drawer__svc-head">
               <b>{{ key }}</b>
               <code>{{ d.imageRepo }}:{{ d.imageTag }}</code>
+              <router-link v-if="d.buildSource && perm.has(apiCodes.pipelineRead) && perm.has(pageCodes.pipeline)" :to="{ path: '/pipelines/run', query: { id: d.buildSource.pipelineId, name: d.buildSource.runName } }">
+                来源运行 {{ d.buildSource.runName }} · {{ d.buildSource.nodeName }}
+              </router-link>
+              <span v-else-if="d.buildSource">来源运行 {{ d.buildSource.runName }} · {{ d.buildSource.nodeName }}</span>
+              <code v-for="sha in d.buildSource?.commits" :key="sha">{{ sha }}</code>
               <span class="app-rel-drawer__muted">
                 <template v-if="d.port">端口 {{ d.port }} · </template>副本 {{ d.replicas ?? '—' }}
               </span>

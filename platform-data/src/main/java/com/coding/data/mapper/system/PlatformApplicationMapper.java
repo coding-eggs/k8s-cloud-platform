@@ -27,6 +27,9 @@ public interface PlatformApplicationMapper {
     List<PlatformApplication> selectByTenant(@Param("tenantId") String tenantId,
                                              @Param("clusterId") String clusterId);
 
+    List<PlatformApplication> searchActive(@Param("tenantId") String tenantId, @Param("clusterId") String clusterId,
+                                           @Param("namespace") String namespace, @Param("term") String term);
+
     int softDelete(@Param("id") String id, @Param("deletedAt") Date deletedAt);
 
     /** 概览计数；clusterId 为 null = 全部集群，namespaces 为 null = 不限、空集合 = 无结果 */

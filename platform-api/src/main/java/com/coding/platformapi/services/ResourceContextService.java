@@ -57,6 +57,8 @@ public class ResourceContextService {
             tenantNode.setStatus(tenant.getStatus() == null ? null : tenant.getStatus().intValue());
 
             for (PlatformTenantNamespace allocation : allocations) {
+                if ((allocation.getExpiresAt() != null && allocation.getExpiresAt() <= System.currentTimeMillis())
+                        || (allocation.getLifecycle() != null && !"ACTIVE".equals(allocation.getLifecycle()))) continue;
                 if (!tenant.getId().equals(allocation.getTenantId())) {
                     continue;
                 }

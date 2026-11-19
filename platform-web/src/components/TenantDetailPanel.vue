@@ -26,6 +26,7 @@ import type { K8sCluster, NamespaceAllocation, PlatformRole, PlatformUser, RbacT
 import { fmtDate } from '@/utils/format'
 import AllocateNamespaceDialog from '@/components/AllocateNamespaceDialog.vue'
 import TenantOverviewPanel from '@/components/tenant/TenantOverviewPanel.vue'
+import NamespaceRequests from '@/components/tenant/NamespaceRequests.vue'
 import { usePermission } from '@/stores/permission'
 import { apiCodes } from '@/apiCodes'
 
@@ -297,11 +298,16 @@ watch(activeTab, (t) => {
 <template>
   <div class="panel px-2.5">
     <el-tabs v-model="activeTab" class="ov-tabs">
+      <el-tab-pane v-if="can(delegate ? 'platform:namespace:review' : 'tenant:namespace:request')" label="空间申请与回收" name="requests" lazy>
+        <NamespaceRequests :key="tenantId" :tenant-id="tenantId" :admin="!!delegate"/>
+      </el-tab-pane>
       <!-- 概览（首个 tab，lazy）：进面板即拉快照/明细/曲线；tenantId 变化自动重拉 -->
       <el-tab-pane label="概览" name="overview" lazy>
         <TenantOverviewPanel
           v-if="showOverview"
           ref="overviewRef"
+          :can-request-space="!delegate && can('tenant:namespace:request')"
+          @request-space="activeTab = 'requests'"
           :tenant-id="tenantId"
           @loaded="(at: number) => emit('overview-loaded', at)"
           @failed="emit('overview-failed')"

@@ -145,6 +145,27 @@ public class K8sProvisioningService {
         }
     }
 
+    public String namespaceUid(String clusterId, String namespace) {
+        var ns = clientFactory.getAdminClient(clusterId).namespaces().withName(namespace).get();
+        return ns == null ? null : ns.getMetadata().getUid();
+    }
+
+    public com.coding.common.models.k8s.dto.admin.NamespaceRecoveryPreview recoveryPreview(String clusterId, String namespace) {
+        var client = clientFactory.getAdminClient(clusterId);
+        String uid = namespaceUid(clusterId, namespace);
+        if (uid == null) throw new IllegalStateException("命名空间不存在");
+        List<String> volumes = new ArrayList<>();
+        for (var claim : client.persistentVolumeClaims().inNamespace(namespace).list().getItems()) {
+            var name = claim.getSpec().getVolumeName();
+            var pv = name == null ? null : client.persistentVolumes().withName(name).get();
+            volumes.add(claim.getMetadata().getName() + " · " + (pv == null ? "未绑定或策略未知" : pv.getSpec().getPersistentVolumeReclaimPolicy()));
+        }
+        var pods = client.pods().inNamespace(namespace).list().getItems();
+        var workloads = pods.stream().flatMap(p -> p.getMetadata().getOwnerReferences().stream())
+                .map(o -> o.getKind() + "/" + o.getName()).distinct().sorted().toList();
+        return new com.coding.common.models.k8s.dto.admin.NamespaceRecoveryPreview(uid, pods.size(), volumes, workloads);
+    }
+
     /**
      * 确保租户 SA 存在（platform-system 下，名为 tn-<serviceAccount>）
      */

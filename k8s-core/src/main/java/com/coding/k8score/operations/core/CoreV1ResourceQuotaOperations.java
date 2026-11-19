@@ -112,6 +112,9 @@ public class CoreV1ResourceQuotaOperations implements NamespacedOperations<Resou
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST);
         }
         ResourceQuota in = converter.convertForUpdate(dto, live);
+        if (dto.getResourceVersion() != null && !dto.getResourceVersion().isBlank()) {
+            in.getMetadata().setResourceVersion(dto.getResourceVersion());
+        }
         ResourceQuota updated = client.resourceQuotas()
                 .inNamespace(namespace)
                 .resource(in)

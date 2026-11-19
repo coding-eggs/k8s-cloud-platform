@@ -33,6 +33,7 @@ import io.fabric8.tekton.v1.SkippedTask;
 import io.fabric8.tekton.v1.TaskRun;
 import io.fabric8.tekton.v1.PipelineRunStatus;
 import io.fabric8.tekton.v1.TaskRunStatus;
+import com.coding.common.models.pipeline.PipelineImageArtifact;
 import com.coding.common.models.pipeline.PipelineCacheStatusDTO;
 import com.coding.common.models.pipeline.PipelineConnectionRef;
 import com.coding.common.models.pipeline.PipelineRunSnapshotDTO;
@@ -883,7 +884,7 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                 }
             }
             steps.add(new PipelineRunSnapshotDTO.StepLog(
-                    step.nodeName(), step.status(), log.toString(), truncated, size));
+                    step.nodeName(), step.status(), log.toString(), truncated, size, step.artifact()));
         }
 
         return new PipelineRunSnapshotDTO(
@@ -1060,7 +1061,17 @@ public class PipelineRunOperations implements NamespacedOperations<PipelineRunDT
                         .map(StepState::getContainer)
                         .filter(c -> c != null && !c.isBlank())
                         .toList();
-        return new PipelineStepRefDTO(nodeName, status, podName, containers, messageOf(st));
+        String image = null;
+        String digest = null;
+        if ("SUCCEEDED".equals(status) && st != null && st.getResults() != null) {
+            for (var result : st.getResults()) {
+                if (result.getValue() == null) continue;
+                if ("image-ref".equals(result.getName())) image = result.getValue().getStringVal();
+                if ("image-digest".equals(result.getName())) digest = result.getValue().getStringVal();
+            }
+        }
+        return new PipelineStepRefDTO(nodeName, status, podName, containers, messageOf(st),
+                PipelineImageArtifact.from(nodeName, image, digest));
     }
 
     private PipelineRun fetch(String namespace, String name) {

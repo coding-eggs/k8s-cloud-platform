@@ -60,6 +60,8 @@ public class PlatformPipelineRun {
 
     /** 每个节点的状态与耗时（画布节点 id → 状态），归档时抓下来的快照 */
     private String stepsJson;
+    private String artifactsJson;
+    private String tenantId;
 
     /**
      * 本次运行各 git 节点解析出的源码信息（JSON 数组，见 platform-api 的

@@ -15,6 +15,7 @@ const tenants = ref<PlatformTenant[]>([])
 const clusters = ref<K8sCluster[]>([])
 const templates = ref<RbacTemplate[]>([])
 const saving = ref(false)
+const expiresAt = ref<Date | null>(null)
 const form = reactive({ tenantId: '', clusterId: '', namespace: '', roleTemplateId: '' })
 
 const enabledTenants = computed(() => tenants.value.filter((t) => t.status === 1))
@@ -60,6 +61,7 @@ watch(visible, async (v) => {
   form.tenantId = props.tenantId ?? ''
   form.clusterId = ''
   form.namespace = ''
+  expiresAt.value = null
   form.roleTemplateId = ''
   nsOptions.value = []
   ;[tenants.value, clusters.value, templates.value] = await Promise.all([
@@ -87,6 +89,7 @@ async function submit(): Promise<void> {
       clusterId: form.clusterId,
       namespace: ns,
       roleTemplateId: form.roleTemplateId || undefined,
+      expiresAt: expiresAt.value?.getTime(),
     })
     ElMessage.success('分配成功：命名空间 / ClusterRole / RoleBinding 已就绪')
     visible.value = false
@@ -140,6 +143,7 @@ async function submit(): Promise<void> {
           新名字不存在时自动创建（打 managed-by 标签）
         </div>
       </el-form-item>
+      <el-form-item label="有效期"><el-date-picker v-model="expiresAt" type="datetime" placeholder="留空为长期使用" /></el-form-item>
       <el-form-item label="RBAC 模板">
         <el-select v-model="form.roleTemplateId" style="width: 100%">
           <el-option v-for="t in templates" :key="t.id" :label="`${t.name}${t.builtIn === 1 ? '（内置）' : ''}`" :value="t.id">

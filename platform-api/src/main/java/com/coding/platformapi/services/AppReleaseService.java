@@ -9,6 +9,8 @@ import com.coding.common.models.app.AppRenderResultDTO;
 import com.coding.common.models.app.AppStatusRequestDTO;
 import com.coding.common.models.app.AppStatusResultDTO;
 import com.coding.common.models.page.PageResult;
+import com.coding.common.models.pipeline.PipelineImageArtifact;
+import com.coding.platformapi.models.AppReleaseRequest.BuildArtifact;
 import com.github.pagehelper.PageHelper;
 import com.github.pagehelper.PageInfo;
 import com.coding.data.mapper.system.PlatformAppDependencyMapper;
@@ -86,6 +88,8 @@ public class AppReleaseService {
     private final TransactionTemplate tx;
     private final AppFeatureGate featureGate;
     private final IngressPortService ingressPorts;
+    @org.springframework.beans.factory.annotation.Autowired
+    private PipelineRunService runs;
 
     public AppReleaseService(PlatformApplicationMapper apps, PlatformAppServiceMapper services,
                              PlatformAppDependencyMapper dependencyRows, PlatformAppReleaseMapper releases,
@@ -115,8 +119,13 @@ public class AppReleaseService {
 
     public AppReleasePreviewView preview(String appId, List<String> selectedKeys, Map<String, String> images,
                                          String tenantId) {
+        return preview(appId, selectedKeys, images, tenantId, null);
+    }
+
+    public AppReleasePreviewView preview(String appId, List<String> selectedKeys, Map<String, String> images,
+                                         String tenantId, BuildArtifact artifact) {
         PlatformApplication app = AppGuard.require(apps, appId, tenantId);
-        Plan plan = plan(app, selectedKeys, images);
+        Plan plan = plan(app, selectedKeys, images, artifact);
 
         List<String> problems = new ArrayList<>(plan.errors);
         List<String> added = List.of();
@@ -171,6 +180,11 @@ public class AppReleaseService {
      */
     public Long create(String appId, List<String> selectedKeys, Map<String, String> images, String note,
                        String operator, String tenantId) {
+        return create(appId, selectedKeys, images, note, operator, tenantId, null);
+    }
+
+    public Long create(String appId, List<String> selectedKeys, Map<String, String> images, String note,
+                       String operator, String tenantId, BuildArtifact artifact) {
         PlatformApplication app = AppGuard.require(apps, appId, tenantId);
         String authorization = K8sServerGateway.currentAuthorization();
         if (authorization == null || authorization.isBlank()) {
@@ -178,7 +192,7 @@ public class AppReleaseService {
         }
         requireNoRunningExecution(app.getId());
         int plannedLive = app.getLiveReleaseNo() == null ? 0 : app.getLiveReleaseNo();
-        Plan plan = plan(app, selectedKeys, images);
+        Plan plan = plan(app, selectedKeys, images, artifact);
         if (plan.selected.isEmpty()) {
             throw error("请至少勾选一项改动");
         }
@@ -706,7 +720,7 @@ public class AppReleaseService {
                         Map<String, Map<String, Object>> desiredByKey, AppSnapshot live) {
     }
 
-    private Plan plan(PlatformApplication app, List<String> selectedKeys, Map<String, String> images) {
+    private Plan plan(PlatformApplication app, List<String> selectedKeys, Map<String, String> images, BuildArtifact artifact) {
         AppSnapshot live = liveSnapshot(app);
         List<PlatformAppService> stored = services.selectByApp(app.getId());
         Map<String, PlatformAppService> storedByKey = new HashMap<>();
@@ -714,7 +728,37 @@ public class AppReleaseService {
 
         List<String> selected = selectedKeys == null ? List.of()
                 : selectedKeys.stream().filter(k -> k != null && !k.isBlank()).distinct().toList();
-        Map<String, String> tags = images == null ? Map.of() : images;
+        Map<String, String> tags = new HashMap<>(images == null ? Map.of() : images);
+        Map<String, Object> buildSource = new LinkedHashMap<>();
+        if (artifact != null) {
+            if (!selected.contains(artifact.serviceKey())) throw error("请勾选产物对应的目标服务");
+            var run = runs.get(artifact.runName());
+            if (!"SUCCEEDED".equals(run.getStatus()) || run.getArtifactsJson() == null
+                    || !Objects.equals(app.getTenantId(), run.getTenantId())
+                    || !Objects.equals(app.getClusterId(), run.getClusterId())
+                    || !Objects.equals(app.getNamespace(), run.getNamespace())) throw error("运行归属不匹配或没有可发布产物");
+            PipelineImageArtifact image = java.util.Arrays.stream(JSON.readValue(run.getArtifactsJson(), PipelineImageArtifact[].class))
+                    .filter(a -> a.nodeName().equals(artifact.nodeName())).findFirst().orElseThrow(() -> error("产物不存在"));
+            var target = storedByKey.get(artifact.serviceKey());
+            if (PipelineImageArtifact.from(image.nodeName(), image.image(), image.digest()) == null)
+                throw error("归档镜像引用或摘要无效");
+            int separator = image.image().lastIndexOf(':');
+            if (target == null || Boolean.TRUE.equals(target.getPendingDelete()) || !image.image().substring(0, separator).equals(AppSnapshot.parseMap(target.getDesiredJson()).get("imageRepo")))
+                throw error("目标服务的镜像仓库与构建产物不一致");
+            if (tags.putIfAbsent(artifact.serviceKey(), image.image().substring(separator + 1) + "@" + image.digest()) != null)
+                throw error("同一服务只能选择构建产物或手工镜像标签");
+            buildSource.put("runName", run.getRunName());
+            buildSource.put("pipelineId", run.getPipelineId());
+            buildSource.put("nodeName", artifact.nodeName());
+            if (run.getSourceJson() != null) {
+                List<String> commits = new ArrayList<>();
+                JSON.readTree(run.getSourceJson()).forEach(s -> {
+                    String sha = s.path("sha").asString("");
+                    if (!sha.isBlank()) commits.add(sha);
+                });
+                buildSource.put("commits", commits);
+            }
+        }
         List<String> errors = new ArrayList<>();
 
         // 镜像 tag 覆盖先于「有没有改动」的判断：desired 与线上相同、只想换 tag 发布也成立
@@ -731,6 +775,7 @@ public class AppReleaseService {
             Map<String, Object> desired = new LinkedHashMap<>(current);
             desired.put("imageTag", tag.trim());
             desired = AppServiceDesired.normalize(desired);
+            if (artifact != null && row.getServiceKey().equals(artifact.serviceKey())) desired.put("buildSource", buildSource);
             PlatformAppService effective = new PlatformAppService();
             effective.setId(row.getId());
             effective.setAppId(row.getAppId());

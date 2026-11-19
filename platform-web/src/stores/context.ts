@@ -143,6 +143,17 @@ export function useResourceContext() {
     persist()
   }
 
+  function locate(clusterId: string, namespace: string): boolean {
+    const tenant = state.tenants.find(t => t.clusters.some(c =>
+      c.clusterId === clusterId && c.namespaces.includes(namespace)))
+    if (!tenant) return false
+    state.tenantId = tenant.tenantId
+    state.clusterId = clusterId
+    state.namespace = namespace
+    persist()
+    return true
+  }
+
   return {
     state,
     currentTenant,
@@ -155,5 +166,6 @@ export function useResourceContext() {
     setTenant,
     setCluster,
     setNamespace,
+    locate,
   }
 }

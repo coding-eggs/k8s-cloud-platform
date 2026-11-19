@@ -141,7 +141,7 @@ public final class AppServiceDesired {
         normalizeScheduling(raw, out, files, otel);
         for (Map.Entry<String, Object> e : raw.entrySet()) {
             String k = e.getKey();
-            if (CORE.contains(k) || SCHEDULING.contains(k)) {
+            if (CORE.contains(k) || SCHEDULING.contains(k) || "buildSource".equals(k)) {
                 continue;
             }
             if (!PASSTHROUGH.contains(k)) {

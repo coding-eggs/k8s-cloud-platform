@@ -120,6 +120,30 @@ public class AlertService {
         this.selfBaseUrl = selfBaseUrl;
     }
 
+    @org.springframework.transaction.annotation.Transactional
+    public List<PlatformAlertEventMapper.HandlingEntry> handling(long id, String action, String note) {
+        PlatformAlertEvent row = mapper.lockEvent(id);
+        var actor = authContext.current();
+        if (actor == null || row == null || (actor.getTenantInfo() == null && !authContext.isPlatformSide()) || (actor.getTenantInfo() != null && (row.getNamespace() == null ||
+                allocs.selectByTenantClusterNs(actor.getTenantInfo().getTenantId(), row.getClusterId(), row.getNamespace()) == null))) {
+            throw new IllegalArgumentException("没有可访问的告警记录");
+        }
+        var entries = mapper.handling(id);
+        if (action == null) return entries;
+        if ("CLAIM".equals(action)) {
+            var owner = entries.stream().filter(e -> "CLAIM".equals(e.kind())).findFirst();
+            if (owner.isPresent()) {
+                if (owner.get().actor().equals(actor.getUsername())) return entries;
+                throw new IllegalArgumentException("告警已由 " + owner.get().actor() + " 认领");
+            }
+            note = null;
+        } else if (!"NOTE".equals(action) || note == null || note.isBlank() || note.length() > 1000) {
+            throw new IllegalArgumentException("处理备注需为 1 至 1000 字");
+        }
+        mapper.addHandling(id, actor.getUsername(), action, note);
+        return mapper.handling(id);
+    }
+
     public List<PlatformAlertEvent> list(AlertQueryRequest req) {
         PlatformAlertEventQuery q = new PlatformAlertEventQuery();
         q.setClusterId(req.getClusterId());

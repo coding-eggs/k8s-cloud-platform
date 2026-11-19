@@ -8,9 +8,13 @@
     <result column="namespace" jdbcType="VARCHAR" property="namespace" />
     <result column="role_template_id" jdbcType="VARCHAR" property="roleTemplateId" />
     <result column="create_time" jdbcType="TIMESTAMP" property="createTime" />
+    <result column="expires_at" property="expiresAt" />
+    <result column="namespace_uid" property="namespaceUid" />
+    <result column="lifecycle" property="lifecycle" />
+    <result column="lifecycle_error" property="lifecycleError" />
   </resultMap>
   <sql id="Base_Column_List">
-    id, tenant_id, cluster_id, `namespace`, role_template_id, create_time
+    id, tenant_id, cluster_id, `namespace`, role_template_id, create_time, expires_at, namespace_uid, lifecycle, lifecycle_error
   </sql>
   <select id="selectByPrimaryKey" parameterType="java.lang.String" resultMap="BaseResultMap">
     select
@@ -25,6 +29,7 @@
     where tenant_id = #{tenantId,jdbcType=VARCHAR}
       and cluster_id = #{clusterId,jdbcType=VARCHAR}
       and `namespace` = #{namespace,jdbcType=VARCHAR}
+      and lifecycle='ACTIVE' and (expires_at is null or expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))*1000)
   </select>
   <select id="listByTenant" resultMap="BaseResultMap">
     select
@@ -52,6 +57,7 @@
     from platform_tenant_namespace
     where tenant_id = #{tenantId,jdbcType=VARCHAR}
       and cluster_id = #{clusterId,jdbcType=VARCHAR}
+      and lifecycle='ACTIVE' and (expires_at is null or expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))*1000)
     order by `namespace`
   </select>
   <select id="selectByClusterAndNs" resultMap="BaseResultMap">
@@ -63,9 +69,9 @@
     order by tenant_id
   </select>
   <insert id="insert" parameterType="com.coding.data.models.auth.PlatformTenantNamespace">
-    insert into platform_tenant_namespace (id, tenant_id, cluster_id, `namespace`, role_template_id)
+    insert into platform_tenant_namespace (id, tenant_id, cluster_id, `namespace`, role_template_id, expires_at)
     values (#{id,jdbcType=VARCHAR}, #{tenantId,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR},
-      #{namespace,jdbcType=VARCHAR}, #{roleTemplateId,jdbcType=VARCHAR})
+      #{namespace,jdbcType=VARCHAR}, #{roleTemplateId,jdbcType=VARCHAR}, #{expiresAt,jdbcType=BIGINT})
   </insert>
   <delete id="deleteByPrimaryKey" parameterType="java.lang.String">
     delete from platform_tenant_namespace

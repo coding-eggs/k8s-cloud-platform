@@ -31,6 +31,7 @@ import { fmtDate } from '@/utils/format'
 import YamlBlock from '@/components/YamlBlock.vue'
 import PipelineNodeVue from '@/components/pipeline/PipelineNodeVue.vue'
 import PipelineSourceFiles from '@/components/pipeline/PipelineSourceFiles.vue'
+import PipelineArtifacts from '@/components/pipeline/PipelineArtifacts.vue'
 import { baseText, refText, repoShort } from '@/components/pipeline/sourceRefText'
 
 const route = useRoute()
@@ -848,6 +849,7 @@ function jumpToLogBottom(): void {
     <div v-if="!run && !loading" class="dim empty">没有这条运行（运行名：{{ runName || '（空）' }}）</div>
 
     <template v-if="run">
+      <PipelineArtifacts v-if="run.artifactsJson" :key="run.id" :run="run" />
       <!-- ⚠️ 失败原因必须显眼：Tekton 顶层只会给一句 Failed（统计口径），
            真正的报错是后端从**失败那个节点**的 TaskRun 上带下来的原话 -->
       <el-alert v-if="failed && run.reason" type="error" :closable="false" show-icon :title="run.reason" />

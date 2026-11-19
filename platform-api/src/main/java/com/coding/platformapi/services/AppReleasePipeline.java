@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
 public class AppReleasePipeline implements AppReleasePrecheck, AppReleaseRenderer {
 
     private static final Set<String> NODE_EXCLUDED = Set.of("imageRepo", "imageTag", "env", "configFiles", "otel", "mesh",
-            "affinity", "volumes", "volumeMounts", AppCanary.KEY);
+            "affinity", "volumes", "volumeMounts", "buildSource", AppCanary.KEY);
 
     private final PlatformApplicationMapper apps;
     private final PlatformAppReleaseMapper releases;

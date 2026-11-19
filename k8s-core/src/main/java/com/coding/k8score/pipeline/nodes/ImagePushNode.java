@@ -193,7 +193,9 @@ public class ImagePushNode implements PipelineNode {
                 + "IMAGE=" + image + ":\"$TAG\"\n"
                 + "echo \"目标镜像：$IMAGE\"\n"
                 + "buildah bud -f " + GitCloneNode.shellQuote(dockerfile) + " -t \"$IMAGE\" " + GitCloneNode.shellQuote(context) + "\n"
-                + "buildah push --digestfile " + GitCloneNode.shellQuote(GitCloneNode.WS + "/.image-digest") + " \"$IMAGE\"\n";
+                + "buildah push --digestfile \"$IMAGE_DIGEST_RESULT\" \"$IMAGE\"\n"
+                + "printf '%s' \"$IMAGE\" > \"$IMAGE_REF_RESULT\"\n"
+                + "cp \"$IMAGE_DIGEST_RESULT\" " + GitCloneNode.shellQuote(GitCloneNode.WS + "/.image-digest") + "\n";
 
         Step step = new Step();
         step.setName("build-and-push");
@@ -207,6 +209,8 @@ public class ImagePushNode implements PipelineNode {
         // buildah 认 REGISTRY_AUTH_FILE 这个环境变量
         // ⚠️ 代理是**加进这个列表**，不是替换它：冲掉 REGISTRY_AUTH_FILE = 推送 401
         List<EnvVar> env = new ArrayList<>();
+        env.add(new EnvVar("IMAGE_DIGEST_RESULT", "$(results.image-digest.path)", null));
+        env.add(new EnvVar("IMAGE_REF_RESULT", "$(results.image-ref.path)", null));
         env.add(new EnvVar("REGISTRY_AUTH_FILE", GitCloneNode.CREDS_MOUNT + "/config.json", null));
         // ⚠️⚠️ 2026-10-16 真跑撞到（"fuse: device not found, try 'modprobe fuse' first"）：
         //    buildah 默认用 overlay 存储驱动，而**容器里根本没有 /dev/fuse** —— k8s 给每个容器的

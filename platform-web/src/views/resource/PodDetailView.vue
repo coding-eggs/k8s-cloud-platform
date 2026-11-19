@@ -33,16 +33,21 @@ const loadError = ref(false)
 /** 监控面板引用：全局刷新时联动重取指标 */
 const metricsRef = ref<InstanceType<typeof MetricsPanel> | null>(null)
 
+let refreshId = 0
 async function refresh(): Promise<void> {
+  const id = ++refreshId
   if (!ready.value || !name.value) return
+  const params = { ...ctxParams.value }
+  const target = name.value
   loading.value = true
   loadError.value = false
   try {
-    pod.value = await podApi.get(name.value, ctxParams.value)
+    const result = await podApi.get(target, params)
+    if (id === refreshId) pod.value = result
   } catch {
-    loadError.value = true
+    if (id === refreshId) loadError.value = true
   } finally {
-    loading.value = false
+    if (id === refreshId) loading.value = false
   }
 }
 
@@ -121,7 +126,11 @@ onMounted(() => {
   if (ready.value) void refresh()
 })
 watch(ready, (r) => { if (r && !pod.value) void refresh() })
-watch([name, ns], () => { if (ready.value) void refresh() })
+watch([name, ctxParams, () => route.query.kind], () => {
+  ++refreshId
+  pod.value = null
+  if (ready.value) void refresh()
+})
 
 const contextDesc = computed(() => {
   if (!ready.value) return '请在顶栏选择租户 / 集群 / 命名空间'

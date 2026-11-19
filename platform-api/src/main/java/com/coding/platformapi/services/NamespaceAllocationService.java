@@ -55,6 +55,11 @@ public class NamespaceAllocationService {
     }
 
     public PlatformTenantNamespace create(AllocationCreateRequest req) {
+        return createForRequest(req, ULIDGenerator.generateULID());
+    }
+
+    @org.springframework.transaction.annotation.Transactional(propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
+    public PlatformTenantNamespace createForRequest(AllocationCreateRequest req, String allocationId) {
         PlatformTenant tenant = requireEnabledTenant(req.getTenantId());
         requireEnabledCluster(req.getClusterId());
         PlatformRbacTemplate template = resolveTemplate(req.getRoleTemplateId());
@@ -64,24 +69,38 @@ public class NamespaceAllocationService {
         // 否则用户撞上的是 SQL 的 Duplicate entry，既看不懂、也定位不到是哪一步。
         List<PlatformTenantNamespace> holders =
                 allocationMapper.selectByClusterAndNs(req.getClusterId(), req.getNamespace());
-        if (!holders.isEmpty()) {
+        boolean resuming = holders.size() == 1 && allocationId.equals(holders.getFirst().getId())
+                && tenant.getId().equals(holders.getFirst().getTenantId());
+        if (!holders.isEmpty() && !resuming) {
             throw new CloudPlatformException(EnumResponseType.NAMESPACE_ALREADY_ALLOCATED,
                     "命名空间「" + req.getNamespace() + "」已分配给" + describeHolder(holders.get(0)));
         }
         K8sNaming.validateRawName(req.getNamespace(), "", "namespace");
+        if (req.getExpiresAt() != null && req.getExpiresAt() <= System.currentTimeMillis()) {
+            throw new IllegalArgumentException("截止时间必须晚于当前时间");
+        }
 
         // 先写分配行：RoleBinding 端点的边界校验以分配表为前提
-        PlatformTenantNamespace row = new PlatformTenantNamespace();
-        row.setId(ULIDGenerator.generateULID());
+        PlatformTenantNamespace row = resuming ? holders.getFirst() : new PlatformTenantNamespace();
+        row.setId(allocationId);
         row.setTenantId(tenant.getId());
         row.setClusterId(req.getClusterId());
         row.setNamespace(req.getNamespace());
         row.setRoleTemplateId(template.getId());
-        allocationMapper.insert(row);
+        row.setExpiresAt(req.getExpiresAt());
+        if (!resuming) allocationMapper.insert(row);
 
         try {
             // K8s 侧四步（幂等；命名 / 构造规则在本侧，k8s-server 只执行单点动作）
-            adminClient.ensureNamespace(req.getClusterId(), req.getNamespace());
+            if (row.getNamespaceUid() == null) adminClient.ensureNamespace(req.getClusterId(), req.getNamespace());
+            if (req.getExpiresAt() != null) {
+                String uid = adminClient.namespaceUid(req.getClusterId(), req.getNamespace());
+                if (uid == null || uid.isBlank()) throw new IllegalStateException("无法确认命名空间 UID");
+                if (row.getNamespaceUid() != null && !uid.equals(row.getNamespaceUid()))
+                    throw new IllegalStateException("申请关联的空间已被重建");
+                allocationMapper.bindUid(row.getId(), uid);
+                row.setNamespaceUid(uid);
+            }
             // 分配出来的命名空间同样要有默认 LimitRange（Operator 侧车不带资源，配额会挡住它们）
             namespaceService.ensureDefaultLimitRange(req.getClusterId(), req.getNamespace());
             provisioning.syncClusterRole(req.getClusterId(),
@@ -92,7 +111,7 @@ public class NamespaceAllocationService {
             // 默认拉取凭据：best-effort，失败只告警（没有 Harbor / 凭据还没建好时也走到这里）
             pullSecrets.ensureQuietly(req.getClusterId(), tenant.getId(), req.getNamespace());
         } catch (Exception e) {
-            allocationMapper.deleteByPrimaryKey(row.getId()); // 回滚分配行
+            if (!resuming) allocationMapper.deleteByPrimaryKey(row.getId());
             throw e;
         }
         log.info("分配命名空间：租户 {} 集群 {} ns {}", tenant.getId(), req.getClusterId(), req.getNamespace());

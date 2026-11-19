@@ -61,6 +61,20 @@
        and settings_version = #{version,jdbcType=INTEGER}
   </update>
 
+  <select id="searchActive" resultMap="BaseResultMap">
+    select a.id, a.name, a.namespace, a.display_name, a.slug
+    from platform_application a
+    where a.deleted_at is null and a.tenant_id = #{tenantId} and a.cluster_id = #{clusterId}
+      <if test="namespace != null">and a.namespace = #{namespace}</if>
+      and exists (select 1 from platform_tenant_namespace s where s.tenant_id = a.tenant_id
+        and s.cluster_id = a.cluster_id and s.namespace = a.namespace and s.lifecycle = 'ACTIVE'
+        and (s.expires_at is null or s.expires_at > UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))*1000))
+      and (locate(#{term},lower(a.name)) > 0 or locate(#{term},lower(a.slug)) > 0
+           or locate(#{term},lower(a.display_name)) > 0)
+    order by case when lower(a.name) = #{term} then 0 when locate(#{term},lower(a.name)) = 1 then 1 else 2 end,
+      a.name, a.namespace, a.id limit 21
+  </select>
+
   <select id="selectById" resultMap="BaseResultMap">
     select <include refid="Base_Column_List" />
     from platform_application

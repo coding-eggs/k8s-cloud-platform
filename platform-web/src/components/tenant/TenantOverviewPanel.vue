@@ -29,9 +29,9 @@ import InventoryStrip, { type InventoryItem } from '@/components/overview/Invent
 import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, workloadSegments, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
-const props = defineProps<{ tenantId: string }>()
+const props = defineProps<{ tenantId: string; canRequestSpace?: boolean }>()
 /** loaded：快照取数成功（带时刻）；failed：刷新失败但保留了上一次的数（总览页头据此显示「更新于 / 刷新失败」） */
-const emit = defineEmits<{ loaded: [at: number]; failed: [] }>()
+const emit = defineEmits<{ loaded: [at: number]; failed: []; requestSpace: [] }>()
 
 const router = useRouter()
 const ctx = useResourceContext()
@@ -365,8 +365,8 @@ defineExpose({ reloadAll })
     <EmptyState
       v-else-if="allocatedNamespaceCount === 0"
       title="尚未分配命名空间"
-      description="请联系平台管理员分配命名空间。"
-    />
+      :description="canRequestSpace ? '申请获批后即可进入空间。' : '请联系平台管理员分配命名空间。'"
+    ><el-button v-if="canRequestSpace" type="primary" @click="emit('requestSpace')">申请命名空间</el-button></EmptyState>
 
     <template v-else>
       <!-- 降级：某集群数据不可用（其余照常出数） -->

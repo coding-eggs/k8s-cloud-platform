@@ -58,6 +58,20 @@ class PipelineArchiveServiceTest {
     }
 
     @Test
+    void parallelImageResultsAreArchivedWithTheirOwnNodesAndDigests() {
+        when(runMapper.selectByRunName("r1")).thenReturn(running());
+        var first = new com.coding.common.models.pipeline.PipelineImageArtifact("one","r/a:release","sha256:" + "a".repeat(64));
+        var second = new com.coding.common.models.pipeline.PipelineImageArtifact("two","r/b:release","sha256:" + "b".repeat(64));
+        svc.persist(snapshot("SUCCEEDED",new PipelineRunSnapshotDTO.StepLog("one","SUCCEEDED","",false,0,first),
+                new PipelineRunSnapshotDTO.StepLog("two","SUCCEEDED","",false,0,second)));
+        var captor = ArgumentCaptor.forClass(PlatformPipelineRun.class);
+        verify(runMapper).update(captor.capture());
+        var actual = tools.jackson.databind.json.JsonMapper.builder().build().readValue(captor.getValue().getArtifactsJson(),
+                com.coding.common.models.pipeline.PipelineImageArtifact[].class);
+        assertThat(actual).containsExactly(first, second);
+    }
+
+    @Test
     void aTerminatedSnapshotWritesTheLogsThenTheRunStatus() {
         when(runMapper.selectByRunName("r1")).thenReturn(running());
 

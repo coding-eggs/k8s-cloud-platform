@@ -44,6 +44,7 @@ import java.util.List;
 public class PipelineArchiveService {
 
     private final PlatformPipelineRunMapper runMapper;
+    private static final tools.jackson.databind.ObjectMapper JSON = tools.jackson.databind.json.JsonMapper.builder().build();
     private final PlatformPipelineRunLogMapper logMapper;
 
     public PipelineArchiveService(PlatformPipelineRunMapper runMapper,
@@ -121,6 +122,8 @@ public class PipelineArchiveService {
         row.setStartTime(snapshot.startTime());
         row.setCompletionTime(snapshot.completionTime());
         row.setStepsJson(stepsJson(steps));
+        row.setArtifactsJson(JSON.writeValueAsString(steps.stream()
+                .map(PipelineRunSnapshotDTO.StepLog::artifact).filter(java.util.Objects::nonNull).toList()));
         // YAML 是**归档这一刻**才拿得到的东西（对象马上就被删了），所以它跟着这次回写一起进去
         row.setRunYaml(snapshot.runYaml());
         runMapper.update(row);

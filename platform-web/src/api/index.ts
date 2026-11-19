@@ -278,6 +278,7 @@ export const tenantApi = {
 
   // ---- 命名空间分配 ----
   namespaceAllocate: (payload: {
+    expiresAt?: number
     tenantId: string
     clusterId: string
     namespace: string
@@ -481,7 +482,7 @@ export const configMapApi = {
 type Ctx3 = { tenantId: string; clusterId: string; namespace: string }
 type Ctx2 = { tenantId: string; clusterId: string }
 /** list 专用上下文：labelSelector 可选（K8s 原生选择器语法，原样透传；不传 = 全量） */
-type ListCtx = Ctx3 & { labelSelector?: string }
+type ListCtx = Ctx3 & { labelSelector?: string; fieldSelector?: string }
 /** 跨命名空间 list 上下文（平台侧 /list-all）：**不带 namespace** —— 返回项各自带自己的 namespace。
  *  授权码独立于 list（platform:xxx:list-all vs tenant:xxx:list），见 apiCodes.ts。 */
 type ListAllCtx = Ctx2 & { labelSelector?: string }
@@ -618,7 +619,11 @@ export const prometheusRuleApi = makeResourceApi<K8sPrometheusRule>('prometheusr
  * - `selfTest` 让平台给自己投一条测试告警，验证「HTTP → 放行 → 密钥 → 解析 → 落库」整条链路；
  * - `remove` 是清测试数据用的物理删（幂等）。
  */
+export interface AlertHandlingEntry { actor: string; kind: 'CLAIM' | 'NOTE'; note?: string; createdAt: string }
 export const alertApi = {
+  handling: (id: number) => http.post<never, AlertHandlingEntry[]>('/alert/handling/list', { id }),
+  handle: (id: number, action: 'CLAIM' | 'NOTE', note?: string) =>
+    http.post<never, AlertHandlingEntry[]>('/alert/handling/update', { id, action, note }),
   list: (q: AlertQuery) => http.post<never, PlatformAlertEvent[]>('/alert/list', q),
   selfTest: (clusterId: string) =>
     http.post<never, AlertSelfTestResult>('/alert/self-test', null, { params: { clusterId } }),
@@ -1381,12 +1386,14 @@ export const appDependencyApi = {
 }
 
 /** 发布、执行与回滚（/application/release/*、/application/execution/*） */
+export interface BuildArtifactRef { runName: string; nodeName: string; serviceKey: string }
+
 export const appReleaseApi = {
   /** images：服务 key → 本次要用的镜像 tag（只传与期望配置不同的） */
-  preview: (payload: { appId: string; serviceKeys: string[]; images?: Record<string, string>; tenantId?: string }) =>
+  preview: (payload: { appId: string; serviceKeys: string[]; images?: Record<string, string>; artifact?: BuildArtifactRef; tenantId?: string }) =>
     http.post<never, AppReleasePreview>('/application/release/preview', payload),
   create: (payload: {
-    appId: string; serviceKeys: string[]; images?: Record<string, string>; note?: string; tenantId?: string
+    appId: string; serviceKeys: string[]; images?: Record<string, string>; artifact?: BuildArtifactRef; note?: string; tenantId?: string
   }) => http.post<never, number>('/application/release/create', payload),
   rollback: (payload: { appId: string; releaseNo: number; note?: string; tenantId?: string }) =>
     http.post<never, number>('/application/release/rollback', payload),

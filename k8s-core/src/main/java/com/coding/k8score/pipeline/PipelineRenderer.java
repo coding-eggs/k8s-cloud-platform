@@ -6,6 +6,7 @@ import com.coding.common.models.pipeline.PipelineConnectionRef;
 import io.fabric8.tekton.v1.EmbeddedTask;
 import io.fabric8.tekton.v1.PipelineSpec;
 import io.fabric8.tekton.v1.PipelineTask;
+import io.fabric8.tekton.v1.TaskResultBuilder;
 import io.fabric8.tekton.v1.PipelineWorkspaceDeclaration;
 import io.fabric8.tekton.v1.WorkspaceDeclaration;
 import io.fabric8.tekton.v1.WorkspacePipelineTaskBinding;
@@ -185,6 +186,11 @@ public final class PipelineRenderer {
             // 集群的 admission webhook 会拒：missing field(s): ...taskSpec.steps（2026-10-15 线上回归）。
             EmbeddedTask taskSpec = new EmbeddedTask();
             taskSpec.setSteps(rendered.steps());
+            if ("image".equals(n.type())) {
+                taskSpec.setResults(List.of(
+                        new TaskResultBuilder().withName("image-ref").withType("string").build(),
+                        new TaskResultBuilder().withName("image-digest").withType("string").build()));
+            }
             // 隐式共享 workspace：每个 task 都挂上，用户不用管。
             // ⚠️ 挂载点**显式写死**成 /workspace（Tekton 的默认值是 /workspace/<名字>，见 WORKSPACE_MOUNT）
             List<WorkspaceDeclaration> ws = new ArrayList<>();

@@ -24,6 +24,11 @@ public class PlatformTenantNamespace implements Serializable {
     private String roleTemplateId;
 
     private Date createTime;
+    /** UTC epoch milliseconds; null denotes a long-term allocation. */
+    private Long expiresAt;
+    private String namespaceUid;
+    private String lifecycle;
+    private String lifecycleError;
 
     private static final long serialVersionUID = 1L;
 }

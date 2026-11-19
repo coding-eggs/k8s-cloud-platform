@@ -9,9 +9,10 @@
  * - labels / annotations 是 **JSON 串**，展示前要 parse —— 脏数据不能让整页崩（try/catch + 原文兜底）。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { alertApi } from '@/api'
+import { alertApi, middlewareApi, type AlertHandlingEntry } from '@/api'
+import { pageCodes } from '@/pageCodes'
 import { apiCodes } from '@/apiCodes'
 import type { AlertQuery, PlatformAlertEvent } from '@/types'
 import { usePermission } from '@/stores/permission'
@@ -20,7 +21,8 @@ import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
 import { fmtDate } from '@/utils/format'
 
-const { state, ready, currentCluster, load } = useResourceContext()
+const { state, ready, currentCluster, load, locate } = useResourceContext()
+const router = useRouter()
 const perm = usePermission()
 
 /**
@@ -176,9 +178,25 @@ async function onDelete(row: PlatformAlertEvent): Promise<void> {
 const drawerVisible = ref(false)
 const detail = ref<PlatformAlertEvent | null>(null)
 
-function openDetail(row: PlatformAlertEvent): void {
+const handling = ref<AlertHandlingEntry[]>([])
+const note = ref('')
+let handlingVersion = 0
+async function openDetail(row: PlatformAlertEvent) {
+  const version = ++handlingVersion
   detail.value = row
   drawerVisible.value = true
+  handling.value = []
+  note.value = ''
+  const entries = await alertApi.handling(row.id)
+  if (handlingVersion === version) handling.value = entries
+}
+
+async function handle(action: 'CLAIM' | 'NOTE') {
+  if (!detail.value) return
+  const id = detail.value.id
+  const version = ++handlingVersion
+  const entries = await alertApi.handle(id, action, note.value.trim())
+  if (handlingVersion === version) { handling.value = entries; note.value = '' }
 }
 
 /** labels / annotations 是 JSON 串；解析失败返回 null（页面显示原文，不崩）。 */
@@ -194,6 +212,42 @@ function safeParse(json?: string | null): Record<string, string> | null {
 
 const detailLabels = computed(() => safeParse(detail.value?.labels))
 const detailAnnotations = computed(() => safeParse(detail.value?.annotations))
+const target = computed(() => {
+  const labels = detailLabels.value ?? {}
+  const kind = (labels.platform_target_kind || '').toLowerCase()
+  const name = labels.platform_target_name || ''
+  if (kind) return { kind, name }
+  if (labels.node) return { kind: 'node', name: labels.node }
+  if (labels.resourcequota) return { kind: 'namespace', name: detail.value?.namespace }
+  if (labels.persistentvolumeclaim) return { kind:'pvc', name:labels.persistentvolumeclaim }
+  for (const resource of ['deployment','statefulset','daemonset']) {
+    if (labels[resource]) return { kind:resource, name:labels[resource] }
+  }
+  return { kind: '', name: '' }
+})
+function logs() {
+  const row = detail.value
+  if (!row?.namespace || !locate(row.clusterId, row.namespace)) return ElMessage.warning('当前身份无法定位该命名空间')
+  const stamp = /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(row.startsAt)
+    ? row.startsAt.replace(' ', 'T') + '+08:00' : row.startsAt
+  const start = new Date(stamp).getTime()
+  if (!Number.isFinite(start)) return ElMessage.warning('告警缺少有效触发时间')
+  void router.push({ name: 'observability-logs', query: {
+    [target.value.kind === 'pod' ? 'pod' : 'workload']: target.value.name,
+    from: String(start - 600000), to: String(Math.min(Date.now(), start + 600000)),
+    clusterId: row.clusterId, namespace: row.namespace,
+  } })
+}
+async function resourcePage(name: string, query: Record<string,string>) {
+  const row = detail.value
+  if (!row?.namespace || !locate(row.clusterId, row.namespace)) return ElMessage.warning('当前身份无法定位该命名空间')
+  if (name === 'middleware-detail') {
+    const matches = (await middlewareApi.instanceList(row.clusterId,undefined,state.tenantId ?? undefined,row.namespace))
+      .filter(instance => instance.id === target.value.name || instance.name === target.value.name)
+    if (matches.length !== 1) return ElMessage.info('未找到可唯一定位的中间件实例')
+    await router.push({name,params:{id:matches[0]!.id}})
+  } else await router.push({name,query})
+}
 
 /** Record → 表格行（模板里不写 Object.entries，避免 vue-tsc 对 null 收窄的分歧）。 */
 function kvRows(m: Record<string, string> | null): { k: string; v: string }[] {
@@ -374,7 +428,8 @@ const clusterDesc = computed(() => {
         <el-descriptions-item label="来源">
           <template v-if="detail?.sources?.length">
             <div v-for="sv in detail.sources" :key="`${sv.cr}/${sv.group}`">
-              <code class="res-name">{{ sv.cr }}</code><span class="muted"> / {{ sv.group }}</span>
+              <el-button v-if="detail.namespace && perm.has(pageCodes.prometheusRule.list)" link @click="resourcePage('prometheusrule-detail',{name:sv.cr})">{{ sv.cr }}</el-button>
+              <code v-else class="res-name">{{ sv.cr }}</code><span class="muted"> / {{ sv.group }}</span>
             </div>
           </template>
           <span v-else class="muted" :title="detail ? sourceTitle(detail) : ''">—</span>
@@ -398,6 +453,24 @@ const clusterDesc = computed(() => {
         </el-descriptions-item>
       </el-descriptions>
 
+      <div v-if="detail">
+        <el-button v-if="target.kind === 'pod' && target.name && perm.has(pageCodes.pod.detail)" @click="resourcePage('pod-detail',{name:target.name})">Pod 详情</el-button>
+        <el-button v-if="['workload','deployment','statefulset','daemonset'].includes(target.kind) && target.name && perm.has(pageCodes.workload.detail)" @click="resourcePage('workload-detail',{name:target.name,kind:target.kind})">工作负载详情</el-button>
+        <el-button v-if="['pvc','persistentvolumeclaim'].includes(target.kind) && target.name && perm.has(pageCodes.pvc.list)" @click="resourcePage('pvcs',{open:target.name})">查看卷状态</el-button>
+        <el-button v-if="target.kind === 'middleware' && target.name && perm.has(pageCodes.app)" @click="resourcePage('middleware-detail',{})">实例详情</el-button>
+        <el-button v-if="['pod','workload','deployment','statefulset','daemonset'].includes(target.kind) && target.name && perm.has(pageCodes.observability.logs)" @click="logs">查看事发日志</el-button>
+        <router-link v-if="target.kind === 'node' && target.name && perm.has(pageCodes.node.detail)" :to="{ name: 'node-detail', query: { clusterId: detail.clusterId, name: target.name } }">节点详情</router-link>
+        <router-link v-if="target.kind === 'namespace' && perm.has(pageCodes.namespace.detail)" :to="{ name: 'namespace-detail', query: { clusterId: detail.clusterId, name: detail.namespace } }">查看空间配额</router-link>
+        <el-button v-if="target.kind === 'namespace' && perm.currentTenant && perm.has('tenant:overview:view')" @click="resourcePage('overview',{})">租户空间用量</el-button>
+        <router-link v-if="(target.kind === 'cluster' || !detail.namespace) && perm.has(pageCodes.cluster)" :to="{ name: 'cluster-detail', query: { clusterId: detail.clusterId } }">集群概览</router-link>
+        <h4>处理记录</h4>
+        <p v-for="(entry, i) in handling" :key="i">{{ fmtDate(entry.createdAt) }} · {{ entry.actor }} · {{ entry.kind === 'CLAIM' ? '已认领' : entry.note }}</p>
+        <template v-if="perm.has('tenant:alert:handle')">
+          <el-button v-if="!handling.some(e => e.kind === 'CLAIM')" @click="handle('CLAIM')">认领</el-button>
+          <el-input v-model="note" maxlength="1000" placeholder="处理备注" />
+          <el-button :disabled="!note.trim()" @click="handle('NOTE')">添加备注</el-button>
+        </template>
+      </div>
       <div class="section-title">标签 labels</div>
       <el-table v-if="detailLabels" :data="kvRows(detailLabels)" size="small" stripe>
         <el-table-column prop="k" label="键" width="220" />

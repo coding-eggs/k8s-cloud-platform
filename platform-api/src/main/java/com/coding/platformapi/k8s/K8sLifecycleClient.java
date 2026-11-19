@@ -105,6 +105,21 @@ public class K8sLifecycleClient {
         gateway.exchange(HttpMethod.POST, "/namespace/create", null, req, gateway.responseType(Void.class));
     }
 
+    public String namespaceUid(String clusterId, String namespace) {
+        AdminNamespaceKeyRequest req = new AdminNamespaceKeyRequest();
+        req.setClusterId(clusterId);
+        req.setNamespace(namespace);
+        return gateway.exchange(HttpMethod.POST, "/namespace/uid", null, req, gateway.responseType(String.class));
+    }
+
+    public com.coding.common.models.k8s.dto.admin.NamespaceRecoveryPreview recoveryPreview(String clusterId, String namespace) {
+        var req = new AdminNamespaceKeyRequest();
+        req.setClusterId(clusterId);
+        req.setNamespace(namespace);
+        return gateway.exchange(HttpMethod.POST, "/namespace/recovery-preview", null, req,
+                gateway.responseType(com.coding.common.models.k8s.dto.admin.NamespaceRecoveryPreview.class));
+    }
+
     /**租户 K8s 侧批量清理（k8s-server 内部 best-effort + 清租户 client 缓存） */
     public void cleanupTenant(AdminCleanupRequest req) {
         gateway.exchange(HttpMethod.POST, "/tenant/cleanup", null, req, gateway.responseType(Void.class));

@@ -12,6 +12,10 @@ import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { buildSearchEntries, type NavFace, type SearchEntry } from '@/nav'
 import { usePermission } from '@/stores/permission'
+import { useResourceContext } from '@/stores/context'
+import { pageCodes } from '@/pageCodes'
+import http from '@/api/http'
+import { ElMessage } from 'element-plus'
 import { readRecentVisits } from '@/composables/useRecentVisits'
 import { PALETTE_ACTION_QUERY } from '@/composables/usePaletteAction'
 import { scoreEntry, type PinyinForms, type PinyinOf } from '@/utils/paletteSearch'
@@ -23,8 +27,57 @@ const router = useRouter()
 const perm = usePermission()
 
 const MAX_RESULTS = 20
+interface Hit { name: string; kind: string; namespace: string; id?: string }
+interface Lookup { hits: Hit[]; partial: boolean; truncated: boolean }
+const ctx = useResourceContext()
+const hits = ref<Hit[]>([])
+const searchStatus = ref('')
+const onlyCurrentSpace = ref(false)
+const shortSearch = ref(0)
+watch(() => props.modelValue, (open) => { if (open) void ctx.load() })
 
 const keyword = ref('')
+watch(() => [keyword.value, props.modelValue, ctx.state.tenantId, ctx.state.clusterId,
+  ctx.state.namespace, onlyCurrentSpace.value, shortSearch.value, perm.currentTenant] as const,
+([value, open, tenantId, clusterId], previous, onCleanup) => {
+  hits.value = []
+  searchStatus.value = ''
+  const term = value.trim()
+  if (!open || !tenantId || !clusterId || !term || (term.length < 2 && previous?.[6] === shortSearch.value)) return
+  const abort = new AbortController()
+  const timer = window.setTimeout(async () => {
+    const sources = [
+      ['applications','tenant:application:read',pageCodes.application],
+      ['pods','tenant:pod:list',pageCodes.pod.detail],
+      ['workloads','tenant:workload:list',pageCodes.workload.detail],
+    ].filter(([,code,page]) => perm.has(code!) && perm.has(page!))
+    if (!sources.length) return
+    searchStatus.value = '正在查找资源…'
+    const replies = await Promise.allSettled(sources.map(([path]) => http.post<never,Lookup>(
+      '/resource-lookup/' + path, {tenantId,clusterId,keyword:term,namespace:onlyCurrentSpace.value ? ctx.state.namespace : undefined},
+      {signal:abort.signal})))
+    if (abort.signal.aborted) return
+    const found: Hit[] = []
+    let partial = false, truncated = false
+    for (const reply of replies) {
+      if (reply.status === 'rejected') { partial = true; continue }
+      found.push(...reply.value.hits)
+      partial ||= reply.value.partial
+      truncated ||= reply.value.truncated
+    }
+    const score = (h: Hit) => h.name.toLowerCase() === term.toLowerCase() ? 0 : h.name.toLowerCase().startsWith(term.toLowerCase()) ? 1 : 2
+    hits.value = found.sort((a,b) => score(a)-score(b) || a.name.localeCompare(b.name)).slice(0,20)
+    searchStatus.value = [partial ? '部分数据源查询失败' : '', truncated || found.length > 20 ? '结果已截断，可限定当前命名空间' : '',
+      !found.length && !partial && !truncated ? '没有匹配的资源' : ''].filter(Boolean).join(' · ')
+  },300)
+  onCleanup(() => { window.clearTimeout(timer); abort.abort() })
+})
+function openHit(hit: Hit) {
+  if (!ctx.state.clusterId || !ctx.locate(ctx.state.clusterId,hit.namespace)) return ElMessage.warning('空间已不可访问')
+  close()
+  if (hit.kind === 'Application') void router.push({ name:'application-detail', params:{ id:hit.id } })
+  else void router.push({ name:hit.kind === 'Pod' ? 'pod-detail' : 'workload-detail', query:{name:hit.name,kind:hit.kind} })
+}
 const cursor = ref(0)
 const inputEl = ref<HTMLInputElement | null>(null)
 
@@ -131,7 +184,7 @@ function onKeydown(e: KeyboardEvent): void {
   }
   if (e.key === 'ArrowDown') {
     e.preventDefault()
-    cursor.value = Math.min(cursor.value + 1, Math.max(results.value.length - 1, 0))
+    cursor.value = Math.min(cursor.value + 1, Math.max(results.value.length + hits.value.length - 1, 0))
     return
   }
   if (e.key === 'ArrowUp') {
@@ -141,7 +194,10 @@ function onKeydown(e: KeyboardEvent): void {
   }
   if (e.key === 'Enter') {
     e.preventDefault()
-    choose()
+    const hit = hits.value[cursor.value - results.value.length]
+    if (hit) openHit(hit)
+    else if (keyword.value.trim().length === 1 && !hits.value.length && !results.value.length) shortSearch.value++
+    else choose()
   }
 }
 </script>
@@ -155,7 +211,7 @@ function onKeydown(e: KeyboardEvent): void {
           ref="inputEl"
           v-model="keyword"
           class="cp-input"
-          placeholder="搜索页面或功能，支持拼音 / 英文名，空格分隔多个词…"
+          placeholder="搜索页面、功能或资源名称…"
           @keydown="onKeydown"
         />
         <kbd class="cp-kbd">Esc</kbd>
@@ -185,6 +241,16 @@ function onKeydown(e: KeyboardEvent): void {
             </button>
           </template>
           <p v-if="!results.length" class="cp-empty">没有匹配的页面或功能</p>
+          <template v-if="ctx.state.clusterId">
+            <p class="cp-group-title">资源 · {{ ctx.currentCluster.value?.clusterName ?? ctx.state.clusterId }}
+              <el-checkbox v-model="onlyCurrentSpace" size="small">仅当前命名空间</el-checkbox>
+            </p>
+            <button v-for="(h,i) in hits" :key="[h.kind,h.namespace,h.name,h.id].join('/')" type="button"
+              class="cp-item" :class="{ 'is-active': cursor === results.length+i }" @mousemove="cursor=results.length+i" @click="openHit(h)">
+              <span class="cp-item-title">{{ h.name }}</span><span>{{ h.kind }} · {{ h.namespace }}</span>
+            </button>
+            <p v-if="searchStatus" class="cp-empty">{{ searchStatus }}</p>
+          </template>
         </template>
 
         <template v-else>

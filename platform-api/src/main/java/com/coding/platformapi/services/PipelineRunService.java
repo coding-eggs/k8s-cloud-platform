@@ -156,6 +156,7 @@ public class PipelineRunService {
         PlatformPipelineRun row = new PlatformPipelineRun();
         row.setId(ULIDGenerator.generateULID());
         row.setPipelineId(pipeline.getId());
+        row.setTenantId(ctx.tenantId());
         row.setClusterId(ctx.clusterId());
         row.setNamespace(ctx.namespace());
         row.setCanvasJson(canvas);
@@ -277,6 +278,7 @@ public class PipelineRunService {
         PlatformPipelineRun row = new PlatformPipelineRun();
         row.setId(ULIDGenerator.generateULID());
         row.setPipelineId(parent.getPipelineId());
+        row.setTenantId(ctx.tenantId());
         row.setClusterId(parent.getClusterId());
         row.setNamespace(parent.getNamespace());
         row.setCanvasJson(parent.getCanvasJson());

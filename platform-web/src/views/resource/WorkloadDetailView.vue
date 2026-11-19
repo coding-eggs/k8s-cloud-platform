@@ -52,28 +52,41 @@ const otelAvailable = computed(() => components.available('otel-collection'))
 const otelReason = computed(() => components.unavailableReason('otel-collection'))
 
 const detail = ref<WorkloadDetail | null>(null)
+const ambiguousName = ref(false)
 const pods = ref<K8sPod[]>([])
 const loading = ref(false)
 const loadError = ref(false)
 /** 监控面板引用：全局刷新时联动重取指标 */
 const metricsRef = ref<InstanceType<typeof MetricsPanel> | null>(null)
 
+let refreshId = 0
 async function refresh(): Promise<void> {
+  const id = ++refreshId
   if (!ready.value || !name.value) return
-  const target = name.value // 记录发起时的目标；期间若切到别的工作负载，丢弃过期结果（避免慢响应跨页覆盖）
+  const params = { ...ctxParams.value }
+  const target = name.value
   loading.value = true
   loadError.value = false
   try {
-    // 先取工作负载（拿它的 selector），再用 selector 反查 Pod —— 有依赖，串行而非并行
-    const d = await workloadApi.get(target, ctxParams.value)
-    if (target !== name.value) return
-    detail.value = d
-    pods.value = (await podApi.list({ ...ctxParams.value, labelSelector: podLabelSelector(d.selector, target) })) ?? []
-    if (target !== name.value) return
+    let result = await workloadApi.get(target, params)
+    if (id !== refreshId) return
+    const kind = String(route.query.kind ?? '').toLowerCase()
+    const ambiguous = !!kind && kind !== 'workload' && result.kind?.toLowerCase() !== kind
+    if (ambiguous) {
+      const candidates = await workloadApi.list({ ...params, fieldSelector: 'metadata.name=' + target })
+      if (id !== refreshId) return
+      const match = candidates.find(item => item.name === target && item.kind?.toLowerCase() === kind)
+      if (!match) throw new Error('工作负载已不存在')
+      result = match
+    }
+    ambiguousName.value = ambiguous
+    detail.value = result
+    const items = await podApi.list({ ...params, labelSelector: podLabelSelector(result.selector, target) })
+    if (id === refreshId) pods.value = items ?? []
   } catch {
-    if (target === name.value) loadError.value = true
+    if (id === refreshId) loadError.value = true
   } finally {
-    loading.value = false
+    if (id === refreshId) loading.value = false
   }
 }
 
@@ -363,7 +376,12 @@ onMounted(() => {
   if (ready.value) void refresh()
 })
 watch(ready, (r) => { if (r && !detail.value) void refresh() })
-watch(name, () => { if (ready.value) void refresh() })
+watch([name, ctxParams, () => route.query.kind], () => {
+  ++refreshId
+  detail.value = null
+  pods.value = []
+  if (ready.value) void refresh()
+})
 
 const contextDesc = computed(() => {
   if (!ready.value) return '请在顶栏选择租户 / 集群 / 命名空间'
@@ -383,9 +401,10 @@ const contextDesc = computed(() => {
           <el-option v-for="o in REFRESH_OPTIONS" :key="o.value" :label="o.label" :value="o.value" />
         </el-select>
       </span>
+      <span v-if="ambiguousName">此空间内有其他类型的同名工作负载，本页仅供查看。</span>
       <el-button size="small" @click="goBack">返回</el-button>
       <el-tooltip v-if="detail?.kind === 'deployment'" :content="isOpManaged ? '由 Operator 管理，不可操作' : ''" :disabled="!isOpManaged" placement="bottom">
-        <el-button size="small" :disabled="!detail || isOpManaged" @click="togglePause">{{ detail?.paused ? '恢复更新' : '暂停更新' }}</el-button>
+        <el-button size="small" :disabled="!detail || isOpManaged || ambiguousName" @click="togglePause">{{ detail?.paused ? '恢复更新' : '暂停更新' }}</el-button>
       </el-tooltip>
       <!-- 看日志是**只读**动作，排在主操作「编辑」前面；没有 Pod 时没日志可看 -->
       <el-button size="small" :disabled="!pods.length" @click="workloadLogsVisible = true">
@@ -393,12 +412,12 @@ const contextDesc = computed(() => {
       </el-button>
       <el-tooltip :disabled="otelAvailable" placement="bottom"
                   :content="`工作负载可观测不可开启（${otelReason}）；已开启的仍可在这里关闭`">
-        <el-button size="small" :disabled="!detail || isOpManaged" @click="observabilityVisible = true">
+        <el-button size="small" :disabled="!detail || isOpManaged || ambiguousName" @click="observabilityVisible = true">
           可观测
         </el-button>
       </el-tooltip>
       <el-tooltip :content="isOpManaged ? '由 Operator 管理，不可编辑' : ''" :disabled="!isOpManaged" placement="bottom">
-        <el-button size="small" type="primary" :disabled="!detail || isOpManaged" @click="goEditor">编辑</el-button>
+        <el-button size="small" type="primary" :disabled="!detail || isOpManaged || ambiguousName" @click="goEditor">编辑</el-button>
       </el-tooltip>
 
     </PageHeader>

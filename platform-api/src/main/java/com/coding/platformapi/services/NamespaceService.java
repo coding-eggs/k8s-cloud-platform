@@ -309,7 +309,7 @@ public class NamespaceService {
     }
 
     /** 平台级写操作前置：集群存在 + 命名空间存在 + 非受保护系统 ns（默认全纳管，黑名单挡写） */
-    private void requireEditable(String clusterId, String namespace) {
+    void requireEditable(String clusterId, String namespace) {
         requireCluster(clusterId);
         NamespaceDTO ns = k8s.get(dto(clusterId, namespace));
         if (ns == null) {

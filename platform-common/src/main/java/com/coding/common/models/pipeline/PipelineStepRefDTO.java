@@ -27,5 +27,8 @@ import java.util.List;
  *                   对排障毫无信息量，真因就在这一层）
  */
 public record PipelineStepRefDTO(String nodeName, String status, String podName,
-                                 List<String> containers, String message) {
+                                 List<String> containers, String message, PipelineImageArtifact artifact) {
+    public PipelineStepRefDTO(String nodeName, String status, String podName, List<String> containers, String message) {
+        this(nodeName, status, podName, containers, message, null);
+    }
 }

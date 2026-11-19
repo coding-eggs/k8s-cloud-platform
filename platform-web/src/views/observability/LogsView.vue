@@ -131,7 +131,9 @@ function bounds(): { start: number; end: number } {
   return { start: now - filters.range * 1000, end: now }
 }
 
+let queryId = 0
 async function query(reset = true): Promise<void> {
+  const id = ++queryId
   if (filters.range === -1 && !customRange.value) {
     ElMessage.warning('请选择自定义的时间范围')
     return
@@ -157,15 +159,17 @@ async function query(reset = true): Promise<void> {
       limit: PAGE_SIZE,
       searchAfter: reset ? undefined : cursor.value,
     })) ?? []
+    if (id !== queryId) return
     rows.value = reset ? next : [...rows.value, ...next]
     const last = next.length ? next[next.length - 1] : undefined
     cursor.value = last?.sort ?? null
     hasMore.value = next.length === PAGE_SIZE && !!cursor.value
   } catch (e) {
+    if (id !== queryId) return
     error.value = (e as Error).message || '日志查询失败'
     if (reset) rows.value = []
   } finally {
-    loading.value = false
+    if (id === queryId) loading.value = false
   }
 }
 
@@ -283,18 +287,40 @@ async function copyBody(): Promise<void> {
   else ElMessage.warning('复制失败，请手动选择')
 }
 
-onMounted(async () => {
-  await load() // 载入租户树（页面可能不是从资源页进的）
+let initialized = false
+function readTarget() {
+  const { clusterId, namespace, workload, pod, from, to } = route.query
+  if (typeof namespace === 'string' && typeof clusterId === 'string' && !useResourceContext().locate(clusterId, namespace)) {
+    ++queryId
+    rows.value = []
+    hasMore.value = false
+    loading.value = false
+    error.value = '当前身份无法访问告警所属命名空间'
+    return
+  }
   syncFromContext()
-  // 深链（应用服务「历史日志」等）：?workload= / ?pod= 预填对应过滤；无参数行为不变
-  if (typeof route.query.workload === 'string') filters.workload = route.query.workload
-  if (typeof route.query.pod === 'string') filters.pod = route.query.pod
+  filters.workload = typeof workload === 'string' ? workload : ''
+  filters.pod = typeof pod === 'string' ? pod : ''
+  const start = Number(from), end = Number(to)
+  customRange.value = start > 0 && end >= start && Number.isFinite(end) ? [new Date(start), new Date(end)] : null
+  filters.range = customRange.value ? -1 : 3600
   void query()
-  // 顶栏切换 → 重查。watcher 在首次 sync 之后注册，避免 mount 时重复打一轮
-  watch(() => [state.tenantId, state.clusterId, state.namespace], () => {
-    syncFromContext()
-    void query()
-  })
+}
+onMounted(async () => {
+  await load()
+  readTarget()
+  initialized = true
+})
+watch(() => route.fullPath, () => { if (initialized) readTarget() })
+watch(() => [state.tenantId, state.clusterId, state.namespace], () => {
+  if (!initialized) return
+  if (route.query.clusterId && (route.query.clusterId !== state.clusterId || route.query.namespace !== state.namespace)) {
+    void router.replace({ name: 'observability-logs' })
+    return
+  }
+  if (filters.tenantId === state.tenantId && filters.namespace === state.namespace && filters.clusterName === currentCluster.value?.clusterName) return
+  syncFromContext()
+  void query()
 })
 </script>
 

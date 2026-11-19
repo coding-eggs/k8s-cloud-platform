@@ -18,4 +18,5 @@ public class AllocationCreateRequest {
 
     @Schema(description = "RBAC 模板id，缺省使用内置模板")
     private String roleTemplateId;
+    private Long expiresAt;
 }

@@ -8,6 +8,25 @@ import java.util.List;
 
 @Repository
 public interface PlatformTenantNamespaceMapper {
+    @org.apache.ibatis.annotations.Select("SELECT id FROM platform_tenant_namespace WHERE (lifecycle='ACTIVE' AND expires_at <= UNIX_TIMESTAMP(CURRENT_TIMESTAMP(3))*1000) OR lifecycle IN ('STOPPING','DELETING','RESTORING')")
+    List<String> due();
+    @org.apache.ibatis.annotations.Update("UPDATE platform_tenant_namespace SET namespace_uid=#{uid} WHERE id=#{id}")
+    int bindUid(@Param("id") String id, @Param("uid") String uid);
+
+    @org.apache.ibatis.annotations.Update("UPDATE platform_application SET deleted_at=NOW(), updated_at=NOW() WHERE tenant_id=#{tenantId} AND cluster_id=#{clusterId} AND namespace=#{namespace} AND deleted_at IS NULL")
+    int retireApplications(PlatformTenantNamespace row);
+
+    @org.apache.ibatis.annotations.Update("UPDATE platform_middleware_instance SET deleted_at=NOW(), updated_at=NOW() WHERE tenant_id=#{tenantId} AND cluster_id=#{clusterId} AND namespace=#{namespace} AND deleted_at IS NULL")
+    int retireMiddleware(PlatformTenantNamespace row);
+
+    @org.apache.ibatis.annotations.Select("SELECT * FROM platform_tenant_namespace WHERE id=#{id} FOR UPDATE")
+    PlatformTenantNamespace lock(@Param("id") String id);
+
+    @org.apache.ibatis.annotations.Update("UPDATE platform_tenant_namespace SET lifecycle=#{state}, lifecycle_error=#{error} WHERE id=#{id}")
+    int transition(@Param("id") String id, @Param("state") String state, @Param("error") String error);
+
+    @org.apache.ibatis.annotations.Update("UPDATE platform_tenant_namespace SET expires_at=#{until}, lifecycle=#{state}, lifecycle_error=NULL WHERE id=#{id}")
+    int renew(@Param("id") String id, @Param("until") Long until, @Param("state") String state);
 
     int insert(PlatformTenantNamespace record);
 

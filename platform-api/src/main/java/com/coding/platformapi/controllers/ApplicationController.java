@@ -188,7 +188,7 @@ public class ApplicationController {
     @Operation(summary = "发布预览：待发布改动、需一并勾选的服务、对象增删（不写集群）")
     public ResponseData<AppReleasePreviewView> releasePreview(@RequestBody AppReleaseRequest request) {
         return new ResponseData<>(release.preview(request.getAppId(), request.getServiceKeys(),
-                request.getImages(), auth.effectiveTenantId(request.getTenantId())));
+                request.getImages(), auth.effectiveTenantId(request.getTenantId()), request.getArtifact()));
     }
 
     @PostMapping("/release/create")
@@ -196,7 +196,7 @@ public class ApplicationController {
     @Operation(summary = "创建发布（异步执行，返回执行 id）")
     public ResponseData<Long> releaseCreate(@RequestBody AppReleaseRequest request) {
         return new ResponseData<>(release.create(request.getAppId(), request.getServiceKeys(), request.getImages(),
-                request.getNote(), operator(), auth.effectiveTenantId(request.getTenantId())));
+                request.getNote(), operator(), auth.effectiveTenantId(request.getTenantId()), request.getArtifact()));
     }
 
     @PostMapping("/release/rollback")

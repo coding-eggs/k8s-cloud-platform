@@ -24,6 +24,7 @@ const props = defineProps<{
   tenantId?: string
   services: AppServiceRow[]
   pendingKeys: string[]
+  artifact?: import('@/api').BuildArtifactRef & { digest: string }
 }>()
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
@@ -35,6 +36,11 @@ const visible = computed({
   set: (v) => emit('update:modelValue', v),
 })
 
+const artifactRef = computed(() => {
+  if (!props.artifact) return undefined
+  const { runName, nodeName, serviceKey } = props.artifact
+  return { runName, nodeName, serviceKey }
+})
 const selected = ref<string[]>([])
 const tags = ref<Record<string, string>>({})
 const note = ref('')
@@ -85,7 +91,7 @@ let timer: number | null = null
 
 watch(visible, (v) => {
   if (!v) return
-  selected.value = props.pendingKeys.filter((k) => !inCanary(k))
+  selected.value = props.artifact ? [props.artifact.serviceKey] : props.pendingKeys.filter((k) => !inCanary(k))
   tags.value = Object.fromEntries(props.services.map((s) => [s.key, desiredTag(s)]))
   note.value = ''
   preview.value = null
@@ -110,6 +116,7 @@ async function refreshPreview(): Promise<void> {
   previewing.value = true
   try {
     const p = await appReleaseApi.preview({
+      artifact: artifactRef.value,
       appId: props.appId,
       serviceKeys: [...selected.value],
       images: Object.keys(images.value).length ? images.value : undefined,
@@ -147,6 +154,7 @@ async function submit(): Promise<void> {
   error.value = ''
   try {
     const id = await appReleaseApi.create({
+      artifact: artifactRef.value,
       appId: props.appId,
       serviceKeys: [...selected.value],
       images: Object.keys(images.value).length ? images.value : undefined,
@@ -175,7 +183,7 @@ async function submit(): Promise<void> {
       <el-table-column width="46">
         <template #default="{ row }">
           <el-tooltip :disabled="!row.canary" content="灰度中：先在服务页「灰度」页签全量或回退" placement="top">
-            <span><el-checkbox :model-value="selected.includes(row.key)" :disabled="!!row.canary" @change="(v: unknown) => toggle(row.key, v)" /></span>
+            <span><el-checkbox :model-value="selected.includes(row.key)" :disabled="!!row.canary || artifact?.serviceKey === row.key" @change="(v: unknown) => toggle(row.key, v)" /></span>
           </el-tooltip>
         </template>
       </el-table-column>
@@ -200,6 +208,7 @@ async function submit(): Promise<void> {
       <el-table-column label="发布 tag" width="200">
         <template #default="{ row }">
           <span v-if="isDeleted(row)" class="app-rel-dlg__muted">将从集群删除</span>
+          <code v-else-if="artifact && artifact.serviceKey === row.key">{{ artifact.digest }}</code>
           <AppTagInput
             v-else
             :model-value="tags[row.key] ?? ''"
@@ -209,7 +218,7 @@ async function submit(): Promise<void> {
             :class="{ 'is-edited': tagEdited(row) }"
           />
           <el-link
-            v-if="!isDeleted(row) && row.newTag && (tags[row.key] ?? '').trim() !== row.newTag"
+            v-if="artifact?.serviceKey !== row.key && !isDeleted(row) && row.newTag && (tags[row.key] ?? '').trim() !== row.newTag"
             type="warning"
             :underline="false"
             class="app-rel-dlg__newtag"

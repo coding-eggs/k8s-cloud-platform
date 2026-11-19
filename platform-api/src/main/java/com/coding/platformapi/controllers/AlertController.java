@@ -34,6 +34,19 @@ public class AlertController {
 
     private final AlertService alertService;
 
+    public record HandlingRequest(long id, String action, String note) {}
+
+    @PostMapping("/handling/list")
+    public ResponseData<List<com.coding.data.mapper.k8s.PlatformAlertEventMapper.HandlingEntry>> handlingList(@RequestBody HandlingRequest request) {
+        return new ResponseData<>(alertService.handling(request.id(), null, null));
+    }
+
+    @PostMapping("/handling/update")
+    @Auditable(action = "alert:handle", target = "#request.id")
+    public ResponseData<List<com.coding.data.mapper.k8s.PlatformAlertEventMapper.HandlingEntry>> handlingUpdate(@RequestBody HandlingRequest request) {
+        return new ResponseData<>(alertService.handling(request.id(), request.action(), request.note()));
+    }
+
     @PostMapping("/list")
     @Operation(summary = "告警列表（租户身份自动收窄到本租户命名空间）")
     public ResponseData<List<PlatformAlertEvent>> list(@RequestBody AlertQueryRequest req) {

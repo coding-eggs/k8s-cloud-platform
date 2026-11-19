@@ -22,6 +22,16 @@ public interface PlatformAlertEventMapper {
 
     int deleteById(@Param("id") Long id);
 
+    PlatformAlertEvent lockEvent(@Param("id") long id);
+
+    record HandlingEntry(String actor, String kind, String note, Date createdAt) {}
+
+    @org.apache.ibatis.annotations.Select("SELECT actor, kind, note, created_at AS createdAt FROM platform_alert_handling WHERE event_id=#{id} ORDER BY id")
+    List<HandlingEntry> handling(@Param("id") long id);
+
+    @org.apache.ibatis.annotations.Insert("INSERT INTO platform_alert_handling(event_id,actor,kind,note) VALUES(#{id},#{actor},#{kind},#{note})")
+    void addHandling(@Param("id") long id, @Param("actor") String actor, @Param("kind") String kind, @Param("note") String note);
+
     /** 自检回收用：按告警名找最近写入的行（Task 18 的 self-test 用它删掉刚投的那条）。 */
     List<Long> findIdsByAlertname(@Param("clusterId") String clusterId,
                                   @Param("alertname") String alertname);

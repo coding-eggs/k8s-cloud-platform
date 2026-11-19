@@ -9,6 +9,8 @@
     <result column="namespace"       jdbcType="VARCHAR"     property="namespace" />
     <result column="canvas_json"     jdbcType="LONGVARCHAR" property="canvasJson" />
     <result column="source_json"     jdbcType="LONGVARCHAR" property="sourceJson" />
+    <result column="artifacts_json"  jdbcType="LONGVARCHAR" property="artifactsJson" />
+    <result column="tenant_id"       jdbcType="VARCHAR"     property="tenantId" />
     <result column="run_name"        jdbcType="VARCHAR"     property="runName" />
     <result column="status"          jdbcType="VARCHAR"     property="status" />
     <result column="reason"          jdbcType="VARCHAR"     property="reason" />
@@ -30,7 +32,7 @@
     id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by,
     start_time, completion_time, steps_json, run_yaml, created_at,
     parent_run_id, attempt_no, retry_from_node, masked_nodes_json, reused_nodes_json, workspace_pvc,
-    source_json
+    source_json, artifacts_json, tenant_id
   </sql>
 
   <!-- 列表用：**不带 canvas_json / run_yaml 两个大字段** —— 一次历史几十条，
@@ -45,14 +47,14 @@
     insert into platform_pipeline_run
       (id, pipeline_id, cluster_id, namespace, canvas_json, run_name, status, reason, triggered_by,
        parent_run_id, attempt_no, retry_from_node, masked_nodes_json, reused_nodes_json, workspace_pvc,
-       source_json)
+       source_json, tenant_id)
     values (#{id,jdbcType=VARCHAR}, #{pipelineId,jdbcType=VARCHAR}, #{clusterId,jdbcType=VARCHAR},
       #{namespace,jdbcType=VARCHAR}, #{canvasJson,jdbcType=LONGVARCHAR}, #{runName,jdbcType=VARCHAR},
       #{status,jdbcType=VARCHAR}, #{reason,jdbcType=VARCHAR}, #{triggeredBy,jdbcType=VARCHAR},
       #{parentRunId,jdbcType=VARCHAR}, #{attemptNo,jdbcType=INTEGER},
       #{retryFromNode,jdbcType=VARCHAR}, #{maskedNodesJson,jdbcType=LONGVARCHAR},
       #{reusedNodesJson,jdbcType=LONGVARCHAR}, #{workspacePvc,jdbcType=VARCHAR},
-      #{sourceJson,jdbcType=LONGVARCHAR})
+      #{sourceJson,jdbcType=LONGVARCHAR}, #{tenantId,jdbcType=VARCHAR})
   </insert>
 
   <!-- 归档回写：只写结果列。run_name / pipeline_id / cluster_id / namespace / canvas_json
@@ -64,6 +66,7 @@
         start_time = #{startTime,jdbcType=VARCHAR},
         completion_time = #{completionTime,jdbcType=VARCHAR},
         steps_json = #{stepsJson,jdbcType=LONGVARCHAR},
+        artifacts_json = #{artifactsJson,jdbcType=LONGVARCHAR},
         run_yaml = #{runYaml,jdbcType=LONGVARCHAR}
     where id = #{id,jdbcType=VARCHAR}
   </update>

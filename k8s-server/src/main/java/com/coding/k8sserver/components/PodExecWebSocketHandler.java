@@ -58,10 +58,11 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler implements Acc
     private final ResourceAccessResolver accessResolver;
     private final JsonMapper jsonMapper;
 
-    private record ExecState(ExecWatch watch, StdinStream stdin, AtomicBoolean closed) {
+    private record ExecState(ExecWatch watch, StdinStream stdin, AtomicBoolean closed, WebSocketSession session,
+                             String tenantId, String clusterId, String namespace) {
     }
 
-    private final Map<String, ExecState> states = new HashMap<>();
+    private final Map<String, ExecState> states = new java.util.concurrent.ConcurrentHashMap<>();
 
     /**租户边界：exec 的目标命名空间在公司表三元组校验之内（见类注释）。 */
     @Override
@@ -93,11 +94,13 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler implements Acc
             //scope=cluster：节点详情等集群域场景（admin-only，边界=集群注册表），直接走 admin client；
             //否则命名空间域双模解析（租户 token→tenant client，admin 代操作→admin client）。
             KubernetesClient client;
+            String checkedTenant = null;
             if ("cluster".equalsIgnoreCase(q.get("scope"))) {
                 accessResolver.assertClusterAccess(clusterId);
                 client = clientFactory.getAdminClient(clusterId);
             } else {
                 AccessContext ctx = accessResolver.resolveNamespacedAccess(auth, tenantId, clusterId, namespace);
+                if (!ctx.adminMode()) checkedTenant = ctx.tenantId();
                 client = ctx.adminMode()
                         ? clientFactory.getAdminClient(clusterId)
                         : clientFactory.getTenantClient(clusterId, ctx.tenantId());
@@ -121,7 +124,7 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler implements Acc
                     .withTTY()
                     .exec("sh", "-c", shellCmd);
 
-            states.put(session.getId(), new ExecState(watch, stdin, closed));
+            states.put(session.getId(), new ExecState(watch, stdin, closed, session, checkedTenant, clusterId, namespace));
             if (cols > 0 && rows > 0) {
                 watch.resize(cols, rows);
             }
@@ -198,6 +201,20 @@ public class PodExecWebSocketHandler extends TextWebSocketHandler implements Acc
     @PreDestroy
     public void shutdown() {
         states.keySet().forEach(this::cleanup);
+    }
+
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 1000)
+    public void closeExpiredSessions() {
+        for (ExecState state : states.values()) {
+            if (state.tenantId() == null) continue;
+            try {
+                if (accessResolver.mayAccessNamespace(state.tenantId(), state.clusterId(), state.namespace())) continue;
+            } catch (RuntimeException ex) {
+                log.warn("无法确认终端授权，关闭会话 {}", state.session().getId());
+            }
+            cleanup(state.session().getId());
+            closeQuietly(state.session(), CloseStatus.POLICY_VIOLATION);
+        }
     }
 
     // ==================== 消息发送（WebSocketSession 非线程安全，统一加锁） ====================

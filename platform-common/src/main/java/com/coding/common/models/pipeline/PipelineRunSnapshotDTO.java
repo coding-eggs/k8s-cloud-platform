@@ -40,6 +40,9 @@ public record PipelineRunSnapshotDTO(String clusterId,
      * @param log 已被 k8s-server 按上限截断
      */
     public record StepLog(String nodeName, String status, String log,
-                          boolean truncated, int sizeBytes) {
+                          boolean truncated, int sizeBytes, PipelineImageArtifact artifact) {
+        public StepLog(String nodeName, String status, String log, boolean truncated, int sizeBytes) {
+            this(nodeName, status, log, truncated, sizeBytes, null);
+        }
     }
 }

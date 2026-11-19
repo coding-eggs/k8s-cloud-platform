@@ -18,6 +18,9 @@ public class AppReleaseRequest {
 
     /** 服务 key → 本次要用的镜像 tag（可空） */
     private Map<String, String> images;
+    private BuildArtifact artifact;
+
+    public record BuildArtifact(String runName, String nodeName, String serviceKey) {}
 
     private String note;
 

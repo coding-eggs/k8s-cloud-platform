@@ -80,6 +80,10 @@
     delete from platform_alert_event where id = #{id,jdbcType=BIGINT}
   </delete>
 
+  <select id="lockEvent" resultMap="BaseResultMap">
+    select <include refid="Base_Column_List"/> from platform_alert_event where id=#{id} for update
+  </select>
+
   <select id="findIdsByAlertname" resultType="java.lang.Long">
     select id from platform_alert_event
     where cluster_id = #{clusterId,jdbcType=VARCHAR}
