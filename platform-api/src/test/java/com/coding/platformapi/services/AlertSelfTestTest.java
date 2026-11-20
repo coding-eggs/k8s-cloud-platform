@@ -38,13 +38,28 @@ class AlertSelfTestTest {
     void setUp() {
         mapper = mock(PlatformAlertEventMapper.class);
         allocs = mock(PlatformTenantNamespaceMapper.class);
+        configureService("s3cret");
+    }
+
+    private void configureService(String token) {
         RestClient.Builder builder = RestClient.builder();
         server = MockRestServiceServer.bindTo(builder).build();
         svc = new AlertService(mapper, allocs, mock(AuthContext.class),
                 new RuleSourceResolver(mock(com.coding.platformapi.k8s.K8sClient.class)),
                 mock(com.coding.data.mapper.alert.NotificationChannelMapper.class),
                 mock(com.coding.data.mapper.alert.AlertDeliveryMapper.class),
-                mock(com.coding.platformapi.notify.AlertNotifyContextService.class), builder, "s3cret", "http://127.0.0.1:8081/api");
+                mock(com.coding.platformapi.notify.AlertNotifyContextService.class), builder, token, "http://127.0.0.1:8081/api");
+    }
+
+    @Test
+    void self_test_sends_one_bearer_prefix_when_the_configuration_already_includes_it() {
+        configureService("Bearer s3cret");
+        server.expect(requestTo("http://127.0.0.1:8081/api/alert/webhook?clusterId=c1"))
+                .andExpect(header("Authorization", "Bearer s3cret"))
+                .andRespond(withSuccess());
+
+        assertThat(svc.selfTest("c1").status()).isEqualTo(200);
+        server.verify();
     }
 
     /** self-test 打自己的回环地址，带正确的 Bearer —— 验的是完整 HTTP + 鉴权 + 解析 + 落库链路。 */

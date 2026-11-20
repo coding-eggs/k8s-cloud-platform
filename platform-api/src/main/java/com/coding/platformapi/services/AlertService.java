@@ -298,10 +298,11 @@ public class AlertService {
         payload.setStatus("firing");
         payload.setReceiver("platform-self-test");
         payload.setAlerts(buildSelfTestAlerts(clusterId));
+        String authorization = webhookToken.startsWith("Bearer ") ? webhookToken : "Bearer " + webhookToken;
         int status;
         try {
             status = restClientBuilder.build().post().uri(url)
-                    .header("Authorization", "Bearer " + webhookToken)
+                    .header("Authorization", authorization)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(payload)
                     .exchange((req, res) -> res.getStatusCode().value());
