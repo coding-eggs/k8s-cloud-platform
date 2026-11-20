@@ -8,7 +8,7 @@
  * <p>对象可读可写（租户可写自己名下的桶）：上传/删除单个对象，不做按前缀批量删；
  * 下载经平台代理（S3 网关只在集群内），单次上传/下载上限 100MB，超过请用 SDK 直连。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Search } from '@element-plus/icons-vue'
 import { usePaletteAction } from '@/composables/usePaletteAction'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -385,6 +385,9 @@ function openObjects(row: ObjectStorageBucket): void {
 }
 
 function closeObjects(): void {
+  closePreview()
+  ++objReqSeq
+  objLoading.value = false
   objBucket.value = null
   objItems.value = []
   objFolders.value = []
@@ -555,6 +558,68 @@ function prevPage(): void {
   void loadObjects()
 }
 
+const imageTypes = new Map([
+  ['jpg', 'image/jpeg'], ['jpeg', 'image/jpeg'], ['png', 'image/png'],
+  ['gif', 'image/gif'], ['webp', 'image/webp'],
+])
+const textTypes = new Set(['txt', 'log', 'md', 'json', 'yaml', 'yml', 'csv', 'xml', 'ini', 'conf'])
+
+function previewType(key: string): string | undefined {
+  const ext = /\.([^.\/]+)$/.exec(key)?.[1]?.toLowerCase() ?? ''
+  return textTypes.has(ext) ? 'text/plain' : imageTypes.get(ext)
+}
+
+const previewVisible = ref(false)
+const previewName = ref('')
+const previewText = ref('')
+const previewUrl = ref('')
+const previewLoading = ref(false)
+const previewError = ref('')
+let previewSeq = 0
+
+function closePreview(): void {
+  ++previewSeq
+  previewVisible.value = false
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  previewUrl.value = ''
+  previewText.value = ''
+  previewError.value = ''
+}
+
+onBeforeUnmount(closePreview)
+
+async function previewObject(row: { key: string; size: number }): Promise<void> {
+  const type = previewType(row.key)
+  if (!type || !objBucket.value) return
+  closePreview()
+  const seq = previewSeq
+  const isText = type === 'text/plain'
+  const limitMiB = isText ? 1 : 10
+  const limitBytes = limitMiB * 1024 * 1024
+  previewName.value = row.key
+  previewVisible.value = true
+  previewLoading.value = true
+  try {
+    const sizeError = `文件超过 ${limitMiB} MiB 预览上限，请下载后查看。`
+    if (row.size > limitBytes) throw new Error(sizeError)
+    const blob = await objectStorageApi.downloadObject({
+      clusterId: clusterId.value, tenantId: scopedTenantId(), bucketId: objBucket.value.id, key: row.key,
+    })
+    if (seq !== previewSeq) return
+    if (blob.size > limitBytes) throw new Error(sizeError)
+    if (isText) {
+      const content = await blob.text()
+      if (seq === previewSeq) previewText.value = content
+    } else {
+      previewUrl.value = URL.createObjectURL(blob.slice(0, blob.size, type))
+    }
+  } catch (e) {
+    if (seq === previewSeq) previewError.value = e instanceof Error ? e.message : '文件预览失败'
+  } finally {
+    if (seq === previewSeq) previewLoading.value = false
+  }
+}
+
 async function downloadObject(row: { key: string }): Promise<void> {
   if (!objBucket.value) return
   downloading.value = row.key
@@ -677,7 +742,7 @@ usePaletteAction({
                    style="width: 170px" @change="refresh">
           <el-option v-for="t in tenants" :key="t.id" :label="t.name" :value="t.id" />
         </el-select>
-        <el-button :disabled="!clusterId" @click="refresh">刷新</el-button>
+        <el-button :disabled="!clusterId" @click="objBucket ? loadObjects() : refresh()">刷新</el-button>
         <el-button v-if="perm.isAdmin && quota && !objBucket" @click="openQuota">
           配额 {{ quota.used }}/{{ quota.maxBuckets }}
         </el-button>
@@ -774,9 +839,10 @@ usePaletteAction({
         <el-table-column label="修改时间" width="200">
           <template #default="{ row }">{{ row.kind === 'folder' ? '—' : row.lastModified }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="140">
+        <el-table-column label="操作" width="170">
           <template #default="{ row }">
             <template v-if="row.kind === 'file'">
+              <el-button v-if="previewType(row.key)" link type="primary" @click="previewObject(row)">预览</el-button>
               <el-button link type="primary"
                          :loading="downloading === row.key" @click="downloadObject(row)">下载</el-button>
               <el-button v-if="canWrite" link type="danger" @click="removeObject(row)">删除</el-button>
@@ -792,6 +858,18 @@ usePaletteAction({
         <span class="os-form-help">单次上传/下载 ≤100MB，超过请用 SDK 直连；删除只针对单个对象</span>
       </div>
     </div>
+
+    <el-dialog :model-value="previewVisible" :title="'文件预览 · ' + previewName"
+               width="min(800px, 92vw)" @update:model-value="closePreview">
+      <div v-loading="previewLoading" class="os-preview">
+        <p v-if="previewError" role="alert">{{ previewError }}</p>
+        <img v-else-if="previewUrl" :src="previewUrl" :alt="previewName" @error="previewError = '图片无法显示，请下载后查看。'" />
+        <template v-else-if="!previewLoading">
+          <pre v-if="previewText">{{ previewText }}</pre>
+          <p v-else>文件内容为空</p>
+        </template>
+      </div>
+    </el-dialog>
 
     <!-- ============ 创建桶 ============ -->
     <el-dialog v-model="createVisible" title="创建桶" width="560px" :close-on-click-modal="false">
@@ -948,5 +1026,8 @@ usePaletteAction({
 .os-folder { cursor: pointer; color: var(--accent); }
 .os-folder:hover { text-decoration: underline; }
 .os-file { color: var(--text-1); }
+.os-preview { min-height: 80px; max-height: 65vh; overflow: auto; }
+.os-preview img { display: block; max-width: 100%; max-height: 65vh; margin: auto; }
+.os-preview pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .os-hit { color: var(--accent); font-weight: 700; }
 </style>
