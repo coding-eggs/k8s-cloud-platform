@@ -10,6 +10,7 @@ import { clusterApi, overviewApi, tenantApi } from '@/api'
 import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
+import AllocateNamespaceDialog from '@/components/AllocateNamespaceDialog.vue'
 import QuickActions from '@/components/overview/QuickActions.vue'
 import RefreshControl from '@/components/overview/RefreshControl.vue'
 import CountCard from '@/components/overview/CountCard.vue'
@@ -22,6 +23,7 @@ import type { K8sCluster, NamespaceAllocation, PlatformTenant } from '@/types'
 import type { PlatformOverview } from '@/types/overview'
 
 const perm = usePermission()
+const allocDialogVisible = ref(false)
 
 const loading = ref(false)
 /** 最近一次成功取数的时刻（页头「更新于 X 前」）；刷新失败不更新 */
@@ -130,7 +132,7 @@ function statusTag(status?: K8sCluster['status']): { type: 'success' | 'danger' 
 const quickActions = computed(() =>
   [
     { title: '新增集群', path: '/clusters', icon: 'Monitor', perm: pageCodes.cluster },
-    { title: '分配命名空间', path: '/namespaces', icon: 'FolderOpened', perm: pageCodes.namespace.list },
+    { title: '分配命名空间', run: () => { allocDialogVisible.value = true }, icon: 'FolderOpened', perm: apiCodes.allocationManage },
     { title: '新建租户', path: '/tenants', icon: 'OfficeBuilding', perm: pageCodes.tenant.list },
     { title: '查审计', path: '/audit', icon: 'Document', perm: pageCodes.audit },
   ].filter((a) => perm.has(a.perm)),
@@ -150,6 +152,7 @@ onMounted(load)
     </div>
 
     <QuickActions :actions="quickActions" face="platform" />
+    <AllocateNamespaceDialog v-model="allocDialogVisible" @success="load" />
 
     <!-- 首次加载：骨架屏占位（之后的刷新保留旧数据，不再遮罩） -->
     <div v-if="canOverview && !ov && loading" class="ov-skeleton">

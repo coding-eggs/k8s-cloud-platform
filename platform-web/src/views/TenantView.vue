@@ -5,12 +5,24 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { platformUserApi, tenantApi } from '@/api'
 import type { PlatformTenant, PlatformUser } from '@/types'
 import { fmtDate } from '@/utils/format'
+import AllocateNamespaceDialog from '@/components/AllocateNamespaceDialog.vue'
 import TenantDetailPanel from '@/components/TenantDetailPanel.vue'
+import { apiCodes } from '@/apiCodes'
+import { usePermission } from '@/stores/permission'
 import {MoreFilled} from "@element-plus/icons-vue";
 import { useQueryFilter } from '@/composables/useQueryFilter'
 
 const loading = ref(false)
 const list = ref<PlatformTenant[]>([])
+const perm = usePermission()
+const canAllocate = computed(() => perm.has(apiCodes.allocationManage))
+const allocDialogVisible = ref(false)
+const allocationTenantId = ref('')
+
+function openAllocation(row: PlatformTenant): void {
+  allocationTenantId.value = row.id
+  allocDialogVisible.value = true
+}
 /** 启用 / 停用筛选（URL `?status=1|0`，总览租户卡点「停用 1」带过来） */
 const statusFilter = useQueryFilter('status')
 const shown = computed(() =>
@@ -150,10 +162,17 @@ async function onDelete(row: PlatformTenant): Promise<void> {
 // ---- 详情抽屉（Task 20：el-tabs 命名空间分配 / 成员与角色，委托 TenantDetailPanel，admin 代管轨） ----
 const drawerVisible = ref(false)
 const currentTenant = ref<PlatformTenant | null>(null)
+const tenantDetailRef = ref<InstanceType<typeof TenantDetailPanel> | null>(null)
 
 function openDetail(row: PlatformTenant): void {
   currentTenant.value = row
   drawerVisible.value = true
+}
+
+function onAllocationSuccess(): void {
+  if (currentTenant.value?.id === allocationTenantId.value) {
+    void tenantDetailRef.value?.loadAllocations()
+  }
 }
 
 onMounted(load)
@@ -197,8 +216,11 @@ usePaletteAction({
       </el-table-column>
 
 
-      <el-table-column width="64" fixed="right">
+      <el-table-column label="操作" :width="canAllocate ? 176 : 64" fixed="right">
         <template #default="{ row }">
+          <el-button v-if="canAllocate && row.status === 1" link type="primary" @click="openAllocation(row)">
+            分配命名空间
+          </el-button>
           <el-dropdown trigger="click">
             <el-button link type="primary" :icon="MoreFilled" />
             <template #dropdown>
@@ -219,6 +241,8 @@ usePaletteAction({
       </el-table-column>
 
     </el-table>
+
+    <AllocateNamespaceDialog v-model="allocDialogVisible" :tenant-id="allocationTenantId" @success="onAllocationSuccess" />
 
     <el-dialog v-model="dialogVisible" :title="isEdit ? '编辑租户' : '创建租户'" width="520px">
       <el-form label-width="130px">
@@ -263,6 +287,7 @@ usePaletteAction({
     <el-drawer v-model="drawerVisible" :title="`租户详情 · ${currentTenant?.name ?? ''}`" size="1040px">
       <TenantDetailPanel
         v-if="currentTenant"
+        ref="tenantDetailRef"
         :tenant-id="currentTenant.id"
         :tenant-name="currentTenant.name"
         delegate

@@ -10,11 +10,10 @@ import { computed } from 'vue'
 import { readRecentVisits } from '@/composables/useRecentVisits'
 import type { NavFace } from '@/nav'
 
-export interface QuickAction {
+export type QuickAction = {
   title: string
-  path: string
   icon: string
-}
+} & ({ path: string; run?: never } | { run: () => void; path?: never })
 
 const props = defineProps<{ actions: QuickAction[]; face?: NavFace }>()
 
@@ -28,10 +27,16 @@ const visits = computed(() =>
   <div v-if="actions.length || visits.length" class="qa">
     <div v-if="actions.length" class="qa-row">
       <span class="qa-label">常用操作</span>
-      <router-link v-for="a in actions" :key="a.path" :to="a.path" class="qa-btn">
-        <el-icon class="qa-icon"><component :is="a.icon" /></el-icon>
-        <span>{{ a.title }}</span>
-      </router-link>
+      <template v-for="a in actions" :key="a.path ?? a.title">
+        <router-link v-if="a.path !== undefined" :to="a.path" class="qa-btn">
+          <el-icon class="qa-icon"><component :is="a.icon" /></el-icon>
+          <span>{{ a.title }}</span>
+        </router-link>
+        <button v-else type="button" class="qa-btn" @click="a.run">
+          <el-icon class="qa-icon"><component :is="a.icon" /></el-icon>
+          <span>{{ a.title }}</span>
+        </button>
+      </template>
     </div>
     <div v-if="visits.length" class="qa-row">
       <span class="qa-label">最近访问</span>
@@ -79,6 +84,9 @@ const visits = computed(() =>
 .qa-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+button.qa-btn {
+  cursor: pointer;
 }
 .qa-icon {
   font-size: 15px;

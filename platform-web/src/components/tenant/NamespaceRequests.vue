@@ -185,44 +185,54 @@ async function enter(row: NamespaceAllocation) {
 }
 </script>
 <template>
-  <div class="actions">
-    <el-button v-if="!admin" type="primary" @click="edit('OPEN')">申请命名空间</el-button>
-    <el-button @click="refresh">刷新</el-button>
-  </div>
-  <el-table :data="allocations" empty-text="尚未分配命名空间">
-    <el-table-column prop="namespace" label="命名空间" /><el-table-column prop="clusterId" label="集群" />
-    <el-table-column label="有效期"><template #default="{row}">{{ date(row.expiresAt) }}</template></el-table-column>
-    <el-table-column label="状态"><template #default="{row}">{{ states[row.lifecycle] || row.lifecycle }} {{ row.lifecycleError }}</template></el-table-column>
-    <el-table-column label="操作" min-width="190"><template #default="{row}">
-      <template v-if="!admin">
-        <el-button v-if="row.lifecycle === 'ACTIVE'" link @click="enter(row)">进入</el-button>
-        <el-button v-if="row.lifecycle === 'ACTIVE'" link @click="edit('EXPAND',row)">申请配额扩容</el-button>
-        <el-button v-if="row.expiresAt && ['ACTIVE','EXPIRED','STOPPED'].includes(row.lifecycle)" link @click="edit('RENEW',row)">申请续期</el-button>
-      </template>
-      <template v-else-if="['EXPIRED','STOPPED'].includes(row.lifecycle)">
-        <el-button v-if="row.lifecycle === 'EXPIRED' && perm.has('platform:namespace:reclaim')" link @click="preview(row,false)">回收资源</el-button>
-        <el-button v-if="perm.has('platform:namespace:destroy')" link type="danger" @click="preview(row,true)">删除整个空间</el-button>
-      </template>
-    </template></el-table-column>
-  </el-table>
-  <h4>{{ admin ? '租户申请' : '我的申请' }}</h4>
-  <el-table :data="rows" empty-text="暂无申请">
-    <el-table-column label="类型"><template #default="{row}">{{ kindNames[row.kind] }}</template></el-table-column>
-    <el-table-column prop="namespace" label="空间" /><el-table-column prop="applicant" label="申请人" />
-    <el-table-column prop="purpose" label="用途"/><el-table-column label="结果"><template #default="{row}">
-      {{ ({ PENDING:'待审批', PROVISIONING:'开通中', APPROVED:'已批准', REJECTED:'已驳回' } as Record<string,string>)[row.status] }}
-      {{ row.reason }}
-      <ul v-if="itemsOf(row).length" class="quota-summary">
-        <li v-for="item in itemsOf(row)" :key="item.key">
-          {{ quotaFields[item.key].label }} {{ formatQuota(item.key, item.approvedValue ?? item.targetValue) }}
-          <span v-if="item.approvedValue != null && item.approvedValue !== item.targetValue">
-            （申请 {{ formatQuota(item.key, item.targetValue) }}）
-          </span>
-        </li>
-      </ul>
-    </template></el-table-column>
-    <el-table-column v-if="admin" label="操作"><template #default="{row}"><el-button v-if="['PENDING','PROVISIONING'].includes(row.status)" link @click="review(row)">{{ row.status === 'PENDING' ? '审批' : '继续开通' }}</el-button></template></el-table-column>
-  </el-table>
+  <section class="space-section">
+    <header class="space-section__header">
+      <h3>已分配命名空间</h3>
+      <div class="space-section__actions">
+        <el-button v-if="!admin" type="primary" @click="edit('OPEN')">申请命名空间</el-button>
+        <el-button @click="refresh">刷新</el-button>
+      </div>
+    </header>
+    <el-table :data="allocations" empty-text="尚未分配命名空间">
+      <el-table-column prop="namespace" label="命名空间" /><el-table-column prop="clusterId" label="集群" />
+      <el-table-column label="有效期"><template #default="{row}">{{ date(row.expiresAt) }}</template></el-table-column>
+      <el-table-column label="状态"><template #default="{row}">{{ states[row.lifecycle] || row.lifecycle }} {{ row.lifecycleError }}</template></el-table-column>
+      <el-table-column label="操作" min-width="190"><template #default="{row}">
+        <template v-if="!admin">
+          <el-button v-if="row.lifecycle === 'ACTIVE'" link @click="enter(row)">进入</el-button>
+          <el-button v-if="row.lifecycle === 'ACTIVE'" link @click="edit('EXPAND',row)">申请配额扩容</el-button>
+          <el-button v-if="row.expiresAt && ['ACTIVE','EXPIRED','STOPPED'].includes(row.lifecycle)" link @click="edit('RENEW',row)">申请续期</el-button>
+        </template>
+        <template v-else-if="['EXPIRED','STOPPED'].includes(row.lifecycle)">
+          <el-button v-if="row.lifecycle === 'EXPIRED' && perm.has('platform:namespace:reclaim')" link @click="preview(row,false)">回收资源</el-button>
+          <el-button v-if="perm.has('platform:namespace:destroy')" link type="danger" @click="preview(row,true)">删除整个空间</el-button>
+        </template>
+      </template></el-table-column>
+    </el-table>
+  </section>
+
+  <section class="space-section space-section--requests">
+    <header class="space-section__header">
+      <h3>{{ admin ? '租户申请' : '我的申请' }}</h3>
+    </header>
+    <el-table :data="rows" empty-text="暂无申请">
+      <el-table-column label="类型"><template #default="{row}">{{ kindNames[row.kind] }}</template></el-table-column>
+      <el-table-column prop="namespace" label="空间" /><el-table-column prop="applicant" label="申请人" />
+      <el-table-column prop="purpose" label="用途"/><el-table-column label="结果"><template #default="{row}">
+        {{ ({ PENDING:'待审批', PROVISIONING:'开通中', APPROVED:'已批准', REJECTED:'已驳回' } as Record<string,string>)[row.status] }}
+        {{ row.reason }}
+        <ul v-if="itemsOf(row).length" class="quota-summary">
+          <li v-for="item in itemsOf(row)" :key="item.key">
+            {{ quotaFields[item.key].label }} {{ formatQuota(item.key, item.approvedValue ?? item.targetValue) }}
+            <span v-if="item.approvedValue != null && item.approvedValue !== item.targetValue">
+              （申请 {{ formatQuota(item.key, item.targetValue) }}）
+            </span>
+          </li>
+        </ul>
+      </template></el-table-column>
+      <el-table-column v-if="admin" label="操作"><template #default="{row}"><el-button v-if="['PENDING','PROVISIONING'].includes(row.status)" link @click="review(row)">{{ row.status === 'PENDING' ? '审批' : '继续开通' }}</el-button></template></el-table-column>
+    </el-table>
+  </section>
   <el-dialog v-model="editing" :title="kindNames[form.kind]" width="min(640px, calc(100vw - 32px))" append-to-body>
     <el-form label-position="top">
       <el-form-item label="命名空间名称"><el-input v-model="form.namespace" :disabled="form.kind !== 'OPEN'" /></el-form-item>
@@ -288,7 +298,36 @@ async function enter(row: NamespaceAllocation) {
   </el-dialog>
 </template>
 <style scoped>
-.actions { display: flex; gap: 8px; margin-bottom: 12px; }
+.space-section {
+  min-width: 0;
+  padding-inline: 4px;
+}
+.space-section--requests {
+  margin-top: 24px;
+  padding-block: 20px 12px;
+  border-top: 1px solid var(--border);
+}
+.space-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+}
+.space-section__header h3 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 24px;
+}
+.space-section__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.space-section__actions :deep(.el-button + .el-button) { margin-left: 0; }
 .quota-section {
   min-width: 0;
   margin: 0;

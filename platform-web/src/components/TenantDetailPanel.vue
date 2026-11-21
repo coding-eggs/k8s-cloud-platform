@@ -288,7 +288,7 @@ const overviewRef = ref<{ reloadAll: () => void } | null>(null)
 function reloadOverview(): void {
   overviewRef.value?.reloadAll()
 }
-defineExpose({ reloadOverview })
+defineExpose({ reloadOverview, loadAllocations })
 
 watch(activeTab, (t) => {
   if (t === 'members') void loadRoleCatalog()
