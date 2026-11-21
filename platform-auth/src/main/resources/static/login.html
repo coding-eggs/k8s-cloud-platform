@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>云平台统一认证</title>
+    <title>统一认证 · K8s Cloud Platform</title>
     <link rel="stylesheet" href="./assets/index.css">
     <script src="./assets/vue.global.prod.js"></script>
     <script src="./assets/index.full.min.js"></script>
@@ -11,244 +11,284 @@
     <script src="./assets/app.js"></script>
     <script src="./assets/localStorage.js"></script>
     <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
+        :root {
+            color-scheme: dark;
+            --text: #e2e8f0;
+            --muted: #94a3b8;
+            --accent: #22d3ee;
+            --field: #0d1729;
+        }
+
+        * { box-sizing: border-box; }
+        [v-cloak] { display: none; }
 
         body {
+            margin: 0;
+            color: var(--text);
+            font: 14px/1.5 'Helvetica Neue', Helvetica, 'PingFang SC', 'Microsoft YaHei', Arial, sans-serif;
+            background:
+                radial-gradient(ellipse at 19% 42%, #142b43 0%, transparent 46%),
+                radial-gradient(ellipse at 100% 100%, #171a35 0%, transparent 44%),
+                #090f1d;
+        }
+
+        #app {
+            position: relative;
+            isolation: isolate;
             min-height: 100vh;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            display: flex;
+            min-height: 100dvh;
+            display: grid;
+            place-items: center;
+            padding: clamp(24px, 6vw, 80px) 16px;
+        }
+
+        #app::before {
+            content: '';
+            position: absolute;
+            z-index: -1;
+            inset: 0;
+            pointer-events: none;
+            background-image:
+                linear-gradient(rgba(148, 163, 184, .05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(148, 163, 184, .05) 1px, transparent 1px);
+            background-size: 44px 44px;
+            mask-image: radial-gradient(ellipse at center, black 30%, transparent 75%);
+        }
+
+        .login-layout {
+            width: min(100%, 1248px);
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) clamp(400px, 44vw, 552px);
             align-items: center;
-            justify-content: center;
+            gap: clamp(40px, 6vw, 96px);
+            padding-inline: clamp(0px, 3vw, 48px);
         }
 
-        .login-container {
-            width: 420px;
-            animation: fadeInDown .5s ease-out;
+        .login-brand {
+            align-self: start;
+            padding-top: clamp(54px, 5.6vw, 72px);
         }
 
-        @keyframes fadeInDown {
-            from { opacity: 0; transform: translateY(-30px); }
-            to   { opacity: 1; transform: translateY(0); }
+        .login-brand h1 {
+            margin: 0;
+            font-size: clamp(30px, 4vw, 56px);
+            line-height: 1.12;
+            letter-spacing: -.025em;
+        }
+
+        .login-brand p {
+            margin: 20px 0 0;
+            font-size: clamp(14px, 1.6vw, 19px);
+            color: #aebdd2;
         }
 
         .login-card {
-            background: #fff;
-            border-radius: 16px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, .15);
-            padding: 48px 40px 40px;
+            min-width: 0;
+            padding: clamp(32px, 4vw, 52px) clamp(22px, 3.4vw, 44px);
+            border: 1px solid #2c3b53;
+            border-radius: 24px;
+            background: linear-gradient(155deg, #17243a, #111a2e 68%);
         }
 
         .login-header {
-            text-align: center;
-            margin-bottom: 36px;
+            margin-bottom: 34px;
         }
 
-        .login-logo {
-            width: 64px;
-            height: 64px;
+        .brand-mark {
+            display: grid;
+            place-items: center;
+            width: 58px;
+            height: 58px;
+            margin-bottom: 22px;
             border-radius: 16px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 16px;
-            font-size: 28px;
-            color: #fff;
-            box-shadow: 0 8px 24px rgba(102, 126, 234, .4);
+            background: linear-gradient(135deg, var(--accent), #8b5cf6);
+            box-shadow: 0 8px 28px rgba(34, 211, 238, .28);
         }
 
-        .login-header h1 {
-            font-size: 22px;
-            color: #303133;
-            font-weight: 700;
-            margin-bottom: 8px;
-        }
-
-        .login-header p {
-            font-size: 14px;
-            color: #909399;
+        .login-header h2 {
+            margin: 0;
+            font-size: clamp(26px, 3vw, 32px);
+            line-height: 1.2;
+            letter-spacing: -.025em;
         }
 
         .form-item {
-            margin-bottom: 20px;
+            margin-bottom: 22px;
         }
 
-        .form-item label {
+        label {
             display: block;
-            font-size: 14px;
-            color: #606266;
             margin-bottom: 8px;
-            font-weight: 500;
+            color: #cbd5e1;
+            font-weight: 600;
         }
 
-        .input-wrapper {
+        .password-field {
             position: relative;
         }
 
-        .input-icon {
-            position: absolute;
-            left: 14px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #c0c4cc;
-            font-size: 16px;
+        input, button {
+            font: inherit;
         }
 
         .form-input {
             width: 100%;
-            height: 44px;
-            border: 1px solid #dcdfe6;
-            border-radius: 8px;
-            padding: 0 44px;
-            font-size: 14px;
-            color: #303133;
-            outline: none;
-            transition: all .2s ease;
-            background: #fff;
+            min-height: 54px;
+            padding: 0 16px;
+            border: 1px solid #536581;
+            border-radius: 12px;
+            background: var(--field);
+            color: var(--text);
+            font-size: 16px;
+            caret-color: var(--accent);
         }
 
-        .form-input:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 2px rgba(102, 126, 234, .15);
+        .form-input::placeholder { color: var(--muted); }
+        .password-field .form-input { padding-right: 56px; }
+
+        .form-input:focus, button:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
         }
 
         .toggle-password {
             position: absolute;
-            right: 14px;
-            top: 50%;
-            transform: translateY(-50%);
+            top: 5px;
+            right: 5px;
+            display: grid;
+            place-items: center;
+            width: 44px;
+            height: 44px;
+            padding: 0;
+            border: 0;
+            border-radius: 8px;
+            background: transparent;
+            color: var(--muted);
             cursor: pointer;
-            color: #c0c4cc;
-            font-size: 16px;
         }
 
-        .toggle-password:hover {
-            color: #909399;
+        .toggle-password:hover,
+        .toggle-password:focus-visible {
+            background: #1e3049;
+            color: var(--text);
         }
 
         .login-btn {
             width: 100%;
-            height: 48px;
-            border-radius: 8px;
-            border: none;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: #fff;
-            font-size: 16px;
-            font-weight: 600;
+            min-height: 54px;
+            margin-top: 4px;
+            border: 0;
+            border-radius: 12px;
+            background: linear-gradient(135deg, var(--accent), #3b82f6);
+            color: #070b14;
+            font-weight: 700;
             cursor: pointer;
-            transition: all .2s ease;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, .4);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, .26);
         }
 
-        .login-btn:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 6px 20px rgba(102, 126, 234, .5);
-        }
-
-        .login-btn:active {
-            transform: translateY(0);
-        }
-
-        .login-btn:disabled {
-            opacity: .7;
-            cursor: not-allowed;
-            transform: none;
-        }
+        .login-btn:hover:not(:disabled) { filter: brightness(1.1); }
+        .login-btn:active:not(:disabled) { filter: brightness(.94); }
+        .login-btn:disabled { opacity: .75; cursor: wait; }
 
         .error-msg {
-            background: #fef0f0;
-            border: 1px solid #fbc4c4;
-            color: #f56c6c;
-            padding: 10px 14px;
+            margin: 0 0 16px;
+            padding: 9px 12px;
+            border: 1px solid #86445a;
             border-radius: 8px;
-            font-size: 13px;
-            margin-bottom: 20px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+            background: #321d30;
+            color: #fecdd3;
+            overflow-wrap: anywhere;
         }
 
-        .footer-text {
-            text-align: center;
-            margin-top: 24px;
-            font-size: 12px;
-            color: #c0c4cc;
+        @media (max-width: 860px) {
+            .login-layout {
+                width: min(100%, 520px);
+                grid-template-columns: minmax(0, 1fr);
+                gap: 24px;
+                padding-inline: 0;
+            }
+
+            .login-brand { padding: 0 8px; }
+            .login-brand h1 { font-size: clamp(25px, 7.5vw, 44px); }
+            .login-brand p { margin-top: 8px; }
+            .login-header { margin-bottom: 26px; }
+            .brand-mark { width: 44px; height: 44px; margin-bottom: 14px; border-radius: 12px; }
+            .brand-mark svg { width: 24px; height: 24px; }
         }
 
-        /* SVG Icon inline */
-        svg.icon { width: 18px; height: 18px; fill: currentColor; }
+        @media (max-width: 420px) {
+            #app { padding-inline: 14px; }
+            .login-card { padding-inline: 18px; }
+        }
     </style>
 </head>
 <body>
-<div id="app">
-    <div class="login-container">
-        <div class="login-card">
-            <!-- Header -->
-            <div class="login-header">
-                <div class="login-logo">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M12 2L2 7l10 5 10-5-10-5z"/>
-                        <path d="M2 17l10 5 10-5"/>
-                        <path d="M2 12l10 5 10-5"/>
-                    </svg>
-                </div>
-                <h1>云平台统一认证</h1>
-                <p>K8s Cloud Platform Auth Server</p>
-            </div>
-
-            <!-- Error Message -->
-            <div class="error-msg" v-if="errorMsg">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="#f56c6c">
-                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+<main id="app">
+    <div class="login-layout" v-cloak>
+        <header class="login-brand">
+            <span class="brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" width="30" height="30" fill="none">
+                    <path d="M12 2.2 20.4 7.1v9.8L12 21.8 3.6 16.9V7.1L12 2.2Z"
+                          stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/>
+                    <circle cx="12" cy="12" r="3.2" fill="#fff"/>
                 </svg>
-                <span>{{ errorMsg }}</span>
+            </span>
+            <h1 lang="en">K8s Cloud</h1>
+            <p>集群管理 · 租户管理 · 资源运维</p>
+        </header>
+
+        <section class="login-card" aria-labelledby="login-title">
+            <header class="login-header">
+                <h2 id="login-title">统一认证</h2>
+            </header>
+
+            <div role="alert">
+                <p v-if="errorMsg" class="error-msg">{{ errorMsg }}</p>
             </div>
 
-            <!-- Login Form -->
-            <form @submit.prevent="handleLogin" method="post">
+            <form @submit.prevent="handleLogin" method="post" action="user/login" :aria-busy="loading">
                 <div class="form-item">
-                    <label>用户名</label>
-                    <div class="input-wrapper">
-                        <svg class="input-icon icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                            <path d="M12 12c2.76 0 5-2.24 5-5s-2.24-5-5-5-5 2.24-5 5 2.24 5 5 5zm0 2c-3.33 0-10 1.67-10 5v2h20v-2c0-3.33-6.67-5-10-5z"/>
-                        </svg>
-                        <input type="text" class="form-input" v-model="username" placeholder="请输入用户名" required autocomplete="username">
-                    </div>
+                    <label for="username">用户名</label>
+                    <input id="username" name="username" type="text" class="form-input" v-model="username"
+                           placeholder="请输入用户名" required autocomplete="username">
                 </div>
 
                 <div class="form-item">
-                    <label>密码</label>
-                    <div class="input-wrapper">
-                        <svg class="input-icon icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                            <path d="M18 8h-1V6c0-2.76-2.24-5-5-5S7 3.24 7 6v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm-6 9c-1.1 0-2-.9-2-2s.9-2 2-2 2 .9 2 2-.9 2-2 2zm3.1-9H8.9V6c0-1.71 1.39-3.1 3.1-3.1s3.1 1.39 3.1 3.1v2z"/>
-                        </svg>
-                        <input :type="showPassword ? 'text' : 'password'" class="form-input" v-model="password" placeholder="请输入密码" required autocomplete="current-password">
-                        <span class="toggle-password" @click="showPassword = !showPassword">
-                            <svg v-if="!showPassword" xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="#c0c4cc">
-                                <path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zm0 12c-2.48 0-4.5-2.02-4.5-4.5s2.02-4.5 4.5-4.5 4.5 2.02 4.5 4.5-2.02 4.5-4.5 4.5zm0-7c-1.38 0-2.5 1.12-2.5 2.5s1.12 2.5 2.5 2.5 2.5-1.12 2.5-2.5-1.12-2.5-2.5-2.5z"/>
+                    <label for="password">密码</label>
+                    <div class="password-field">
+                        <input id="password" name="password" :type="showPassword ? 'text' : 'password'"
+                               class="form-input" v-model="password" placeholder="请输入密码"
+                               required autocomplete="current-password">
+                        <button type="button" class="toggle-password" aria-controls="password"
+                                :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                                :title="showPassword ? '隐藏密码' : '显示密码'"
+                                @click="showPassword = !showPassword">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                <template v-if="showPassword">
+                                    <path d="M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8"/>
+                                    <path d="M9.9 5.2A10.8 10.8 0 0 1 12 5c6 0 10 7 10 7a16 16 0 0 1-3 3.6M6.2 6.9A17 17 0 0 0 2 12s4 7 10 7a10 10 0 0 0 4.8-1.3"/>
+                                </template>
+                                <template v-else>
+                                    <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/>
+                                    <circle cx="12" cy="12" r="3"/>
+                                </template>
                             </svg>
-                            <svg v-else xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="#c0c4cc">
-                                <path d="M12 7c2.76 0 5 2.24 5 5 0 .65-.13 1.26-.36 1.83l2.92 2.92c1.51-1.26 2.7-2.89 3.43-4.75-1.73-4.39-6-7.5-11-7.5-1.4 0-2.74.25-3.98.7l2.16 2.16C10.74 7.13 11.35 7 12 7zM2 4.27l2.28 2.28.46.46A11.8 11.8 0 001 12c1.73 4.39 6 7.5 11 7.5 1.55 0 3.03-.3 4.38-.84l.42.42L19.73 22 21 20.73 3.27 3 2 4.27zM7.53 9.8l1.55 1.55c-.05.21-.08.43-.08.65 0 1.66 1.34 3 3 3 .22 0 .44-.03.65-.08l1.55 1.55c-.67.33-1.41.53-2.2.53-2.76 0-5-2.24-5-5 0-.79.2-1.53.53-2.2zm4.31-.78l3.15 3.15.02-.16c0-1.66-1.34-3-3-3l-.17.01z"/>
-                            </svg>
-                        </span>
+                        </button>
                     </div>
                 </div>
 
                 <button type="submit" class="login-btn" :disabled="loading">
-                    <span v-if="!loading">登 录</span>
-                    <el-button :loading="true" circle style="visibility:hidden"></el-button>
-                    <span v-if="loading" style="display:inline-block;">登录中...</span>
+                    {{ loading ? '登录中…' : '登录' }}
                 </button>
             </form>
-
-            <div class="footer-text">Cloud Platform Authentication Service</div>
-        </div>
+        </section>
     </div>
-</div>
+</main>
 
 <script>
 const { createApp, ref, onMounted } = Vue;
+const invalidCredentials = '用户名或密码不正确，请重试';
 
 createApp({
     setup() {
@@ -259,80 +299,57 @@ createApp({
         const loading = ref(false);
 
         onMounted(() => {
-            // 从 URL 参数获取 Spring Security 跳转带过来的错误标记
-            const params = new URLSearchParams(window.location.search);
-            if (params.has('error')) {
-                errorMsg.value = '用户名或密码不正确，请重试';
+            if (new URLSearchParams(window.location.search).has('error')) {
+                errorMsg.value = invalidCredentials;
             }
 
-            // 恢复上次输入的用户名（方便调试）
-            const savedUser = sessionStorage.getItem('_last_username');
-            if (savedUser) username.value = savedUser;
+            username.value = sessionStorage.getItem('_last_username') || '';
         });
 
         async function handleLogin() {
+            if (loading.value || !username.value || !password.value) return;
 
-            if (!username.value || !password.value) return;
             loading.value = true;
             errorMsg.value = '';
-            sessionStorage.setItem('_last_username', username.value);
 
-            const formData = new URLSearchParams();
-            formData.append('username', username.value);
-            formData.append('password', password.value);
             try {
-                api({
+                sessionStorage.setItem('_last_username', username.value);
+                const formData = new URLSearchParams({
+                    username: username.value,
+                    password: password.value
+                });
+
+                // 使用相对路径，保留认证服务的 /auth 上下文路径。
+                const result = await api({
                     method: 'post',
-                    // ⚠️ 相对路径：本页在 context path（/auth/）下，写死 "/user/login" 会打到根上 404
-                    url: "user/login",
+                    url: 'user/login',
                     data: formData,
-                    headers : {
-                        'Content-Type' : 'application/x-www-form-urlencoded;charset=UTF-8'
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
                     }
-                }).then(res => {
-                    let storage = new Storage();
-                    storage.setItem({
-                        name: "userinfo",
-                        value: res.userinfo
-                    })
+                });
 
-                    console.log(res.requestURI)
-                    if (res.requestURI) {
-                        window.location.href=res.requestURI;
-                    }
-                })
+                if (result?.requestURI) {
+                    new Storage().setItem({ name: 'userinfo', value: result.userinfo });
+                    window.location.href = result.requestURI;
+                    return;
+                }
 
-            } catch (e) {
-                this.$message({message:"登录失败",type:"error"})
+                // Spring Security 登录失败后会重定向回带有 error 参数的登录页。
+                const responseUrl = result?.request?.responseURL;
+                errorMsg.value = responseUrl && new URL(responseUrl).searchParams.has('error')
+                    ? invalidCredentials
+                    : '登录失败，请重试';
+            } catch {
+                errorMsg.value = '登录失败，请重试';
             } finally {
                 loading.value = false;
             }
         }
 
-        // function doFormLogin() {
-        //     const form = document.createElement('form');
-        //     form.method = 'POST';
-        //     form.action = 'user/login';
-        //
-        //     const uInput = document.createElement('input');
-        //     uInput.type = 'hidden';
-        //     uInput.name = 'username';
-        //     uInput.value = username.value;
-        //     form.appendChild(uInput);
-        //
-        //     const pInput = document.createElement('input');
-        //     pInput.type = 'hidden';
-        //     pInput.name = 'password';
-        //     pInput.value = password.value;
-        //     form.appendChild(pInput);
-        //
-        //     document.body.appendChild(form);
-        //     form.submit();
-        // }
-
         return { username, password, showPassword, errorMsg, loading, handleLogin };
     }
-}).use(ElementPlus).mount('#app');
+}).mount('#app');
 </script>
 </body>
 </html>

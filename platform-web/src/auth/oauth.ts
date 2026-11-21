@@ -154,7 +154,7 @@ export async function login(): Promise<void> {
   // 注：曾考虑加 prompt=login 作"换用户"的兜底。本平台 SAS 7.0.5 只校验该参数值、
   // 并未用它强制重新认证（整份 jar 无 requireReauthentication），加了也不会生效——
   // 「换用户」的正确解法是登出时失效服务端会话（见 logout），不在此处。
-  window.location.href = `${ISSUER}/oauth2/authorize?${params.toString()}`
+  window.location.replace(`${ISSUER}/oauth2/authorize?${params.toString()}`)
 }
 
 /** 从 id_token（JWT）中解出用户信息（不校验签名，仅展示用）。
