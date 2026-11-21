@@ -60,6 +60,15 @@ const allocDialogVisible = ref(false)
 const clusterNameMap = computed(() => new Map(clusters.value.map((c) => [c.clusterId, c.clusterName])))
 const templateNameMap = computed(() => new Map(templates.value.map((t) => [t.id, t.name])))
 
+function openAllocation(): void {
+  allocDialogVisible.value = true
+}
+
+function onAllocated(): void {
+  activeTab.value = 'ns'
+  void loadAllocations()
+}
+
 async function loadAllocations(): Promise<void> {
   if (!props.tenantId) return
   allocLoading.value = true
@@ -277,8 +286,8 @@ async function onRemoveMember(row: TenantMemberView): Promise<void> {
 
 function refreshAll(): void {
   if (!showManage.value) return
-  void loadAllocations()
-  void loadMembers()
+  if (!props.delegate || can(apiCodes.allocationList)) void loadAllocations()
+  if (!props.delegate || canManageMembers.value || can(apiCodes.tenantOverviewView)) void loadMembers()
 }
 
 // tenantId 变化（切租户 / 列表换行）→ 重拉两个 tab 数据
@@ -288,7 +297,7 @@ const overviewRef = ref<{ reloadAll: () => void } | null>(null)
 function reloadOverview(): void {
   overviewRef.value?.reloadAll()
 }
-defineExpose({ reloadOverview, loadAllocations })
+defineExpose({ reloadOverview, openAllocation })
 
 watch(activeTab, (t) => {
   if (t === 'members') void loadRoleCatalog()
@@ -317,7 +326,7 @@ watch(activeTab, (t) => {
 
       <el-tab-pane v-if="showManage" label="命名空间分配" name="ns">
         <div class="toolbar">
-          <el-button v-if="can('platform:allocation:manage')" type="primary" @click="allocDialogVisible = true">
+          <el-button v-if="!delegate && can(apiCodes.allocationManage)" type="primary" @click="openAllocation">
             分配命名空间
           </el-button>
           <el-button @click="loadAllocations">刷新</el-button>
@@ -433,7 +442,7 @@ watch(activeTab, (t) => {
       </el-tab-pane>
     </el-tabs>
 
-    <AllocateNamespaceDialog v-model="allocDialogVisible" :tenant-id="tenantId" @success="loadAllocations" />
+    <AllocateNamespaceDialog v-model="allocDialogVisible" :tenant-id="tenantId" append-to-body @success="onAllocated" />
 
     <!-- 添加成员：搜索平台用户（用户名/邮箱/显示名 客户端过滤，排除已在成员） -->
     <el-dialog v-model="addDialogVisible" title="添加成员" width="560px">
