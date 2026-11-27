@@ -64,7 +64,7 @@ public class HarborInstallRequest {
     /** 不走代理的地址（逗号分隔）；留空 = 平台给一份「集群内 + 内网」的默认值 */
     private String noProxy;
 
-    /** 数据库来源：internal / external（**只能在首次安装时选**） */
+    /** 数据库来源：internal / external */
     private String databaseMode;
 
     private String dbHost;
@@ -85,7 +85,7 @@ public class HarborInstallRequest {
      */
     private String dbPassword;
 
-    /** Redis 来源：internal / external（只能在首次安装时选） */
+    /** Redis 来源：internal / external */
     private String redisMode;
 
     /** 外部 Redis 地址 host:port（sentinel 列表暂不支持） */
@@ -96,6 +96,9 @@ public class HarborInstallRequest {
 
     /** 外部 Redis 口令：同 dbPassword，只作入参 */
     private String redisPassword;
+
+    /** 暂停 Core、Jobservice 和 Registry，供管理员手工恢复 PostgreSQL。 */
+    private Boolean migrationPaused;
 
     /** 老调用与默认值：nodePort 模式 + 30002 + 80 + 内置数据库/Redis */
     public HarborInstallRequest(String host) {

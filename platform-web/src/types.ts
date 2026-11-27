@@ -1253,7 +1253,7 @@ export interface K8sHarborInstall {
   nodePort?: number | null
   /** loadBalancer 模式（默认 80） */
   port?: number | null
-  /** 数据库来源：只能在首次安装时选 */
+  /** 数据库来源 */
   databaseMode: 'internal' | 'external'
   dbHost?: string
   dbPort?: number | null
@@ -1263,13 +1263,15 @@ export interface K8sHarborInstall {
   dbSslMode?: 'disable' | 'require' | 'verify-ca' | 'verify-full'
   /** 仅入参：首次安装必填，编辑留空 = 沿用已有 Secret */
   dbPassword?: string
-  /** Redis 来源：只能在首次安装时选 */
+  /** Redis 来源 */
   redisMode: 'internal' | 'external'
   /** 外部 Redis 地址 host:port（sentinel 暂不支持） */
   redisAddr?: string
   redisUsername?: string
   /** 仅入参：首次安装必填，编辑留空 = 沿用已有 Secret */
   redisPassword?: string
+  /** 暂停 Harbor 应用，允许从外部切换到内置数据源 */
+  migrationPaused?: boolean
   /** 对外用 HTTPS：route 模式在网关 443 终止；另两种用 chart 自带 TLS */
   https?: boolean
   httpsPort?: number | null

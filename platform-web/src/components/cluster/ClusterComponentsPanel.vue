@@ -612,6 +612,10 @@ const applyDialog = ref<ApplyDialog>({
   imageSource: 'PLATFORM' as 'PLATFORM' | 'OFFICIAL',
   imageMirroring: true,
 })
+
+const initialHarbor = computed<K8sHarborInstall>(() => JSON.parse(applyDialog.value.initialHarbor))
+const canSwitchHarborSource = computed(() =>
+  !!initialHarbor.value.migrationPaused && !!applyDialog.value.harbor.migrationPaused)
 function openInstall(row: K8sComponentStatus): void {
   openApply(row, 'INSTALL')
 }
@@ -823,7 +827,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     s3Endpoint: seaweedMerged.s3Endpoint || EMPTY_SEAWEED.s3Endpoint,
   }
   // Harbor：编辑时回填上次成功的域名；安装时留空必填
-  const harborMerged: K8sHarborInstall = editing && row.harborCurrent
+  const harborMerged: K8sHarborInstall = action !== 'INSTALL' && row.harborCurrent
     ? { ...EMPTY_HARBOR, ...row.harborCurrent }
     : { ...EMPTY_HARBOR }
   const harbor: K8sHarborInstall = {
@@ -837,6 +841,7 @@ function openApply(row: K8sComponentStatus, action: 'INSTALL' | 'UPGRADE' | 'EDI
     dbName: harborMerged.dbName || 'registry',
     dbSslMode: harborMerged.dbSslMode || 'disable',
     redisMode: harborMerged.redisMode || 'internal',
+    migrationPaused: !!harborMerged.migrationPaused,
     https: !!harborMerged.https,
     httpsPort: harborMerged.httpsPort ?? 443,
     httpsNodePort: harborMerged.httpsNodePort ?? 30443,
@@ -976,6 +981,11 @@ function confirmApply(): void {
   }
   if (d.showHarbor) {
     const h = d.harbor
+    if (d.action !== 'INSTALL' && !canSwitchHarborSource.value
+        && (h.databaseMode !== initialHarbor.value.databaseMode || h.redisMode !== initialHarbor.value.redisMode)) {
+      ElMessage.error('切换数据源时请保持「暂停应用以迁移数据」开启')
+      return
+    }
     const host = h.host.trim()
     if (host && !HARBOR_HOST_RE.test(host)) {
       ElMessage.error('Harbor 访问地址填 IP 或域名（不带 http://、路径与端口）')
@@ -1870,11 +1880,22 @@ function copyImage(text: string): void {
       </div>
 
       <!-- 2. 数据库（内置时存储设置紧跟在这里） -->
+      <div v-if="applyDialog.showHarbor && applyDialog.action !== 'INSTALL'" class="cc-form-row">
+        <span class="cc-form-label">数据迁移</span>
+        <div class="cc-form-control">
+          <el-checkbox v-model="applyDialog.harbor.migrationPaused">暂停应用以迁移数据</el-checkbox>
+          <div class="cc-form-hint">
+            先暂停后台任务，勾选并保存。暂停完成后导出旧数据库，再切到内置来源并保持勾选。
+            将数据导入内置 PostgreSQL 并验证后，取消勾选并保存以恢复应用。
+          </div>
+        </div>
+      </div>
       <div v-if="applyDialog.showHarbor" class="cc-form-row">
         <span class="cc-form-label">数据库</span>
         <div class="cc-form-control">
           <el-select v-model="applyDialog.harbor.databaseMode" style="width: 100%"
-                     :disabled="applyDialog.action !== 'INSTALL'">
+                     :disabled="applyDialog.action !== 'INSTALL'
+                       && (!canSwitchHarborSource || initialHarbor.databaseMode !== 'external')">
             <el-option label="Chart 内置 PostgreSQL（默认）" value="internal" />
             <el-option label="外部 PostgreSQL" value="external" />
           </el-select>
@@ -1899,15 +1920,14 @@ function copyImage(text: string): void {
           <HarborStorageFields v-else label="内置 PostgreSQL 存储"
                                :storage-class="hv(hk.dbSc)" :size="hv(hk.dbSize)"
                                :options="applyDialog.storageClasses"
-                               :storage-class-disabled="applyDialog.action === 'EDIT'"
-                               :size-disabled="applyDialog.action === 'EDIT'"
+                               :storage-class-disabled="applyDialog.action === 'EDIT' && initialHarbor.databaseMode === 'internal'"
+                               :size-disabled="applyDialog.action === 'EDIT' && initialHarbor.databaseMode === 'internal'"
                                size-placeholder="5Gi"
                                hint="不创建外部库时，Harbor 用这块 PVC 存元数据"
                                @update:storage-class="(v: string) => setHv(hk.dbSc, v)"
                                @update:size="(v: string) => setHv(hk.dbSize, v)" />
           <div class="cc-form-hint">
             外部库要先建好库（默认 registry）与账号并授权，不再创建内置 PostgreSQL 的 StatefulSet 与 PVC。
-            来源只能在首次安装时选，编辑时锁定（内置 ↔ 外部需要迁移数据）。
             口令由平台写进 Secret，不进 values 快照
           </div>
         </div>
@@ -1918,8 +1938,9 @@ function copyImage(text: string): void {
         <span class="cc-form-label">Redis</span>
         <div class="cc-form-control">
           <el-select v-model="applyDialog.harbor.redisMode" style="width: 100%"
-                     :disabled="applyDialog.action !== 'INSTALL'">
-            <el-option label="Chart 内置 Redis（默认）" value="internal" />
+                     :disabled="applyDialog.action !== 'INSTALL'
+                       && (!canSwitchHarborSource || initialHarbor.redisMode !== 'external')">
+            <el-option label="Chart 内置 Valkey（兼容 Redis）" value="internal" />
             <el-option label="外部 Redis" value="external" />
           </el-select>
           <div v-if="applyDialog.harbor.redisMode === 'external'" class="cc-harbor-ext">
@@ -1934,8 +1955,8 @@ function copyImage(text: string): void {
           <HarborStorageFields v-else label="内置 Redis 存储"
                                :storage-class="hv(hk.redisSc)" :size="hv(hk.redisSize)"
                                :options="applyDialog.storageClasses"
-                               :storage-class-disabled="applyDialog.action === 'EDIT'"
-                               :size-disabled="applyDialog.action === 'EDIT'"
+                               :storage-class-disabled="applyDialog.action === 'EDIT' && initialHarbor.redisMode === 'internal'"
+                               :size-disabled="applyDialog.action === 'EDIT' && initialHarbor.redisMode === 'internal'"
                                size-placeholder="1Gi"
                                @update:storage-class="(v: string) => setHv(hk.redisSc, v)"
                                @update:size="(v: string) => setHv(hk.redisSize, v)" />

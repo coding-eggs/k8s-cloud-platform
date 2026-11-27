@@ -2281,7 +2281,71 @@ class ComponentInstallServiceTest {
     }
 
     @Test
-    void harborSourceCannotSwitchOnUpgrade() {
+    void harborSwitchesToInternalOnlyWhileApplicationsArePaused() throws Exception {
+        when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
+        when(clusterService.requireName("c1")).thenReturn("test-cluster");
+        when(client.applyComponent(anyString(), anyString(), anyString(), any())).thenReturn(successResult());
+        PlatformComponentOperation last = new PlatformComponentOperation();
+        last.setToVersion("1.19.4");
+        last.setValuesSnapshot("""
+                {"platform-harbor":{"database":{"type":"external","external":{"existingSecret":"old-db"}},
+                  "redis":{"type":"external"},"core":{"replicas":2}},
+                 "__platform":{"harbor":{"databaseMode":"external","dbHost":"pg.internal","dbUsername":"harbor",
+                   "redisMode":"external","redisAddr":"redis.internal:6379"}}}
+                """);
+        when(mapper.selectLatestSuccess("c1", "harbor")).thenReturn(last);
+
+        ComponentApplyRequest req = harborRequest(new HarborInstallRequest("10.0.0.5"));
+        req.setAction("UPGRADE");
+        assertThatThrownBy(() -> service().apply(req, "admin")).hasMessageContaining("暂停");
+
+        req.getHarbor().setMigrationPaused(true);
+        assertThatThrownBy(() -> service().apply(req, "admin")).hasMessageContaining("暂停");
+
+        HarborInstallRequest pause = new HarborInstallRequest("10.0.0.5");
+        pause.setDatabaseMode("external");
+        pause.setRedisMode("external");
+        pause.setMigrationPaused(true);
+        ComponentApplyRequest pauseRequest = harborRequest(pause);
+        pauseRequest.setAction("UPGRADE");
+        service().apply(pauseRequest, "admin");
+
+        ArgumentCaptor<List<ReleaseInstallSpecDTO>> specs = ArgumentCaptor.forClass(List.class);
+        verify(client, timeout(3000)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        var json = new com.fasterxml.jackson.databind.ObjectMapper();
+        var values = json.valueToTree(specs.getValue().getFirst().getValues());
+        assertThat(values.at("/database/type").asText()).isEqualTo("external");
+        assertThat(values.at("/core/replicas").asInt(-1)).isZero();
+        ArgumentCaptor<PlatformComponentOperation> operation = ArgumentCaptor.forClass(PlatformComponentOperation.class);
+        verify(mapper).insert(operation.capture());
+        last.setValuesSnapshot(operation.getValue().getValuesSnapshot());
+
+        service().apply(req, "admin");
+        verify(client, timeout(3000).times(2)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        values = json.valueToTree(specs.getValue().getFirst().getValues());
+        assertThat(values.at("/database/type").asText()).isEqualTo("internal");
+        assertThat(values.at("/redis/type").asText()).isEqualTo("internal");
+        assertThat(values.at("/database/external/existingSecret").asText()).isEmpty();
+        for (String app : List.of("core", "registry", "jobservice")) {
+            assertThat(values.at("/" + app + "/replicas").asInt(-1)).isZero();
+        }
+        verify(mapper, org.mockito.Mockito.times(2)).insert(operation.capture());
+        last.setValuesSnapshot(operation.getValue().getValuesSnapshot());
+        var snapshot = json.readTree(last.getValuesSnapshot());
+        assertThat(snapshot.at("/__platform/harbor/migrationPaused").asBoolean()).isTrue();
+        assertThat(snapshot.at("/platform-harbor/core/replicas").asInt()).isEqualTo(2);
+
+        req.getHarbor().setMigrationPaused(false);
+        service().apply(req, "admin");
+        verify(client, timeout(3000).times(3)).applyComponent(anyString(), anyString(), anyString(), specs.capture());
+        values = json.valueToTree(specs.getValue().getFirst().getValues());
+        assertThat(values.at("/core/replicas").asInt()).isEqualTo(2);
+        assertThat(values.at("/jobservice/replicas").isMissingNode()).isTrue();
+        verify(harborRegistry, timeout(3000).times(1)).ensureAll("c1", "10.0.0.5:30002", false, false);
+    }
+
+    @Test
+    void harborCannotSwitchToExternalOnUpgrade() {
         when(clusterService.requireProfile("c1")).thenReturn("MANAGEMENT");
         when(mapper.countRunning("c1", "harbor")).thenReturn(0);
         PlatformComponentOperation last = new PlatformComponentOperation();

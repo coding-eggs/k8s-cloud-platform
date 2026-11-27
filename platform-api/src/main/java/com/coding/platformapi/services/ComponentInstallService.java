@@ -322,9 +322,11 @@ public class ComponentInstallService {
         Long id = op.getId();
         // worker 线程没有请求上下文：把发起人的 Authorization 显式带进去（否则 k8s-server 401）
         String authorization = K8sServerGateway.currentAuthorization();
+        List<ReleaseSpec> releasesToApply = harbor != null && Boolean.TRUE.equals(harbor.getMigrationPaused())
+                ? pauseHarborApplications(releases) : releases;
         executor.submit(() -> K8sServerGateway.runAs(authorization,
                 () -> run(id, req.getClusterId(), req.getComponentCode(), op.getAction(),
-                        List.copyOf(releases), recipe.platformAlerting(), alertWebhookUrl, thanos, otel,
+                        List.copyOf(releasesToApply), recipe.platformAlerting(), alertWebhookUrl, thanos, otel,
                         seaweed, harbor,
                         resolvedOtel == null ? null : resolvedOtel.tempoPlatform(),
                         imageRegistryOfThisInstall)));
@@ -781,6 +783,7 @@ public class ComponentInstallService {
             h.put("redisMode", harbor.getRedisMode());
             h.put("redisAddr", harbor.getRedisAddr());
             h.put("redisUsername", harbor.getRedisUsername());
+            h.put("migrationPaused", Boolean.TRUE.equals(harbor.getMigrationPaused()));
             // HTTPS 开关要记：编辑表单回填用。证书/私钥**不记**（只在本次请求里流动）
             h.put("https", Boolean.TRUE.equals(harbor.getHttps()));
             h.put("httpsPort", harbor.getHttpsPort());
@@ -1326,6 +1329,8 @@ public class ComponentInstallService {
         out.setRedisUsername(firstNonBlank(requested == null ? null : requested.getRedisUsername(),
                 asString(prev.get("redisUsername"))));
         out.setRedisPassword(requested == null ? null : requested.getRedisPassword());
+        out.setMigrationPaused(requested != null && requested.getMigrationPaused() != null
+                ? requested.getMigrationPaused() : Boolean.TRUE.equals(prev.get("migrationPaused")));
         // HTTPS：表单 > 上次快照；证书/私钥**只**来自本次请求（快照里没有）
         boolean https = requested != null && requested.getHttps() != null
                 ? requested.getHttps()
@@ -1475,19 +1480,16 @@ public class ComponentInstallService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "不支持的 Harbor Redis 来源：" + redisMode + "（internal / external）");
         }
-        if (!"INSTALL".equals(action) && previousPlatform.get("harbor") instanceof Map<?, ?> prev) {
-            String prevDb = asString(prev.get("databaseMode"));
-            if (prevDb != null && !prevDb.equals(dbMode)) {
-                throw new CloudPlatformException(EnumResponseType.ERROR,
-                        "数据库来源只能在首次安装时选择（内置 ↔ 外部需要迁移数据）");
-            }
-            String prevRedis = asString(prev.get("redisMode"));
-            if (prevRedis != null && !prevRedis.equals(redisMode)) {
-                throw new CloudPlatformException(EnumResponseType.ERROR,
-                        "Redis 来源只能在首次安装时选择（内置 ↔ 外部需要迁移数据）");
-            }
-        }
         boolean install = "INSTALL".equals(action);
+        boolean paused = Boolean.TRUE.equals(h.getMigrationPaused());
+        if (install && paused) {
+            throw new CloudPlatformException(EnumResponseType.ERROR, "请通过编辑已安装的 Harbor 暂停应用");
+        }
+        if (!install && previousPlatform.get("harbor") instanceof Map<?, ?> prev) {
+            boolean staysPaused = paused && Boolean.TRUE.equals(prev.get("migrationPaused"));
+            requireHarborSourceChange("数据库", asString(prev.get("databaseMode")), dbMode, staysPaused);
+            requireHarborSourceChange("Redis", asString(prev.get("redisMode")), redisMode, staysPaused);
+        }
         if ("external".equals(dbMode)) {
             if (h.getDbHost() == null || h.getDbHost().isBlank()
                     || !HARBOR_HOST.matcher(h.getDbHost()).matches()) {
@@ -1524,6 +1526,20 @@ public class ComponentInstallService {
                 throw new CloudPlatformException(EnumResponseType.ERROR,
                         "请填写外部 Redis 口令（首次安装必须填；编辑时留空 = 不改）");
             }
+        }
+    }
+
+    private static void requireHarborSourceChange(String label, String previous, String requested, boolean staysPaused) {
+        if (previous == null || previous.equals(requested)) {
+            return;
+        }
+        if (!"internal".equals(requested)) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "外部" + label + "只能在首次安装时选择");
+        }
+        if (!staysPaused) {
+            throw new CloudPlatformException(EnumResponseType.ERROR,
+                    "切换到内置" + label + "前，请先保存「暂停应用以迁移数据」，切换期间保持暂停");
         }
     }
 
@@ -1678,6 +1694,9 @@ public class ComponentInstallService {
             ext.put("sslmode", h.getDbSslMode());
             ext.put("existingSecret", HARBOR_EXTERNAL_DB_SECRET);
             values.put("database", Map.of("type", "external", "external", ext));
+        } else {
+            // Core 会无条件优先读取 external.existingSecret，必须清掉从旧快照继承的引用。
+            values.put("database", Map.of("type", "internal", "external", Map.of("existingSecret", "")));
         }
         // 外部 Redis：chart 的 helper 用 lookup 读 Secret（REDIS_PASSWORD / REDIS_USERNAME）
         if ("external".equals(h.getRedisMode())) {
@@ -1688,6 +1707,8 @@ public class ComponentInstallService {
             }
             ext.put("existingSecret", HARBOR_EXTERNAL_REDIS_SECRET);
             values.put("redis", Map.of("type", "external", "external", ext));
+        } else {
+            values.put("redis", Map.of("type", "internal", "external", Map.of("existingSecret", "")));
         }
 
         List<ReleaseSpec> out = new ArrayList<>(releases.size());
@@ -1697,6 +1718,18 @@ public class ComponentInstallService {
                     r.preserveUnknownPlaceholders(), r.primary(), r.appVersion(), r.applyMode()));
         }
         return out;
+    }
+
+    /** 暂停覆盖只用于下发，快照保留恢复时所需的原副本数。 */
+    private static List<ReleaseSpec> pauseHarborApplications(List<ReleaseSpec> releases) {
+        Map<String, Object> overrides = Map.of(
+                "core", Map.of("replicas", 0),
+                "jobservice", Map.of("replicas", 0),
+                "registry", Map.of("replicas", 0),
+                "enableMigrateHelmHook", false);
+        return releases.stream().map(r -> new ReleaseSpec(r.releaseName(), r.namespace(), r.chartCode(),
+                r.chartVersion(), DeepMerge.merge(r.contractValues(), overrides), r.editableValues(),
+                r.preserveUnknownPlaceholders(), r.primary(), r.appVersion(), r.applyMode())).toList();
     }
 
     /**
@@ -2129,7 +2162,7 @@ public class ComponentInstallService {
             if (gatewayNote != null && postInstallNote == null) {
                 postInstallNote = gatewayNote;
             }
-            if (result.isSuccess() && "harbor".equals(componentCode)) {
+            if (result.isSuccess() && harbor != null && !Boolean.TRUE.equals(harbor.getMigrationPaused())) {
                 try {
                     // host 直接来自本次安装参数：钩子在写 SUCCESS 之前跑，harborHost() 还读不到记录
                     // INSTALL 强制重建：手工卸载后同地址重装时，旧凭据还在但新 Harbor 里没有那个 robot

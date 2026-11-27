@@ -442,6 +442,7 @@ public class ClusterComponentService {
         cur.setRedisMode(asString(m.get("redisMode")));
         cur.setRedisAddr(asString(m.get("redisAddr")));
         cur.setRedisUsername(asString(m.get("redisUsername")));
+        cur.setMigrationPaused(Boolean.TRUE.equals(m.get("migrationPaused")));
         // 这几个漏过：表单回显时会「填了又变回去」，重放还可能把 https/代理丢掉
         cur.setHttps(Boolean.TRUE.equals(m.get("https")));
         cur.setHttpsPort(asInt(m.get("httpsPort")));
