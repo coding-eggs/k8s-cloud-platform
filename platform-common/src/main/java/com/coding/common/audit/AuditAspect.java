@@ -104,9 +104,12 @@ public class AuditAspect {
                 ? user.getUsername() : sessionUsername());
         r.setActorDisplayName(user == null ? null : user.getDisplayName());
 
-        r.setTargetName(targetResolver.resolveTarget(pjp, auditable.target()));
+        var resolvedTarget = targetResolver.takeResolvedTarget();
+        r.setTargetName(resolvedTarget != null ? resolvedTarget.name()
+                : targetResolver.resolveTarget(pjp, auditable.target()));
 
-        AuditTargetResolver.Scope scope = targetResolver.resolveScope(pjp, auditable.scope());
+        AuditTargetResolver.Scope scope = resolvedTarget != null ? resolvedTarget.scope()
+                : targetResolver.resolveScope(pjp, auditable.scope());
         // tenantId：参数里的优先（代操作时那是「被操作的租户」），退而取 token 租户帽（spec §5.6）
         r.setTenantId(scope.tenantId() != null ? scope.tenantId() : authContext.hatTenantId());
         r.setClusterId(scope.clusterId());

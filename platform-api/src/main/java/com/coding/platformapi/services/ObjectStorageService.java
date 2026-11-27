@@ -1,5 +1,7 @@
 package com.coding.platformapi.services;
 
+import com.coding.common.audit.AuditTargetResolver;
+
 import com.coding.common.exception.CloudPlatformException;
 import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.objectstorage.ObjectBucketStatDTO;
@@ -319,8 +321,10 @@ public class ObjectStorageService {
             throw new CloudPlatformException(EnumResponseType.ERROR,
                     "文件超过 " + properties.getMaxUploadMb() + "MB，控制台不支持上传，请用 SDK/客户端直连");
         }
+        String key = requireKey(req.getKey());
+        setObjectAuditTarget(bucket, key);
         s3.uploadObject(bucket.getClusterId(), endpoint(bucket.getClusterId()), bucket.getBucket(),
-                requireKey(req.getKey()), req.getContentType(), size, in);
+                key, req.getContentType(), size, in);
     }
 
     /**
@@ -356,8 +360,15 @@ public class ObjectStorageService {
     /** 删除单个对象（v1 不做按前缀批量删：S3 的"目录"只是前缀，误点会删一片） */
     public void deleteObject(ObjectStorageObjectRef req, String tenantId) {
         PlatformObjectBucket bucket = requireBucket(req.getBucketId(), tenantId);
+        String key = requireKey(req.getKey());
+        setObjectAuditTarget(bucket, key);
         s3.deleteObject(bucket.getClusterId(), endpoint(bucket.getClusterId()),
-                bucket.getBucket(), requireKey(req.getKey()));
+                bucket.getBucket(), key);
+    }
+
+    private static void setObjectAuditTarget(PlatformObjectBucket bucket, String key) {
+        AuditTargetResolver.setResolvedTarget(bucket.getBucket() + "/" + key,
+                new AuditTargetResolver.Scope(bucket.getTenantId(), bucket.getClusterId(), null));
     }
 
     public ObjectStatDTO statObject(ObjectStorageObjectRef req, String tenantId) {

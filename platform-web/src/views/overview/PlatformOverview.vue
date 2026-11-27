@@ -21,6 +21,7 @@ import InventoryStrip, { type InventoryItem } from '@/components/overview/Invent
 import { podSegments, segmentsOf, type Segment, workloadSegments as workloadSegmentsOf } from '@/components/overview/labels'
 import type { K8sCluster, NamespaceAllocation, PlatformTenant } from '@/types'
 import type { PlatformOverview } from '@/types/overview'
+import { clusterConnectionStatus } from '@/utils/format'
 
 const perm = usePermission()
 const allocDialogVisible = ref(false)
@@ -119,15 +120,6 @@ const stats = computed(() => [
   { label: '租户', value: tenants.value.length, sub: `启用 ${enabledTenants.value}` },
   { label: '命名空间分配', value: allocations.value.length, sub: '跨集群总计' },
 ])
-
-function statusTag(status?: K8sCluster['status']): { type: 'success' | 'danger' | 'info' | 'warning'; text: string } {
-  switch (status) {
-    case 'CONNECTED': return { type: 'success', text: '已连接' }
-    case 'ERROR': return { type: 'danger', text: '错误' }
-    case 'CONNECTING': return { type: 'warning', text: '连接中' }
-    default: return { type: 'info', text: status ?? '未知' }
-  }
-}
 
 const quickActions = computed(() =>
   [
@@ -237,16 +229,22 @@ onMounted(load)
     <h3 class="section-title">集群状态</h3>
     <el-table :data="clusters" class="panel" empty-text="还没有接入集群">
       <el-table-column prop="clusterName" label="名称" min-width="180" />
-      <el-table-column label="状态" width="150">
+      <el-table-column label="连接状态" width="150">
         <template #default="{ row }">
-          <el-tag :type="statusTag(row.status).type" size="small" effect="plain">{{ statusTag(row.status).text }}</el-tag>
+          <el-tag :type="clusterConnectionStatus(row.enabled, row.status).type" size="small" effect="plain">
+            {{ clusterConnectionStatus(row.enabled, row.status).label }}
+          </el-tag>
         </template>
       </el-table-column>
       <el-table-column label="版本" width="120">
         <template #default="{ row }">{{ row.version || '—' }}</template>
       </el-table-column>
-      <el-table-column label="启用" width="90">
-        <template #default="{ row }">{{ row.enabled === 1 ? '是' : '否' }}</template>
+      <el-table-column label="管理状态" width="100">
+        <template #default="{ row }">
+          <el-tag :type="row.enabled === 1 ? 'success' : 'info'" size="small" effect="plain">
+            {{ row.enabled === 1 ? '已启用' : '已禁用' }}
+          </el-tag>
+        </template>
       </el-table-column>
       <el-table-column prop="description" label="说明" min-width="200" show-overflow-tooltip />
       <el-table-column label="操作" width="100" fixed="right">

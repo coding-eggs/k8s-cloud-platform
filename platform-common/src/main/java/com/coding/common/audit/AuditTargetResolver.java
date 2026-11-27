@@ -9,6 +9,8 @@ import org.springframework.expression.Expression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.util.StringUtils;
+import org.springframework.web.context.request.RequestAttributes;
+import org.springframework.web.context.request.RequestContextHolder;
 
 import java.lang.reflect.Method;
 
@@ -37,11 +39,33 @@ public class AuditTargetResolver {
     private static final String FIELD_CLUSTER_ID = "clusterId";
 
     private static final String FIELD_NAMESPACE = "namespace";
+    private static final String RESOLVED_TARGET_ATTRIBUTE = AuditTargetResolver.class.getName() + ".resolvedTarget";
 
     private final SpelExpressionParser parser = new SpelExpressionParser();
 
     /** 审计上下文三元组；任一取不到即为 null。 */
     public record Scope(String tenantId, String clusterId, String namespace) {
+    }
+
+    record ResolvedTarget(String name, Scope scope) {
+    }
+
+    /** 业务层完成权限校验后，可用实际目标覆盖客户端参数中的审计归属。 */
+    public static void setResolvedTarget(String name, Scope scope) {
+        RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+        if (attrs != null) {
+            attrs.setAttribute(RESOLVED_TARGET_ATTRIBUTE, new ResolvedTarget(name, scope), RequestAttributes.SCOPE_REQUEST);
+        }
+    }
+
+    ResolvedTarget takeResolvedTarget() {
+        RequestAttributes attrs = RequestContextHolder.getRequestAttributes();
+        if (attrs == null || !(attrs.getAttribute(RESOLVED_TARGET_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST)
+                instanceof ResolvedTarget target)) {
+            return null;
+        }
+        attrs.removeAttribute(RESOLVED_TARGET_ATTRIBUTE, RequestAttributes.SCOPE_REQUEST);
+        return target;
     }
 
     /**

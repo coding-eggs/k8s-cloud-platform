@@ -1,18 +1,30 @@
 package com.coding.platformapi.services;
 
+import com.coding.common.audit.AuditAspect;
+import com.coding.common.audit.AuditRecorder;
+import com.coding.common.audit.AuditTargetResolver;
 import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.security.AuthContext;
 import com.coding.data.mapper.system.PlatformObjectBucketMapper;
 import com.coding.data.mapper.system.PlatformObjectCredentialMapper;
 import com.coding.data.mapper.system.PlatformObjectQuotaMapper;
 import com.coding.data.models.system.PlatformObjectBucket;
+import com.coding.data.models.system.PlatformAuditLog;
 import com.coding.data.models.system.PlatformObjectQuota;
 import com.coding.platformapi.configs.ObjectStorageProperties;
+import com.coding.platformapi.controllers.ObjectStorageController;
 import com.coding.platformapi.k8s.K8sObjectStorageClient;
 import com.coding.platformapi.models.ObjectStorageCreateBucket;
+import com.coding.platformapi.models.ObjectStorageObjectRef;
 import com.coding.platformapi.models.ObjectStorageQuery;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
+import org.springframework.aop.aspectj.annotation.AspectJProxyFactory;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.util.List;
 
@@ -296,6 +308,51 @@ class ObjectStorageServiceTest {
         verify(s3).deleteObject("c1",
                 com.coding.platformapi.components.ComponentRecipeCatalog.seaweedS3InClusterEndpoint(),
                 "t-aaaa-logs", "logs/a.txt");
+    }
+
+    @Test
+    void writesObjectAuditWithTheAuthorizedBucketsScopeAndFullKey() throws Exception {
+        when(buckets.selectById("obk1")).thenReturn(row("obk1", "t_acme", "t-aaaa-logs"));
+        AuthContext auth = mock(AuthContext.class);
+        AuditRecorder recorder = mock(AuditRecorder.class);
+        ObjectStorageController controller = new ObjectStorageController(service);
+        ReflectionTestUtils.setField(controller, "auth", auth);
+        AspectJProxyFactory factory = new AspectJProxyFactory(controller);
+        factory.addAspect(new AuditAspect(recorder, auth, new AuditTargetResolver()));
+        ObjectStorageController audited = factory.getProxy();
+        MockHttpServletRequest http = new MockHttpServletRequest("POST", "/object-storage/objects/upload");
+        http.setContent(new byte[]{1});
+        RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(http));
+        try {
+            String key = "logs/" + "x".repeat(260);
+            audited.upload("obk1", "/" + key, 1L, null, null, http);
+            audited.deleteObject(new ObjectStorageObjectRef("client-cluster", null, "obk1", key));
+            when(auth.effectiveTenantId("t_other")).thenReturn("t_other");
+            assertThatThrownBy(() -> audited.deleteObject(
+                    new ObjectStorageObjectRef("client-cluster", "t_other", "obk1", key)))
+                    .hasMessageContaining("无权");
+
+            var records = ArgumentCaptor.forClass(PlatformAuditLog.class);
+            verify(recorder, org.mockito.Mockito.times(3)).record(records.capture());
+            assertThat(records.getAllValues()).satisfiesExactly(
+                    entry -> assertObjectAudit(entry, "object:upload", key),
+                    entry -> assertObjectAudit(entry, "object:delete", key),
+                    entry -> {
+                        assertThat(entry.getResult()).isEqualTo("FAILED");
+                        assertThat(entry.getClusterId()).isNull();
+                        assertThat(entry.getTargetName()).isEqualTo(key);
+                    });
+        } finally {
+            RequestContextHolder.resetRequestAttributes();
+        }
+    }
+
+    private static void assertObjectAudit(PlatformAuditLog entry, String action, String key) {
+        assertThat(entry.getResult()).isEqualTo("SUCCESS");
+        assertThat(entry.getAction()).isEqualTo(action);
+        assertThat(entry.getTenantId()).isEqualTo("t_acme");
+        assertThat(entry.getClusterId()).isEqualTo("c1");
+        assertThat(entry.getTargetName()).isEqualTo("t-aaaa-logs/" + key);
     }
 
     @Test

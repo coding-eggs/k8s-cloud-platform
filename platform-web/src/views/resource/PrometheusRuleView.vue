@@ -89,11 +89,6 @@ function missingTip(): string {
     + '（kube-prometheus-stack 默认是 release: ps）。也可能只是还没 reload，稍后刷新看看。'
 }
 
-// ---------- 详情：独立详情页（抽屉装不下几十条规则 + 长表达式） ----------
-function goDetail(row: K8sPrometheusRule): void {
-  router.push({ name: 'prometheusrule-detail', query: { name: row.name } })
-}
-
 // ---------- 上下文联动：顶栏 chip 变化时刷新 ----------
 onMounted(() => {
   void load()
@@ -136,7 +131,14 @@ usePaletteAction({
     <div v-else class="panel table-panel">
       <el-table v-loading="loading || !ready" :data="list" stripe>
         <el-table-column label="名称" min-width="200">
-          <template #default="{ row }"><code class="res-name name-link" @click="goDetail(row)">{{ row.name }}</code><ManagedOwnerTag :row="row" :cluster-id="state.clusterId" :tenant-id="state.tenantId" /></template>
+          <template #default="{ row }">
+            <div class="rule-name-cell">
+              <RouterLink class="res-name name-link" :to="{ name: 'prometheusrule-detail', query: { name: row.name } }" :title="row.name">
+                {{ row.name }}
+              </RouterLink>
+              <ManagedOwnerTag :row="row" :cluster-id="state.clusterId" :tenant-id="state.tenantId" />
+            </div>
+          </template>
         </el-table-column>
         <el-table-column label="规则" width="90">
           <template #default="{ row }">{{ ruleCount(row) }} 条</template>
@@ -206,8 +208,15 @@ usePaletteAction({
   color: var(--text-2);
   margin: 14px 0 8px;
 }
+.rule-name-cell {
+  display: flex;
+  align-items: center;
+}
 .name-link {
-  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--accent);
 }
 .name-link:hover {

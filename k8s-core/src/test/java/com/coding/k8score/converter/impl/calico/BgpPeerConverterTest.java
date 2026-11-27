@@ -10,10 +10,33 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class BgpPeerConverterTest {
 
     private final BgpPeerConverter c = new BgpPeerConverter();
+
+    @Test
+    void writesBothAsNumbersAsCrdsUnsignedIntegers() {
+        BgpPeerDTO peer = new BgpPeerDTO();
+        peer.setName("test-peer");
+        peer.setAsNumber("AS65001");
+        peer.setLocalAsNumber("4294967295");
+
+        var resource = c.convert(peer);
+        var spec = CalicoSpecUtil.specOf(resource);
+        assertThat(spec).containsEntry("asNumber", 65001L).containsEntry("localASNumber", 4294967295L);
+        assertThat(c.revert(resource).getAsNumber()).isEqualTo("65001");
+    }
+
+    @Test
+    void rejectsAsNumbersOutsideTheCrdsRange() {
+        BgpPeerDTO peer = new BgpPeerDTO();
+        peer.setName("test-peer");
+        peer.setAsNumber("4294967296");
+
+        assertThatThrownBy(() -> c.convert(peer)).hasMessageContaining("asNumber");
+    }
 
     @Test
     void revert_maps_real_schema_keys() {

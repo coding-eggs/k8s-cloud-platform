@@ -153,8 +153,10 @@ const pwd = computed({
 
 // ---- 提交（update 为整对象替换：清空字段 → 后端移除该 spec key，交还 Calico 默认）----
 const saving = ref(false)
+const submitError = ref('')
 async function submit(): Promise<void> {
   if (saving.value || !clusterId.value) return
+  submitError.value = ''
   const finalName = editing.value ?? form.name.trim()
   if (!finalName) { ElMessage.warning('请输入名称'); return }
   if (!RFC1123_RE.test(finalName)) { ElMessage.warning('名称须为 RFC-1123（小写字母/数字/-，字母或数字开头结尾）'); return }
@@ -198,7 +200,9 @@ async function submit(): Promise<void> {
       ElMessage.success('创建成功')
     }
     router.push('/ops/bgppeers')
-  } catch { /* 拦截器提示 */ } finally {
+  } catch (error) {
+    submitError.value = error instanceof Error ? error.message : 'BGP 对等体保存失败'
+  } finally {
     saving.value = false
   }
 }
@@ -232,6 +236,7 @@ onMounted(async () => {
 
     <div v-else class="panel editor-panel">
       <template v-if="formVisible">
+        <el-alert v-if="submitError" :title="submitError" type="error" show-icon :closable="false" />
         <BgpDocPanel
           what="声明「指定节点 ↔ 外部对端 IP」的一条 BGP peering 关系，典型场景是集群节点接物理路由器或四层负载均衡器。"
           how="填对端 IP + 对端 AS 号；用 node（单个节点）或 nodeSelector（节点标签选择器，字符串）圈定应用范围，都不填 = 所有节点。需要路由过滤时，在「过滤器」里勾选已有 BGPFilter（先建 filter 再挂到 peer）。"

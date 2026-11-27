@@ -101,7 +101,12 @@ public class HpaV2Converter implements CommonConverter<HorizontalPodAutoscaler, 
             return null;
         }
         CrossVersionObjectReference r = new CrossVersionObjectReference();
-        r.setApiVersion(ref.getApiVersion());
+        String apiVersion = ref.getApiVersion();
+        if ((apiVersion == null || apiVersion.isBlank())
+                && ("Deployment".equals(ref.getKind()) || "StatefulSet".equals(ref.getKind()))) {
+            apiVersion = "apps/v1";
+        }
+        r.setApiVersion(apiVersion);
         r.setKind(ref.getKind());
         r.setName(ref.getName());
         return r;

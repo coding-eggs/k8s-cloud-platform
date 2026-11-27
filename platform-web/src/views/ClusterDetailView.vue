@@ -27,7 +27,7 @@ import ClusterComponentsPanel from '@/components/cluster/ClusterComponentsPanel.
 import { useClusterComponents } from '@/composables/useClusterComponents'
 import { useComponentOperations } from '@/composables/useComponentOperations'
 import { useResourceContext } from '@/stores/context'
-import { fmtAge, fmtDate, podPhaseType } from '@/utils/format'
+import { clusterConnectionStatus, fmtAge, fmtDate, podPhaseType } from '@/utils/format'
 import { formatMetricValue, humanizeBytes } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusCards from '@/components/overview/StatusCards.vue'
@@ -45,6 +45,7 @@ const resourceCtx = useResourceContext()
 // ---- 上下文：clusterId 来自 query（从集群列表点名称/「查看」进来）----
 const clusterId = ref((route.query.clusterId as string) || '')
 const cluster = ref<K8sCluster | null>(null)
+const connectionStatus = computed(() => clusterConnectionStatus(cluster.value?.enabled, cluster.value?.status))
 const overview = ref<K8sClusterOverview | null>(null)
 const loading = ref(false)
 const loadError = ref(false)
@@ -606,13 +607,10 @@ function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'war
                 <div class="info-rows">
                   <div class="info-row"><span class="k">集群名称</span><span class="v">{{ cluster.clusterName }}</span></div>
                   <div class="info-row">
-                    <span class="k">状态</span>
-                    <StatusBadgeTip
-                      :label="cluster.status === 'CONNECTED' ? '已连接' : (cluster.status ?? '未知')"
-                      :type="cluster.status === 'CONNECTED' ? 'success' : (cluster.status === 'ERROR' ? 'danger' : 'info')"
-                    />
+                    <span class="k">连接状态</span>
+                    <StatusBadgeTip :label="connectionStatus.label" :type="connectionStatus.type" />
                   </div>
-                  <div class="info-row"><span class="k">启用</span><el-tag size="small" :type="cluster.enabled === 1 ? 'success' : 'info'">{{ cluster.enabled === 1 ? '已启用' : '已禁用' }}</el-tag></div>
+                  <div class="info-row"><span class="k">管理状态</span><el-tag size="small" :type="cluster.enabled === 1 ? 'success' : 'info'">{{ cluster.enabled === 1 ? '已启用' : '已禁用' }}</el-tag></div>
                   <div class="info-row"><span class="k">集群版本</span><code class="mono v">{{ cluster.version ?? '—' }}</code></div>
                   <div class="info-row"><span class="k">容器运行时</span><code class="mono v">{{ cluster.containerRuntime ?? '—' }}</code></div>
                   <div class="info-row"><span class="k">IP 栈</span><span class="v">{{ cluster.ipStack ?? '—' }}</span></div>

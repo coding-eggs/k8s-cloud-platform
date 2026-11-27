@@ -169,7 +169,7 @@ public class ObjectStorageController {
      * 同名 key 直接覆盖（S3 语义）。
      */
     @PostMapping("/objects/upload")
-    @Auditable(action = AuditAction.OBJECT_UPLOAD, target = "#key")
+    @Auditable(action = AuditAction.OBJECT_UPLOAD, target = "#key", scope = "null, null")
     @Operation(summary = "上传单个对象（≤100MB；请求体为原始字节流）")
     public ResponseData<Void> upload(@RequestParam String bucketId,
                                      @RequestParam String key,
@@ -184,7 +184,7 @@ public class ObjectStorageController {
     }
 
     @PostMapping("/objects/delete")
-    @Auditable(action = AuditAction.OBJECT_DELETE, target = "#request.key")
+    @Auditable(action = AuditAction.OBJECT_DELETE, target = "#request.key", scope = "null, null")
     @Operation(summary = "删除单个对象（租户可删自己桶里的）")
     public ResponseData<Void> deleteObject(@RequestBody ObjectStorageObjectRef request) {
         service.deleteObject(request, auth.effectiveTenantId(request.getTenantId()));

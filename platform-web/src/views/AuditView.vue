@@ -247,7 +247,7 @@ onMounted(async () => {
         <template #default="{ row }">
           <div class="detail">
             <div><span class="k">动作码</span>{{ row.action ?? '—' }}</div>
-            <div><span class="k">目标对象</span>{{ row.targetName ?? '—' }}</div>
+            <div class="detail-target"><span class="k">目标对象</span>{{ row.targetName ?? '—' }}</div>
             <div><span class="k">错误码</span>{{ row.errorCode ?? '—' }}</div>
             <div><span class="k">错误信息</span>{{ row.errorMsg ?? '—' }}</div>
             <div><span class="k">请求</span>{{ row.httpMethod }} {{ row.requestPath }}</div>
@@ -345,6 +345,9 @@ onMounted(async () => {
   display: inline-block;
   width: 86px;
   color: var(--text-3);
+}
+.detail-target {
+  overflow-wrap: anywhere;
 }
 .sub {
   margin-left: 6px;

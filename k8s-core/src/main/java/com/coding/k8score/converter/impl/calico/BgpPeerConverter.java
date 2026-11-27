@@ -1,5 +1,7 @@
 package com.coding.k8score.converter.impl.calico;
 
+import com.coding.common.exception.CloudPlatformException;
+import com.coding.common.exception.EnumResponseType;
 import com.coding.common.models.k8s.dto.BgpPeerDTO;
 import com.coding.common.models.k8s.dto.BgpSecretKeyRefDTO;
 import io.fabric8.kubernetes.api.model.GenericKubernetesResource;
@@ -26,7 +28,7 @@ import static com.coding.k8score.converter.impl.calico.CalicoSpecUtil.statusOf;
 /**
  * BgpPeerDTO ⇄ GenericKubernetesResource（projectcalico.org/v3 CRD，集群级）。
  * <p>真实 schema 注意：对端地址 {@code peerIP}（非 ip）、{@code nodeSelector} 为字符串、
- * asNumber/localASNumber 为 numorstring → String（写回仍用字符串形态）、sourceAddress 枚举 UseNodeIP/None。
+ * asNumber/localASNumber 在 DTO 中为字符串，在 CRD 中为无符号 32 位整数。
  */
 public class BgpPeerConverter {
 
@@ -54,8 +56,8 @@ public class BgpPeerConverter {
         putStr(spec, "node", dto.getNode());
         putStr(spec, "nodeSelector", dto.getNodeSelector());
         putStr(spec, "peerIP", dto.getPeerIp());
-        putStr(spec, "asNumber", dto.getAsNumber());
-        putStr(spec, "localASNumber", dto.getLocalAsNumber());
+        putAsNumber(spec, "asNumber", dto.getAsNumber());
+        putAsNumber(spec, "localASNumber", dto.getLocalAsNumber());
         putStr(spec, "peerSelector", dto.getPeerSelector());
         putBool(spec, "keepOriginalNextHop", dto.getKeepOriginalNextHop());
         putStr(spec, "nextHopMode", dto.getNextHopMode());
@@ -77,6 +79,26 @@ public class BgpPeerConverter {
 
         res.setAdditionalProperty("spec", spec);
         return res;
+    }
+
+    private static void putAsNumber(Map<String, Object> spec, String field, String value) {
+        if (value == null || value.isBlank()) {
+            return;
+        }
+        String digits = value.trim().replaceFirst("(?i)^AS", "");
+        if (digits.matches("[0-9]+")) {
+            try {
+                long number = Long.parseLong(digits);
+                if (number <= 0xffff_ffffL) {
+                    spec.put(field, number);
+                    return;
+                }
+            } catch (NumberFormatException ignored) {
+                // 超出 long 范围也属于无效 AS 号。
+            }
+        }
+        throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
+                field + " 必须为 0–4294967295 范围内的整数（可带 AS 前缀）");
     }
 
     /**

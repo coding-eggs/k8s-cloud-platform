@@ -213,6 +213,7 @@ const ownKey = ref('')
 /** 编辑态回填的 scaleTargetRef.kind 原始大小写（遗留绑定可能是 ReplicaSet 等下拉外 kind）；
  *  目标未变时提交按原样发送，避免 canonical 键小写化丢失 kind（数据保真，防控制器找不到目标不伸缩） */
 const ownKind = ref('')
+const ownApiVersion = ref<string>()
 
 /** 一个工作负载只能绑定一个 HPA：已绑别人的项禁选 */
 function isBound(w: WorkloadDetail): boolean {
@@ -268,6 +269,7 @@ async function loadDetail(): Promise<void> {
     form.name = d.name
     ownKey.value = canonicalKey(d.scaleTargetRef?.kind, d.scaleTargetRef?.name)
     ownKind.value = d.scaleTargetRef?.kind ?? ''
+    ownApiVersion.value = d.scaleTargetRef?.apiVersion ?? undefined
     form.targetKey = ownKey.value
     form.minReplicas = d.minReplicas ?? null
     form.maxReplicas = d.maxReplicas ?? null
@@ -377,15 +379,20 @@ async function submit(): Promise<void> {
   // canonical 键（小写）拆回大写 kind。目标未改（仍等于回填的自身键）→ 原样发送回填时记录的 kind，
   // 保住遗留非 D/S 绑定（如 ReplicaSet）的大小写；新选目标必是 deployment/statefulset → KIND_CAP 还原大写。
   const [kKind = '', kName = ''] = form.targetKey.split('/')
-  const targetKindOut =
-    editing.value && ownKind.value && form.targetKey === ownKey.value ? ownKind.value : KIND_CAP[kKind] ?? kKind
+  const sameTarget = !!editing.value && form.targetKey === ownKey.value
+  const targetKindOut = sameTarget && ownKind.value ? ownKind.value : KIND_CAP[kKind] ?? kKind
+  const defaultApiVersion = targetKindOut === 'Deployment' || targetKindOut === 'StatefulSet' ? 'apps/v1' : undefined
 
   const payload: K8sHpa = {
     name,
     namespace: state.namespace!,
     minReplicas: form.minReplicas ?? 1,
     maxReplicas: form.maxReplicas!,
-    scaleTargetRef: { kind: targetKindOut, name: kName },
+    scaleTargetRef: {
+      kind: targetKindOut,
+      name: kName,
+      apiVersion: (sameTarget ? ownApiVersion.value : undefined) || defaultApiVersion,
+    },
     metrics,
     behavior,
   }

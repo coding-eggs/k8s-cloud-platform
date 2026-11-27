@@ -26,6 +26,20 @@ export function fmtAge(v?: number | string | null): string {
 
 export type BadgeType = 'success' | 'warning' | 'danger' | 'info' | 'neutral'
 
+export function clusterConnectionStatus(
+  enabled: number | undefined,
+  status?: string | null,
+): { label: string; type: Exclude<BadgeType, 'neutral'> } {
+  if (enabled !== 1) return { label: '未探测', type: 'info' }
+  switch (status) {
+    case 'CONNECTED': return { label: '已连接', type: 'success' }
+    case 'DISCONNECTED': return { label: '未连接', type: 'info' }
+    case 'CONNECTING': return { label: '连接中', type: 'warning' }
+    case 'ERROR': return { label: '错误', type: 'danger' }
+    default: return { label: status ?? '未知', type: 'info' }
+  }
+}
+
 /** 字节数 → `12.3 GiB`（工作区占用这类地方用；0 直接给 `0`） */
 export function fmtBytes(bytes?: number | null): string {
   if (!bytes) return '0'
