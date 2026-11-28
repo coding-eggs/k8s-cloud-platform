@@ -18,6 +18,10 @@ const clusters = ref<K8sCluster[]>([])
 const clusterId = ref((route.query.clusterId as string) || '')
 const name = (route.query.name as string) || ''
 
+function goBack(): void {
+  void router.push({ path: '/ops/bgppeers', query: { clusterId: clusterId.value || undefined } })
+}
+
 async function loadClusters(): Promise<void> {
   clusters.value = await clusterApi.list()
   if (!clusterId.value) {
@@ -71,11 +75,11 @@ onMounted(async () => {
         <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
       </el-select>
       <el-button :icon="Refresh" circle size="small" :disabled="!clusterId" @click="load" />
-      <el-button @click="router.push('/ops/bgppeers')">返回</el-button>
+      <el-button @click="goBack">返回</el-button>
     </PageHeader>
 
     <EmptyState v-if="loadError" title="加载失败" description="该 BGP 对等体可能已被删除，或所选集群下不存在。">
-      <el-button type="primary" @click="router.push('/ops/bgppeers')">返回列表</el-button>
+      <el-button type="primary" @click="goBack">返回列表</el-button>
     </EmptyState>
 
     <div v-else-if="item" class="panel detail-panel">

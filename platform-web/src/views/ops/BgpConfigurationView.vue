@@ -1,28 +1,23 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { usePaletteAction } from '@/composables/usePaletteAction'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, MoreFilled } from '@element-plus/icons-vue'
 import PageHeader from '@/components/PageHeader.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import { clusterApi, calicoApi } from '@/api'
+import { calicoApi } from '@/api'
 import { useClusterCapability } from '@/composables/useClusterCapability'
+import { useClusterListSelection } from '@/composables/useClusterListSelection'
 import { usePermission } from '@/stores/permission'
-import type { K8sCluster, BgpConfiguration } from '@/types'
+import type { BgpConfiguration } from '@/types'
 import { fmtDate } from '@/utils/format'
 
 const router = useRouter()
 const perm = usePermission()
 
 // ---- 集群选择（Calico 集群级，无租户/命名空间维度）----
-const clusters = ref<K8sCluster[]>([])
-const clusterId = ref('')
-async function loadClusters(): Promise<void> {
-  clusters.value = await clusterApi.list()
-  const first = clusters.value.find((c) => c.enabled === 1) ?? clusters.value[0]
-  if (first && !clusterId.value) clusterId.value = first.clusterId
-}
+const { clusters, clusterId } = useClusterListSelection()
 
 // ---- capability 门禁：hasCalico（无 Calico 能力时禁用创建）----
 const capClusterId = computed(() => clusterId.value || null)
@@ -31,22 +26,28 @@ const { hasCalico, refresh: refreshCap } = useClusterCapability(capClusterId)
 // ---- 列表（写操作仅平台管理员：platform:bgp:config:manage）----
 const loading = ref(false)
 const items = ref<BgpConfiguration[]>([])
+let loadSequence = 0
 async function load(): Promise<void> {
-  if (!clusterId.value) return
+  const targetClusterId = clusterId.value
+  const request = ++loadSequence
+  if (!targetClusterId) {
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    items.value = await calicoApi.bgpConfiguration.list({ clusterId: clusterId.value })
+    const result = await calicoApi.bgpConfiguration.list({ clusterId: targetClusterId })
+    if (request === loadSequence) items.value = result
   } catch {
-    items.value = [] // 拦截器已提示（含集群未装 Calico 的 404）
+    if (request === loadSequence) items.value = [] // 拦截器已提示
   } finally {
-    loading.value = false
+    if (request === loadSequence) loading.value = false
   }
 }
 
-watch(clusterId, load)
-onMounted(async () => {
-  await loadClusters()
-  if (clusterId.value) await load()
+watch(clusterId, () => {
+  items.value = []
+  void load()
 })
 
 function onDetail(row: BgpConfiguration): void {
@@ -62,6 +63,7 @@ function onCreate(): void {
 
 const deleting = ref('')
 async function onDelete(row: BgpConfiguration): Promise<void> {
+  const targetClusterId = clusterId.value
   try {
     await ElMessageBox.confirm(
       `确认删除 BGP 配置「${row.name}」？若为集群唯一配置，节点将回落到 Calico 内置默认值（AS 64512、mesh 开启），等同一次全局变更。`,
@@ -69,9 +71,10 @@ async function onDelete(row: BgpConfiguration): Promise<void> {
       { type: 'warning' },
     )
   } catch { return }
+  if (targetClusterId !== clusterId.value) return
   deleting.value = row.name
   try {
-    await calicoApi.bgpConfiguration.delete(row.name, clusterId.value)
+    await calicoApi.bgpConfiguration.delete(row.name, targetClusterId)
     ElMessage.success('已删除')
     await load()
   } catch { /* 拦截器提示 */ } finally {
@@ -89,7 +92,7 @@ usePaletteAction({
   <div>
     <PageHeader title="BGP 配置" description="Calico BGPConfiguration（集群级 CRD）——写操作仅平台管理员">
       <el-select v-model="clusterId" placeholder="选择集群" style="width: 220px">
-        <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
+        <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" :disabled="c.enabled !== 1" />
       </el-select>
       <el-button :icon="Refresh" circle @click="load" />
       <el-button v-if="perm.isAdmin" type="primary" :icon="Plus" :disabled="!hasCalico" @click="onCreate">创建 BGP 配置</el-button>

@@ -99,7 +99,8 @@ const AS_NUM_RE = /^(\d+|AS\d+)$/i
 // ---- 提交（update 为整对象替换：清空字段 → 后端移除该 spec key，交还 Calico 默认）----
 const saving = ref(false)
 async function submit(): Promise<void> {
-  if (saving.value || !clusterId.value) return
+  const targetClusterId = clusterId.value
+  if (saving.value || !targetClusterId) return
   const finalName = editing.value ?? form.name.trim()
   if (!finalName) { ElMessage.warning('请输入名称'); return }
   if (!RFC1123_RE.test(finalName)) { ElMessage.warning('名称须为 RFC-1123（小写字母/数字/-，字母或数字开头结尾）'); return }
@@ -110,7 +111,7 @@ async function submit(): Promise<void> {
   const cidrRows = (rows: CidrRow[]) => rows.map((r) => r.cidr.trim()).filter(Boolean).map((cidr) => ({ cidr }))
   const body: BgpConfiguration = {
     name: finalName,
-    clusterId: clusterId.value,
+    clusterId: targetClusterId,
     asNumber: asNumber || null,
     nodeToNodeMeshEnabled: form.nodeToNodeMesh === '' ? null : form.nodeToNodeMesh === 'true',
     listenPort: form.listenPort,
@@ -139,19 +140,21 @@ async function submit(): Promise<void> {
   saving.value = true
   try {
     if (editing.value) {
-      await calicoApi.bgpConfiguration.update(editing.value, clusterId.value, body)
+      await calicoApi.bgpConfiguration.update(editing.value, targetClusterId, body)
       ElMessage.success('保存成功')
     } else {
-      await calicoApi.bgpConfiguration.create(clusterId.value, body)
+      await calicoApi.bgpConfiguration.create(targetClusterId, body)
       ElMessage.success('创建成功')
     }
-    router.push('/ops/bgpconfigurations')
+    goBack(targetClusterId)
   } catch { /* 拦截器提示 */ } finally {
     saving.value = false
   }
 }
 
-function goBack(): void { router.push('/ops/bgpconfigurations') }
+function goBack(targetClusterId = clusterId.value): void {
+  void router.push({ path: '/ops/bgpconfigurations', query: { clusterId: targetClusterId || undefined } })
+}
 
 const pageTitle = computed(() => (editing.value ? '编辑 BGP 配置' : '创建 BGP 配置'))
 const formVisible = computed(() => !editing.value || detailState.value === 'loaded')
@@ -178,11 +181,11 @@ onMounted(async () => {
       <el-select v-model="clusterId" placeholder="选择集群" size="small" style="width: 200px">
         <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
       </el-select>
-      <el-button @click="goBack">返回</el-button>
+      <el-button @click="goBack()">返回</el-button>
     </PageHeader>
 
     <EmptyState v-if="detailState === 'error'" title="加载失败" description="该 BGP 配置可能已被删除，或所选集群下不存在。">
-      <el-button type="primary" @click="goBack">返回列表</el-button>
+      <el-button type="primary" @click="goBack()">返回列表</el-button>
     </EmptyState>
 
     <div v-else class="panel editor-panel">
@@ -354,7 +357,7 @@ onMounted(async () => {
 
           <el-form-item>
             <el-button type="primary" :loading="saving" @click="submit">{{ editing ? '保存' : '创建' }}</el-button>
-            <el-button @click="goBack">取消</el-button>
+            <el-button @click="goBack()">取消</el-button>
           </el-form-item>
         </el-form>
       </template>

@@ -209,6 +209,7 @@ async function onAddMember(u: PlatformUser): Promise<void> {
 }
 
 const grantPicker = reactive<Record<string, string>>({})
+const permissionEffectiveHint = '权限将在缓存刷新后生效，默认约 30 秒内。'
 
 async function onGrantRole(row: TenantMemberView): Promise<void> {
   const roleId = grantPicker[row.userId]
@@ -219,7 +220,7 @@ async function onGrantRole(row: TenantMemberView): Promise<void> {
   memberBusy.value = row.userId
   try {
     await tenantApi.memberRoleGrant({ tenantId: props.tenantId, userId: row.userId, roleId })
-    ElMessage.success('已授予角色（重复授予幂等）')
+    ElMessage.success({ message: `已授予角色。${permissionEffectiveHint}`, duration: 6000 })
     grantPicker[row.userId] = ''
     await loadMembers()
   } catch {
@@ -246,7 +247,7 @@ async function onRevokeRole(row: TenantMemberView, roleId: string): Promise<void
   memberBusy.value = row.userId
   try {
     await tenantApi.memberRoleRevoke({ tenantId: props.tenantId, userId: row.userId, roleId })
-    ElMessage.success('已回收角色')
+    ElMessage.success({ message: `已回收角色。${permissionEffectiveHint}`, duration: 6000 })
     await loadMembers()
   } catch {
     /* 拦截器提示 */

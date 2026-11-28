@@ -66,7 +66,7 @@ async function refresh(): Promise<void> {
 }
 
 function goBack(): void {
-  router.push('/nodes')
+  void router.push({ path: '/nodes', query: { clusterId: clusterId.value || undefined } })
 }
 
 // ---- 自动刷新（顶栏）----

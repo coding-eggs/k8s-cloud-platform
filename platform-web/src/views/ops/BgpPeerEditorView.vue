@@ -155,7 +155,8 @@ const pwd = computed({
 const saving = ref(false)
 const submitError = ref('')
 async function submit(): Promise<void> {
-  if (saving.value || !clusterId.value) return
+  const targetClusterId = clusterId.value
+  if (saving.value || !targetClusterId) return
   submitError.value = ''
   const finalName = editing.value ?? form.name.trim()
   if (!finalName) { ElMessage.warning('请输入名称'); return }
@@ -168,7 +169,7 @@ async function submit(): Promise<void> {
 
   const body: BgpPeer = {
     name: finalName,
-    clusterId: clusterId.value,
+    clusterId: targetClusterId,
     node: form.node.trim() || null,
     nodeSelector: form.nodeSelector.trim() || null,
     peerIp: form.peerIp.trim() || null,
@@ -193,13 +194,13 @@ async function submit(): Promise<void> {
   saving.value = true
   try {
     if (editing.value) {
-      await calicoApi.bgpPeer.update(editing.value, clusterId.value, body)
+      await calicoApi.bgpPeer.update(editing.value, targetClusterId, body)
       ElMessage.success('保存成功')
     } else {
-      await calicoApi.bgpPeer.create(clusterId.value, body)
+      await calicoApi.bgpPeer.create(targetClusterId, body)
       ElMessage.success('创建成功')
     }
-    router.push('/ops/bgppeers')
+    goBack(targetClusterId)
   } catch (error) {
     submitError.value = error instanceof Error ? error.message : 'BGP 对等体保存失败'
   } finally {
@@ -207,7 +208,9 @@ async function submit(): Promise<void> {
   }
 }
 
-function goBack(): void { router.push('/ops/bgppeers') }
+function goBack(targetClusterId = clusterId.value): void {
+  void router.push({ path: '/ops/bgppeers', query: { clusterId: targetClusterId || undefined } })
+}
 
 const pageTitle = computed(() => (editing.value ? '编辑 BGP 对等体' : '创建 BGP 对等体'))
 const formVisible = computed(() => !editing.value || detailState.value === 'loaded')
@@ -227,11 +230,11 @@ onMounted(async () => {
       <el-select v-model="clusterId" placeholder="选择集群" size="small" style="width: 200px">
         <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
       </el-select>
-      <el-button @click="goBack">返回</el-button>
+      <el-button @click="goBack()">返回</el-button>
     </PageHeader>
 
     <EmptyState v-if="detailState === 'error'" title="加载失败" description="该 BGP 对等体可能已被删除，或所选集群下不存在。">
-      <el-button type="primary" @click="goBack">返回列表</el-button>
+      <el-button type="primary" @click="goBack()">返回列表</el-button>
     </EmptyState>
 
     <div v-else class="panel editor-panel">
@@ -379,7 +382,7 @@ onMounted(async () => {
 
           <el-form-item>
             <el-button type="primary" :loading="saving" @click="submit">{{ editing ? '保存' : '创建' }}</el-button>
-            <el-button @click="goBack">取消</el-button>
+            <el-button @click="goBack()">取消</el-button>
           </el-form-item>
         </el-form>
       </template>

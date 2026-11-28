@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/PageHeader.vue'
-import { clusterApi, nodeApi } from '@/api'
+import { nodeApi } from '@/api'
 import { nodeMetrics } from '@/api/metrics'
-import type { K8sCluster, K8sNode, NodeCurrentMetric } from '@/types'
+import { useClusterListSelection } from '@/composables/useClusterListSelection'
+import type { K8sNode, NodeCurrentMetric } from '@/types'
 import { fmtDate } from '@/utils/format'
 import { humanizeBytes, parseCpuCores, parseMemBytes } from '@/utils/metrics'
 import {MoreFilled, Refresh} from "@element-plus/icons-vue";
@@ -13,25 +14,25 @@ import {MoreFilled, Refresh} from "@element-plus/icons-vue";
 const router = useRouter()
 
 // ---- 集群选择（节点为集群级，无租户/命名空间上下文）----
-const clusters = ref<K8sCluster[]>([])
-const clusterId = ref('')
-
-async function loadClusters(): Promise<void> {
-  clusters.value = await clusterApi.list()
-  const first = clusters.value.find((c) => c.enabled === 1) ?? clusters.value[0]
-  if (first && !clusterId.value) clusterId.value = first.clusterId
-}
+const { clusters, clusterId } = useClusterListSelection()
 
 // ---- 节点列表 + Pod 聚合 + 当前用量 ----
 const loading = ref(false)
 const nodes = ref<K8sNode[]>([])
 const currents = ref<Map<string, NodeCurrentMetric>>(new Map())
+let loadSequence = 0
 
 async function load(): Promise<void> {
-  if (!clusterId.value) return
+  const targetClusterId = clusterId.value
+  const request = ++loadSequence
+  if (!targetClusterId) {
+    loading.value = false
+    return
+  }
   loading.value = true
   try {
-    const list = await nodeApi.list({ clusterId: clusterId.value })
+    const list = await nodeApi.list({ clusterId: targetClusterId })
+    if (request !== loadSequence) return
     nodes.value = list
     // Pod 聚合（按 nodeName）
     // 当前用量：instance = <internalIp>:9100
@@ -41,18 +42,19 @@ async function load(): Promise<void> {
     }
     currents.value = new Map()
     if (instances.length) {
-      const cur = await nodeMetrics.current(clusterId.value, instances)
-      for (const [k, v] of Object.entries(cur)) currents.value.set(k, v)
+      const cur = await nodeMetrics.current(targetClusterId, instances)
+      if (request === loadSequence) currents.value = new Map(Object.entries(cur))
     }
   } finally {
-    loading.value = false
+    if (request === loadSequence) loading.value = false
   }
 }
 
-watch(clusterId, load)
-onMounted(async () => {
-  await loadClusters()
-  if (clusterId.value) await load()
+watch(clusterId, () => {
+  nodes.value = []
+  currents.value = new Map()
+  drainVisible.value = false
+  void load()
 })
 
 // ---- 展示辅助 ----
@@ -91,6 +93,7 @@ async function onDetail(row: K8sNode): Promise<void> {
 
 const cordonBusy = ref('')
 async function onCordon(row: K8sNode): Promise<void> {
+  const targetClusterId = clusterId.value
   const toCordon = !row.unschedulable
   try {
     await ElMessageBox.confirm(
@@ -101,10 +104,11 @@ async function onCordon(row: K8sNode): Promise<void> {
   } catch {
     return
   }
+  if (targetClusterId !== clusterId.value) return
   cordonBusy.value = row.name
   try {
-    if (toCordon) await nodeApi.cordon(clusterId.value, row.name)
-    else await nodeApi.uncordon(clusterId.value, row.name)
+    if (toCordon) await nodeApi.cordon(targetClusterId, row.name)
+    else await nodeApi.uncordon(targetClusterId, row.name)
     ElMessage.success(toCordon ? '已标记不可调度' : '已恢复可调度')
     await load()
   } catch {
@@ -164,7 +168,7 @@ const drainSummary = computed(() => {
   <div>
     <PageHeader title="节点管理" description="集群级节点（Kubernetes Node）：状态 / 用量 / Cordon / Drain">
       <el-select v-model="clusterId" placeholder="选择集群" style="width: 220px">
-        <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" />
+        <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" :disabled="c.enabled !== 1" />
       </el-select>
       <el-button :icon="Refresh" circle  @click="load" />
     </PageHeader>
