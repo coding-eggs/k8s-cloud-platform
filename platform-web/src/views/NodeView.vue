@@ -6,6 +6,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import { nodeApi } from '@/api'
 import { nodeMetrics } from '@/api/metrics'
 import { useClusterListSelection } from '@/composables/useClusterListSelection'
+import { useQueryFilter } from '@/composables/useQueryFilter'
 import type { K8sNode, NodeCurrentMetric } from '@/types'
 import { fmtDate } from '@/utils/format'
 import { humanizeBytes, parseCpuCores, parseMemBytes } from '@/utils/metrics'
@@ -19,6 +20,12 @@ const { clusters, clusterId } = useClusterListSelection()
 // ---- 节点列表 + Pod 聚合 + 当前用量 ----
 const loading = ref(false)
 const nodes = ref<K8sNode[]>([])
+const statusFilter = useQueryFilter('status')
+const onlyNotReady = computed({
+  get: () => statusFilter.value === 'not-ready',
+  set: (enabled: boolean) => { statusFilter.value = enabled ? 'not-ready' : '' },
+})
+const shownNodes = computed(() => onlyNotReady.value ? nodes.value.filter(node => node.status !== 'True') : nodes.value)
 const currents = ref<Map<string, NodeCurrentMetric>>(new Map())
 let loadSequence = 0
 
@@ -170,10 +177,11 @@ const drainSummary = computed(() => {
       <el-select v-model="clusterId" placeholder="选择集群" style="width: 220px">
         <el-option v-for="c in clusters" :key="c.clusterId" :label="c.clusterName" :value="c.clusterId" :disabled="c.enabled !== 1" />
       </el-select>
+      <el-switch v-model="onlyNotReady" active-text="仅看 NotReady" />
       <el-button :icon="Refresh" circle  @click="load" />
     </PageHeader>
 
-    <el-table v-loading="loading" :data="nodes" stripe>
+    <el-table v-loading="loading" :data="shownNodes" :empty-text="onlyNotReady && nodes.length ? '此集群没有 NotReady 节点' : '暂无节点'" stripe>
       <el-table-column label="名称" width="180">
         <template #default="{ row }">
           <el-link type="primary" @click="onDetail(row)">{{ row.name }}</el-link>

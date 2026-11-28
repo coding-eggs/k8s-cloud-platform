@@ -315,16 +315,10 @@ public class NamespaceService {
         if (ns == null) {
             throw new CloudPlatformException(EnumResponseType.RESOURCE_NOT_EXIST, "命名空间不存在: " + namespace);
         }
-        if (isProtected(namespace)) {
+        if (protection.isProtected(namespace)) {
             throw new CloudPlatformException(EnumResponseType.BEAN_VALIDATION_EXCEPTION,
                     "受保护的系统命名空间「" + namespace + "」不可修改");
         }
-    }
-
-    /** 是否命中受保护系统命名空间名单（精确匹配，须与集群内真实 ns 名一致） */
-    private boolean isProtected(String namespace) {
-        List<String> protectedNs = protection.getProtectedNamespaces();
-        return protectedNs != null && protectedNs.contains(namespace);
     }
 
     /** 入参名字非 default 且非空白 → 拒（10028）；空白 / null → 交由调用方静默改写为 default */
@@ -402,7 +396,7 @@ public class NamespaceService {
         v.setPhase(ns.getPhase());
         v.setCreationTimestamp(ns.getCreationTimestamp());
         v.setManagedBy(isManaged(ns.getLabels()));
-        v.setEditable(!isProtected(ns.getName()));
+        v.setEditable(!protection.isProtected(ns.getName()));
         v.setAllocatedTenantName(allocatedTenant.get(ns.getName()));
         v.setDescription(ns.getDescription());
         v.setLabels(ns.getLabels());

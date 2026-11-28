@@ -1,11 +1,14 @@
 package com.coding.platformapi.services.overview;
 
+import com.coding.common.models.k8s.dto.ClusterSnapshotDTO;
 import com.coding.data.mapper.k8s.PlatformAlertEventMapper;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.auth.PlatformUserTenantMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformPipelineMapper;
 import com.coding.data.models.system.StatusCount;
+import com.coding.platformapi.configs.NamespaceProtectionProperties;
+import com.coding.platformapi.models.overview.PlatformOverviewView.Namespaces;
 import com.coding.platformapi.models.overview.ScopeSummaryView;
 import com.coding.platformapi.services.ClusterService;
 import com.coding.platformapi.services.MiddlewareService;
@@ -36,13 +39,14 @@ class ScopeSummaryServiceTest {
     private final PlatformTenantNamespaceMapper allocations = mock(PlatformTenantNamespaceMapper.class);
     private final TenantOverviewService tenantOverview = mock(TenantOverviewService.class);
     private final OverviewPermissions permissions = mock(OverviewPermissions.class);
+    private final NamespaceProtectionProperties protection = new NamespaceProtectionProperties();
 
     private ScopeSummaryService service;
 
     @BeforeEach
     void setUp() {
         service = new ScopeSummaryService(clusters, stats, middleware, apps, pipelines, alerts,
-                userTenants, allocations, tenantOverview, permissions);
+                userTenants, allocations, tenantOverview, permissions, protection);
         when(permissions.has(anyString())).thenReturn(true);
     }
 
@@ -70,11 +74,18 @@ class ScopeSummaryServiceTest {
         when(tenantOverview.allocationsByCluster("t1")).thenReturn(Map.of("c1", List.of("a"), "c2", List.of("b")));
         when(apps.countByStatus(eq("c1"), any())).thenReturn(List.of(count("READY", 2)));
         when(apps.countByStatus(eq("c2"), any())).thenReturn(List.of(count("READY", 1)));
+        when(alerts.countFiringByNamespace("c1", List.of("a"))).thenReturn(List.of(
+                new PlatformAlertEventMapper.NamespaceSeverityCount("a", "warning", 2)));
+        when(alerts.countFiringByNamespace("c2", List.of("b"))).thenReturn(List.of(
+                new PlatformAlertEventMapper.NamespaceSeverityCount("b", "critical", 1)));
 
         ScopeSummaryView v = service.tenant("t1");
 
         assertThat(v.applications().total()).isEqualTo(3);
         assertThat(v.namespaceCount()).isEqualTo(2L);
+        assertThat(v.alerts().total()).isEqualTo(3);
+        assertThat(v.alerts().byNamespace()).extracting(row -> row.clusterId() + "/" + row.namespace())
+                .containsExactlyInAnyOrder("c1/a", "c2/b");
     }
 
     @Test
@@ -84,6 +95,16 @@ class ScopeSummaryServiceTest {
                 new MiddlewareService.LiveStatus("b", "t1", "READY")));
 
         assertThat(service.namespace("c1", "a").middleware().total()).isEqualTo(1);
+    }
+
+    @Test
+    void clusterScopeUsesConfiguredProtectedNamespaces() {
+        protection.setProtectedNamespaces(List.of("ops-shared"));
+        ClusterSnapshotDTO snapshot = new ClusterSnapshotDTO();
+        snapshot.setNamespaceNames(List.of("ops-shared", "kube-custom", "monitor"));
+        when(clusters.snapshot("c1")).thenReturn(snapshot);
+
+        assertThat(service.cluster("c1").namespaces()).isEqualTo(new Namespaces(0, 2, 1));
     }
 
     @Test

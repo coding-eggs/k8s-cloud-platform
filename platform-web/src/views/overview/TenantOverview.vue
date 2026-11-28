@@ -3,14 +3,14 @@
  * 租户视图总览 = 我的租户（原「组织 › 我的租户」并入，2026-11-06）。
  *
  * 结构：页头 → 常用操作 / 最近访问（两行紧凑按钮）→ TenantDetailPanel 三页签
- *   - 概览：TenantOverviewPanel（计数卡 / 配额 / 需要关注 / 曲线 / 命名空间明细）；
+ *   - 概览：TenantOverviewPanel（需要关注与交付状态、配额、用量趋势、命名空间明细）；
  *   - 命名空间分配 / 成员与角色：只对持 `tenant:page:tenant.self` 的人显示（沿用原「我的租户」页的门槛），
  *     只能看概览的最小权限角色不会多看到成员信息。
  *
  * 概览能力 = ANY-of `tenant:overview:view` / `platform:allocation:list`（同 /tenant/overview 的授权）；
  * 两者都没有时不发请求，只显示无权提示 —— 否则每次进总览吃一个 403 红条。
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { apiCodes } from '@/apiCodes'
 import { pageCodes } from '@/pageCodes'
 import { usePermission } from '@/stores/permission'
@@ -27,13 +27,14 @@ const canView = computed(() => perm.has(apiCodes.tenantOverviewView) || perm.has
 const canManage = computed(() => perm.has(pageCodes.tenant.self))
 
 // 页头「更新于 X 前 / 自动刷新」：只管概览页签的数据（快照成功才算更新）
-const panelRef = ref<{ reloadOverview: () => void } | null>(null)
+const panelRef = ref<{ reloadOverview: () => boolean } | null>(null)
 const updatedAt = ref<number | null>(null)
 const refreshing = ref(false)
 const refreshFailed = ref(false)
 function refresh(): void {
+  if (!panelRef.value || refreshing.value) return
   refreshing.value = true
-  panelRef.value?.reloadOverview()
+  if (!panelRef.value.reloadOverview()) refreshing.value = false
 }
 function onLoaded(at: number): void {
   updatedAt.value = at
@@ -44,10 +45,15 @@ function onFailed(): void {
   refreshing.value = false
   refreshFailed.value = true
 }
+watch(() => tenant.value?.tenantId, () => {
+  updatedAt.value = null
+  refreshing.value = false
+  refreshFailed.value = false
+})
 
 const quickActions = computed(() =>
   [
-    { title: '新建应用', path: '/applications', icon: 'Connection', perm: pageCodes.application },
+    { title: '新建应用', path: perm.has(apiCodes.applicationWrite) ? '/applications?do=create' : '/applications', icon: 'Connection', perm: pageCodes.application },
     { title: '新建中间件', path: '/apps', icon: 'Grid', perm: pageCodes.app },
     { title: '跑流水线', path: '/pipelines', icon: 'Operation', perm: pageCodes.pipeline },
     { title: '看日志', path: '/observability/logs', icon: 'Document', perm: pageCodes.observability.logs },
@@ -60,10 +66,10 @@ const quickActions = computed(() =>
   <div>
     <div class="page-header">
       <div>
-        <h2 class="ph-title">{{ tenantName }}</h2>
+        <h1 class="ph-title">租户总览 · {{ tenantName }}</h1>
         <p class="ph-desc">
-          <template v-if="perm.isAdmin">当前代管 {{ tenantName }} —— 这里的数字只统计该租户</template>
-          <template v-else>你的租户概况、命名空间与成员</template>
+          <template v-if="perm.isAdmin">当前代管 · {{ tenantName }}</template>
+          <template v-else>当前租户 · {{ tenantName }}</template>
         </p>
       </div>
       <RefreshControl
@@ -95,12 +101,13 @@ const quickActions = computed(() =>
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 12px;
 }
 .ph-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 24px;
   font-weight: 700;
   color: var(--text-1);
 }

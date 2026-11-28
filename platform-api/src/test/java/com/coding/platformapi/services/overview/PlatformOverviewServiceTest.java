@@ -12,6 +12,7 @@ import com.coding.data.mapper.k8s.PlatformAlertEventMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
+import com.coding.platformapi.configs.NamespaceProtectionProperties;
 import com.coding.platformapi.models.overview.PlatformOverviewView;
 import com.coding.platformapi.services.ClusterService;
 import com.coding.platformapi.services.MiddlewareService;
@@ -26,6 +27,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class PlatformOverviewServiceTest {
@@ -39,13 +42,14 @@ class PlatformOverviewServiceTest {
     private final PlatformUserTenantMapper userTenants = mock(PlatformUserTenantMapper.class);
     private final PlatformTenantNamespaceMapper allocations = mock(PlatformTenantNamespaceMapper.class);
     private final PlatformHealthProbe health = mock(PlatformHealthProbe.class);
+    private final NamespaceProtectionProperties protection = new NamespaceProtectionProperties();
 
     private PlatformOverviewService service;
 
     @BeforeEach
     void setUp() {
         service = new PlatformOverviewService(clusters, stats, middleware, apps, alerts,
-                tenants, userTenants, allocations, health);
+                tenants, userTenants, allocations, health, protection);
         when(health.probe()).thenReturn(new PlatformHealthProbe.ServiceHealth(1, 1, List.of()));
         when(clusters.list()).thenReturn(List.of(cluster("A"), cluster("B")));
     }
@@ -100,6 +104,22 @@ class PlatformOverviewServiceTest {
     }
 
     @Test
+    void nodeIssuesIdentifyEachClusterWithNotReadyNodes() {
+        var a = snap(List.of());
+        a.setNodeHealth(List.of(node("worker", false)));
+        var b = snap(List.of());
+        b.setNodeHealth(List.of(node("worker", false), node("worker-2", false), node("control-plane", true)));
+        when(clusters.snapshot("A")).thenReturn(a);
+        when(clusters.snapshot("B")).thenReturn(b);
+
+        var view = service.overview();
+
+        assertThat(view.nodes().notReady()).isEqualTo(3);
+        assertThat(view.nodeIssues()).extracting(issue -> issue.clusterId() + ":" + issue.notReady())
+                .containsExactlyInAnyOrder("A:1", "B:2");
+    }
+
+    @Test
     void unavailableClusterExcludedFromTotals() {
         when(clusters.snapshot("A")).thenReturn(snap(List.of("demo")));
         when(clusters.snapshot("B")).thenReturn(null);
@@ -110,8 +130,10 @@ class PlatformOverviewServiceTest {
         assertThat(v.clusters().connected()).isEqualTo(1);
         assertThat(v.clusters().unavailable()).isEqualTo(1);
         assertThat(v.clusters().unavailableNames()).containsExactly("B");
+        assertThat(v.clusters().unavailableIds()).containsExactly("B");
         assertThat(v.pods().running()).isEqualTo(5);
         assertThat(v.nodes().ready()).isEqualTo(2);
+        assertThat(v.nodeIssues()).isEmpty();
         assertThat(v.capacity().cpuAllocatable()).isEqualByComparingTo("8");
         assertThat(v.capacity().cpuRequest()).isEqualByComparingTo("1");
         assertThat(v.capacity().cpuLimit()).isEqualByComparingTo("12");   // limits 合计（可超过可分配 = 超卖）
@@ -128,12 +150,13 @@ class PlatformOverviewServiceTest {
 
     @Test
     void namespacesClassifiedPerCluster() {
-        when(clusters.snapshot("A")).thenReturn(snap(List.of("kube-system", "demo", "x")));
+        protection.setProtectedNamespaces(List.of("ops-shared"));
+        when(clusters.snapshot("A")).thenReturn(snap(List.of("ops-shared", "monitor", "kube-custom")));
         when(clusters.snapshot("B")).thenReturn(null);
         when(stats.rows(eq(null), eq("A"), any())).thenReturn(List.of(
-                slice("kube-system", 1, null), slice("demo", 1, null), slice("x", 1, null)));
-        // 别的集群同名 ns 的分配行不能把 A 的 x 算成已分配
-        when(allocations.listAll()).thenReturn(List.of(alloc("A", "demo"), alloc("B", "x")));
+                slice("ops-shared", 1, null), slice("monitor", 1, null), slice("kube-custom", 1, null)));
+        // 系统名单优先；别的集群同名 ns 的分配行不能影响 A。
+        when(allocations.listAll()).thenReturn(List.of(alloc("A", "ops-shared"), alloc("A", "monitor"), alloc("B", "kube-custom")));
 
         PlatformOverviewView.Namespaces ns = service.overview().namespaces();
 
@@ -170,9 +193,18 @@ class PlatformOverviewServiceTest {
         when(apps.countByStatus(eq("B"), any())).thenReturn(List.of(ready));
         when(apps.countByStatus(eq(null), any())).thenReturn(List.of(ready, ready));
 
-        assertThat(service.overview().applications().total()).isEqualTo(2);
-        org.mockito.Mockito.verify(alerts, org.mockito.Mockito.never()).countFiringBySeverity(eq(null), any());
-        org.mockito.Mockito.verify(alerts, org.mockito.Mockito.never()).countFiringBySeverity(eq("B"), any());
+        when(alerts.countFiringByNamespace("A", null)).thenReturn(List.of(
+                new PlatformAlertEventMapper.NamespaceSeverityCount("demo", "critical", 3)));
+        PlatformOverviewView overview = service.overview();
+
+        assertThat(overview.applications().total()).isEqualTo(2);
+        assertThat(overview.alertsFiring().total()).isEqualTo(3);
+        assertThat(overview.alertsFiring().byNamespace()).singleElement().satisfies(scope -> {
+            assertThat(scope.clusterId()).isEqualTo("A");
+            assertThat(scope.namespace()).isEqualTo("demo");
+        });
+        verify(alerts, never()).countFiringByNamespace(eq(null), any());
+        verify(alerts, never()).countFiringByNamespace(eq("B"), any());
     }
 
     @Test
@@ -201,6 +233,20 @@ class PlatformOverviewServiceTest {
         assertThat(a.abnormal()).isEqualTo(2);
         assertThat(a.unhealthyWorkloads()).isEqualTo(2);
         assertThat(a.clusterName()).isEqualTo("A");
+    }
+
+    @Test
+    void byNamespaceIncludesWorkloadsWithNoPods() {
+        when(clusters.snapshot("A")).thenReturn(snap(List.of("scaled-down")));
+        NamespaceSnapshotDTO stopped = slice("scaled-down", 0, null);
+        stopped.getStat().setDeployCount(2);
+        when(stats.rows(eq(null), eq("A"), any())).thenReturn(List.of(stopped));
+
+        assertThat(service.overview().byNamespace()).singleElement().satisfies(row -> {
+            assertThat(row.namespace()).isEqualTo("scaled-down");
+            assertThat(row.workloads()).isEqualTo(2);
+            assertThat(row.running()).isZero();
+        });
     }
 
     @Test

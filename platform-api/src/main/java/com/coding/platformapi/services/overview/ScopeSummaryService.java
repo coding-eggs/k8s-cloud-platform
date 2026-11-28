@@ -10,7 +10,10 @@ import com.coding.data.mapper.k8s.PlatformAlertEventMapper;
 import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.mapper.system.PlatformPipelineMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
+import com.coding.platformapi.configs.NamespaceProtectionProperties;
 import com.coding.platformapi.models.overview.CountBreakdown;
+import com.coding.platformapi.models.overview.AlertBreakdown;
+import com.coding.platformapi.models.overview.AlertBreakdown.NamespaceAlerts;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Namespaces;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Nodes;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Pods;
@@ -61,6 +64,7 @@ public class ScopeSummaryService {
     private final PlatformTenantNamespaceMapper allocations;
     private final TenantOverviewService tenantOverview;
     private final OverviewPermissions permissions;
+    private final NamespaceProtectionProperties protection;
 
     public ScopeSummaryView cluster(String clusterId) {
         ClusterSnapshotDTO snap = clusters.snapshot(clusterId);
@@ -87,7 +91,7 @@ public class ScopeSummaryService {
                     .collect(Collectors.toSet());
             long sys = 0, alloc = 0, unalloc = 0;
             for (String ns : orEmpty(snap.getNamespaceNames())) {
-                switch (NamespaceCategory.of(ns, allocated)) {
+                switch (NamespaceCategory.of(ns, allocated, protection)) {
                     case SYSTEM -> sys++;
                     case ALLOCATED -> alloc++;
                     case UNALLOCATED -> unalloc++;
@@ -127,7 +131,7 @@ public class ScopeSummaryService {
     /** {@code namespaces == ALL} 表示"整个集群不按 ns 过滤"（SQL 侧传 null）。 */
     private static final List<String> ALL = List.of("\0all");
 
-    private record Blocks(CountBreakdown apps, CountBreakdown mw, CountBreakdown ci, CountBreakdown alerts) {
+    private record Blocks(CountBreakdown apps, CountBreakdown mw, CountBreakdown ci, AlertBreakdown alerts) {
     }
 
     private Blocks blocks(Map<String, List<String>> byCluster, String tenantId) {
@@ -135,7 +139,8 @@ public class ScopeSummaryService {
         boolean canMw = permissions.has(MIDDLEWARE_READ);
         boolean canCi = permissions.has(PIPELINE_READ);
         boolean canAlerts = permissions.has(TENANT_ALERT_LIST) || permissions.has(PLATFORM_ALERT_READ);
-        List<CountBreakdown> a = new ArrayList<>(), m = new ArrayList<>(), c = new ArrayList<>(), al = new ArrayList<>();
+        List<CountBreakdown> a = new ArrayList<>(), m = new ArrayList<>(), c = new ArrayList<>();
+        List<NamespaceAlerts> al = new ArrayList<>();
         byCluster.forEach((clusterId, nsList) -> {
             Collection<String> ns = nsList == ALL ? null : nsList;
             if (canApps) {
@@ -145,14 +150,14 @@ public class ScopeSummaryService {
                 c.add(OverviewBuckets.pipelines(orEmpty(pipelines.countLatestRunStatus(clusterId, ns))));
             }
             if (canAlerts) {
-                al.add(OverviewBuckets.alerts(orEmpty(alerts.countFiringBySeverity(clusterId, ns))));
+                al.addAll(OverviewBuckets.namespaceAlerts(clusterId, orEmpty(alerts.countFiringByNamespace(clusterId, ns))));
             }
             if (canMw) {
                 m.add(middlewareOf(clusterId, ns, tenantId));
             }
         });
         return new Blocks(canApps ? OverviewBuckets.sum(a) : null, canMw ? OverviewBuckets.sum(m) : null,
-                canCi ? OverviewBuckets.sum(c) : null, canAlerts ? OverviewBuckets.sum(al) : null);
+                canCi ? OverviewBuckets.sum(c) : null, canAlerts ? OverviewBuckets.alertBreakdown(al) : null);
     }
 
     /**

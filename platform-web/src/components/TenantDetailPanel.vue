@@ -295,8 +295,10 @@ function refreshAll(): void {
 watch(() => props.tenantId, refreshAll, { immediate: true })
 const overviewRef = ref<{ reloadAll: () => void } | null>(null)
 /** 总览页头的刷新 / 自动刷新：只重拉概览（命名空间、成员两页签各有自己的刷新按钮） */
-function reloadOverview(): void {
-  overviewRef.value?.reloadAll()
+function reloadOverview(): boolean {
+  if (!overviewRef.value) return false
+  overviewRef.value.reloadAll()
+  return true
 }
 defineExpose({ reloadOverview, openAllocation })
 

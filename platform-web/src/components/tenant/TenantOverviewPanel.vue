@@ -1,15 +1,6 @@
 <script setup lang="ts">
 /**
- * 租户概览面板（Task 11）：一块自包含的租户视角首屏。
- *
- * 复用两处入口（同一 UI）：TenantView 的 admin 代管抽屉（传被查看租户）、租户视图总览（传当前租户）。
- * 范围（有哪些命名空间）取自后端分配表；事实取自各命名空间切片 —— 首屏所有数字与明细逐行相加一致（spec §6.1）。
- *
- * 三段分开加载、分开降级（spec §10，B4 的 Promise.all 一锅端踩过）：
- *   1. 快照（/tenant/overview）      —— 失败整块显示失败态；
- *   2. 明细（/tenant/overview/breakdown，进面板即拉）—— 失败只影响明细表；
- *   3. 两条曲线（/tenant/overview/metrics/{cpu,memory}）—— 失败只影响各自的图表区。
- * 某集群取不到数不整页失败：后端把它计入 unavailableClusters（首屏显式提示 + 可重试），其余照常出数。
+ * 租户总览与代管抽屉共用。快照、命名空间明细和用量趋势独立加载。
  */
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -19,13 +10,16 @@ import type { K8sAbnormalPod, K8sNamespaceStatEntry, K8sQuotaState, K8sTenantOve
 import type { MetricSeries } from '@/types/metrics'
 import MetricChart from '@/components/workload/MetricChart.vue'
 import EmptyState from '@/components/EmptyState.vue'
-import { useResourceContext } from '@/stores/context'
+import { usePermission } from '@/stores/permission'
+import { pageCodes } from '@/pageCodes'
+import { jumpWithContext } from '@/composables/useContextJump'
 import { fmtAge, fmtDate } from '@/utils/format'
 import { formatMetricValue } from '@/utils/metrics'
 import CountCard from '@/components/overview/CountCard.vue'
 import StatusCards from '@/components/overview/StatusCards.vue'
 import CapacityBullet from '@/components/overview/CapacityBullet.vue'
 import InventoryStrip, { type InventoryItem } from '@/components/overview/InventoryStrip.vue'
+import OverviewAlertSummary from '@/components/overview/OverviewAlertSummary.vue'
 import { middlewareNsCountsOf, nsCountsOf, podSegments, segmentsOf, workloadSegments, type Segment } from '@/components/overview/labels'
 import type { ScopeSummary } from '@/types/overview'
 
@@ -34,7 +28,8 @@ const props = defineProps<{ tenantId: string; canRequestSpace?: boolean }>()
 const emit = defineEmits<{ loaded: [at: number]; failed: []; requestSpace: [] }>()
 
 const router = useRouter()
-const ctx = useResourceContext()
+const perm = usePermission()
+const canOpenNamespace = computed(() => perm.has(pageCodes.namespace.detail))
 
 // ---- 展示小工具（null → 「—」，绝不显示 0；单位沿用本仓既有格式化：CPU=核、内存=字节）----
 function fmtCpu(v?: number | null): string {
@@ -42,11 +37,6 @@ function fmtCpu(v?: number | null): string {
 }
 function fmtMem(v?: number | null): string {
   return v == null ? '—' : formatMetricValue(v, '字节', false)
-}
-/** 占用率（%）。hard 为 null/0（或 used 缺数）→ null（不画条、显示「—」）。 */
-function occPct(used?: number | null, hard?: number | null): number | null {
-  if (used == null || hard == null || hard <= 0) return null
-  return Math.min(100, Math.max(0, (used / hard) * 100))
 }
 /** 异常 Pod 存活时长：ageSeconds → 「Xd Yh」。 */
 function ageText(seconds?: number | null): string {
@@ -95,14 +85,6 @@ async function loadTenantMwRows() {
   const lists = await Promise.all(ids.map((id) => middlewareApi.instanceList(id, undefined, target).catch(() => [])))
   return middlewareNsCountsOf(lists.flat(), clusterNameOf)
 }
-/** 清单条：只有数、没有状态的对象（不占状态卡位） */
-const inventory = computed<InventoryItem[]>(() => [
-  { label: 'Service', value: overview.value?.total.serviceCount, to: '/resources/services' },
-  { label: 'PVC', value: overview.value?.total.pvcCount, to: '/resources/pvcs' },
-  { label: '命名空间', value: summary.value?.namespaceCount ?? allocatedNamespaceCount.value },
-  { label: '成员', value: summary.value?.memberCount },
-])
-
 /**
  * 容量子弹图的口径：配额 hard 只覆盖「配了配额的命名空间」。
  * - 全部命名空间都有配额（或一个都没有）→ requests / limits / 实际用量和量程同口径，全画；
@@ -111,8 +93,11 @@ const inventory = computed<InventoryItem[]>(() => [
 const quotaCoverage = computed<'all' | 'none' | 'partial'>(() => {
   const o = overview.value
   if (!o || (o.quotaCpuHard == null && o.quotaMemHard == null)) return 'none'
-  return o.namespacesWithoutQuota.length ? 'partial' : 'all'
+  const incomplete = o.requestsQuotaCoverageIncomplete
+    ?? (o.namespacesWithoutQuota.length > 0 || o.namespacesPartialQuota.length > 0)
+  return incomplete ? 'partial' : 'all'
 })
+const quotaConfiguredCount = computed(() => breakdown.value?.filter(row => row.quotaState !== 'MISSING').length)
 /** 监控当前值（曲线「用量」序列最后一个点）；取不到 → null */
 function currentUsed(key: CurveKey): number | null {
   const ser = curve.value[key].series
@@ -198,13 +183,18 @@ function resCell(row: K8sNamespaceStatEntry, dim: 'cpu' | 'mem') {
 }
 const occTone = (p: number) => (p >= 95 ? 'danger' : p >= 80 ? 'warning' : 'ok')
 
-const hasAttention = computed(() => {
+const hasResourceAttention = computed(() => {
   const o = overview.value
   return !!o && (o.namespacesWithoutQuota.length > 0 || o.namespacesPartialQuota.length > 0
     || o.abnormalPodTotal > 0 || o.unhealthyWorkloadTotal > 0 || nearLimit.value.length > 0)
 })
+const unhealthyNamespaces = computed(() =>
+  (breakdown.value ?? []).filter(row => row.snapshot.unhealthyWorkloadCount > 0)
+    .sort((a, b) => b.snapshot.unhealthyWorkloadCount - a.snapshot.unhealthyWorkloadCount),
+)
+const hasDelivery = computed(() => !!(summary.value?.applications || summary.value?.middleware || summary.value?.pipelines))
 
-const tenantNsRows = computed(() => (breakdown.value ? nsCountsOf(breakdown.value, clusterNameOf) : null))
+const tenantNsRows = computed(() => nsCountsOf(breakdown.value, clusterNameOf))
 
 async function loadOverview(): Promise<void> {
   const target = props.tenantId
@@ -223,8 +213,8 @@ async function loadOverview(): Promise<void> {
   } catch {
     if (target === props.tenantId) {
       // 已有数据时（自动刷新 / 手动刷新）保留旧数，只通知页头；首次就失败才整块显示失败态
-      if (overview.value) emit('failed')
-      else loadError.value = true
+      if (!overview.value) loadError.value = true
+      emit('failed')
     }
   } finally {
     if (target === props.tenantId) loading.value = false
@@ -235,6 +225,23 @@ async function loadOverview(): Promise<void> {
 const breakdown = ref<K8sNamespaceStatEntry[] | null>(null)
 const breakdownLoading = ref(false)
 const breakdownLoaded = ref(false)
+
+function inventoryScopes(field: 'svcCount' | 'pvcCount'): InventoryItem['scopes'] {
+  return (breakdown.value ?? []).filter(row => row.snapshot.stat[field] > 0)
+    .sort((a, b) => b.snapshot.stat[field] - a.snapshot.stat[field])
+    .map(row => ({
+      clusterId: row.clusterId,
+      namespace: nsOf(row),
+      label: `${clusterNameOf(row.clusterId)} / ${nsOf(row)}`,
+      count: row.snapshot.stat[field],
+    }))
+}
+const inventory = computed<InventoryItem[]>(() => [
+  { label: 'Service', value: overview.value?.total.serviceCount, to: '/resources/services', scopes: inventoryScopes('svcCount') },
+  { label: 'PVC', value: overview.value?.total.pvcCount, to: '/resources/pvcs', scopes: inventoryScopes('pvcCount') },
+  { label: '命名空间', value: summary.value?.namespaceCount ?? allocatedNamespaceCount.value },
+  { label: '成员', value: summary.value?.memberCount },
+])
 
 async function loadBreakdown(): Promise<void> {
   const target = props.tenantId
@@ -255,13 +262,12 @@ async function loadBreakdown(): Promise<void> {
 }
 
 const nsOf = (row: K8sNamespaceStatEntry): string => row.snapshot.stat.namespace
-/** R14：只有当该行的 (集群, 命名空间) 与顶栏上下文一致时才是链接 —— 否则点下去会作用到另一个上下文里的同名对象。 */
-const canOpen = (row: K8sNamespaceStatEntry): boolean =>
-  ctx.state.clusterId === row.clusterId && ctx.state.namespace === nsOf(row)
-function openNamespace(row: K8sNamespaceStatEntry): void {
-  router.push(
-    `/namespaces/detail?clusterId=${encodeURIComponent(row.clusterId)}&name=${encodeURIComponent(nsOf(row))}`,
-  )
+function namespaceLocation(row: K8sNamespaceStatEntry, tab?: 'quota') {
+  return { name: 'namespace-detail', query: { clusterId: row.clusterId, name: nsOf(row), tab } }
+}
+function openUnhealthyWorkloads(row: K8sNamespaceStatEntry): void {
+  void jumpWithContext(router, { clusterId: row.clusterId, namespace: nsOf(row) },
+    { name: 'workloads', query: { status: 'unhealthy' } })
 }
 /** quotaState 直接读后端三态（前端只做展示映射，不自行判定）：OK 不显示 / MISSING / PARTIAL。 */
 function quotaBadge(state: K8sQuotaState): { text: string; type: 'danger' | 'warning' } | null {
@@ -383,20 +389,103 @@ defineExpose({ reloadAll })
         </template>
       </el-alert>
 
-      <!-- ===== 状态卡（四个概览统一：工作负载 · Pod · 应用 · 中间件 · CI · 告警；无读权限的块不渲染）===== -->
-      <StatusCards>
-        <CountCard title="工作负载" kind="workload" :total="workloadCount" :segments="tenantWorkloadSegments" :ns-rows="tenantNsRows" />
-        <CountCard title="Pod" kind="pod" :total="overview.total.podCount" :segments="tenantPodSegments" :ns-rows="tenantNsRows" />
-        <CountCard v-if="summary?.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
-        <CountCard v-if="summary?.middleware" title="中间件" kind="middleware" :load-ns-rows="loadTenantMwRows" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
-        <CountCard v-if="summary?.pipelines" title="CI（最近一次运行）" kind="pipeline" :total="summary.pipelines.total" :segments="segmentsOf('pipeline', summary.pipelines)" />
-        <CountCard v-if="summary?.alerts" title="告警触发中" kind="alert" :total="summary.alerts.total" :segments="segmentsOf('alert', summary.alerts)" />
-      </StatusCards>
+      <div class="tenant-first">
+        <section class="card">
+          <h2 class="section-title">需要关注</h2>
+          <div v-if="summary?.alerts?.total || hasResourceAttention" class="attention">
+            <div v-if="summary?.alerts && summary.alerts.total > 0" class="att-block">
+              <h3 class="att-k">告警</h3>
+              <OverviewAlertSummary :alerts="summary.alerts" :cluster-name="clusterNameOf" />
+            </div>
+            <div v-if="overview.unhealthyWorkloadTotal > 0" class="att-block">
+              <h3 class="att-k">不健康工作负载 <span class="muted">共 {{ overview.unhealthyWorkloadTotal }} 个</span></h3>
+              <ul v-if="unhealthyNamespaces.length" class="attention-list">
+                <li v-for="row in unhealthyNamespaces" :key="row.clusterId + '/' + nsOf(row)">
+                  <span>{{ clusterNameOf(row.clusterId) }} / {{ nsOf(row) }} · {{ row.snapshot.unhealthyWorkloadCount }} 个</span>
+                  <el-button v-if="perm.has(pageCodes.workload.list)" link type="primary" @click="openUnhealthyWorkloads(row)">查看</el-button>
+                </li>
+              </ul>
+              <p v-else class="muted att-note">{{ breakdownLoading ? '正在定位命名空间…' : '命名空间明细暂不可用' }}</p>
+            </div>
+            <div v-if="nearLimit.length" class="att-block">
+              <h3 class="att-k">配额接近上限 <span class="muted">≥ 80%</span></h3>
+              <ul class="attention-list">
+                <li v-for="n in nearLimit" :key="n.key">
+                  <span>{{ clusterNameOf(n.row.clusterId) }} / {{ n.ns }}</span>
+                  <el-tag :type="n.pct >= 95 ? 'danger' : 'warning'" size="small">{{ n.dim }} {{ n.pct.toFixed(0) }}%</el-tag>
+                  <router-link v-if="canOpenNamespace" class="name-link" :to="namespaceLocation(n.row, 'quota')">查看</router-link>
+                </li>
+              </ul>
+            </div>
+            <details v-if="overview.namespacesWithoutQuota.length || overview.namespacesPartialQuota.length" class="att-details">
+              <summary>
+                <span v-if="overview.namespacesWithoutQuota.length">{{ overview.namespacesWithoutQuota.length }} 个命名空间未配置配额</span>
+                <span v-if="overview.namespacesPartialQuota.length">{{ overview.namespacesPartialQuota.length }} 个命名空间配额未覆盖 requests</span>
+              </summary>
+              <div v-if="overview.namespacesWithoutQuota.length" class="chips">
+                <span class="muted">未配置</span>
+                <span v-for="(ns, index) in overview.namespacesWithoutQuota" :key="index" class="chip">{{ ns }}</span>
+              </div>
+              <div v-if="overview.namespacesPartialQuota.length" class="chips">
+                <span class="muted">未覆盖 requests</span>
+                <span v-for="(ns, index) in overview.namespacesPartialQuota" :key="index" class="chip">{{ ns }}</span>
+              </div>
+            </details>
+            <!-- 异常 Pod：按 reason 分组计数（全量口径），名单可展开 -->
+            <div v-if="overview.abnormalPodTotal > 0" class="att-block">
+              <div class="att-k">异常 Pod <span class="muted">共 {{ overview.abnormalPodTotal }}</span></div>
+              <div class="att-tags">
+                <el-tag v-for="(cnt, reason) in overview.abnormalPodReasonCounts" :key="reason" type="danger" size="small">
+                  {{ reason }} {{ cnt }}
+                </el-tag>
+              </div>
+              <el-collapse v-if="overview.abnormalPods.length" class="att-collapse">
+                <el-collapse-item :title="`展开名单（${overview.abnormalPods.length} 条${overview.abnormalPodTotal > overview.abnormalPods.length ? '，已截断' : ''}）`" name="pods">
+                  <el-table :data="overview.abnormalPods" size="small" stripe max-height="300">
+                    <el-table-column label="命名空间" min-width="130">
+                      <template #default="{ row }"><span class="muted">{{ row.namespace ?? '—' }}</span></template>
+                    </el-table-column>
+                    <el-table-column label="名称" min-width="200">
+                      <template #default="{ row }"><code class="res-name">{{ row.name }}</code></template>
+                    </el-table-column>
+                    <el-table-column label="原因" min-width="150">
+                      <template #default="{ row }"><span class="mono">{{ row.reason ?? '—' }}</span></template>
+                    </el-table-column>
+                    <el-table-column prop="restarts" label="重启" width="80" />
+                    <el-table-column label="存活时长" width="110">
+                      <template #default="{ row }">{{ ageText((row as K8sAbnormalPod).ageSeconds) }}</template>
+                    </el-table-column>
+                  </el-table>
+                </el-collapse-item>
+              </el-collapse>
+            </div>
+          </div>
+          <p v-if="!hasResourceAttention && !summary?.alerts?.total" class="attention-empty"
+            :class="{ healthy: breakdown != null && !overview.unavailableClusters.length }">
+            {{ breakdown == null || overview.unavailableClusters.length ? '暂无可展示的待处理项，部分资源数据未就绪' : '当前没有需要关注的项目' }}
+          </p>
+        </section>
 
-      <!-- ===== 资源与配额：清单条 + 子弹图（CPU / 内存）+ 配额占用 Top 5 命名空间 ===== -->
+        <section v-if="hasDelivery" class="card">
+          <h2 class="section-title">交付状态</h2>
+          <div class="delivery-cards">
+            <CountCard v-if="summary?.applications" title="应用" kind="app" :total="summary.applications.total" :segments="segmentsOf('app', summary.applications)" />
+            <CountCard v-if="summary?.middleware" title="中间件" kind="middleware" :load-ns-rows="loadTenantMwRows" :total="summary.middleware.total" :segments="segmentsOf('middleware', summary.middleware)" />
+            <CountCard
+              v-if="summary?.pipelines"
+              title="流水线 · 最近一次运行"
+              help="每条流水线只统计最近一次运行的结果。「成功 2」表示有两条流水线最近一次运行均以成功状态结束。"
+              kind="pipeline"
+              :total="summary.pipelines.total"
+              :segments="segmentsOf('pipeline', summary.pipelines)"
+            />
+          </div>
+        </section>
+      </div>
+
       <section class="card">
         <div class="card-head">
-          <h3 class="section-title">资源与配额</h3>
+          <h2 class="section-title">资源与配额</h2>
           <InventoryStrip :items="inventory" class="cap-inv" />
           <span class="sampled muted">数据截至 {{ sampledAtText }}</span>
         </div>
@@ -414,139 +503,59 @@ defineExpose({ reloadAll })
               :used="b.used"
               :missing-text="b.missingText"
             />
-            <div v-if="quotaCoverage === 'partial'" class="cap-note muted">
-              {{ overview.namespacesWithoutQuota.length }} 个命名空间没有配额，未计入 requests 量程；实际用量按全部命名空间统计，此处不画以免口径混淆。
-            </div>
+          <div v-if="quotaCoverage === 'partial'" class="cap-note muted">
+            {{ quotaConfiguredCount == null ? '' : `${quotaConfiguredCount} 个命名空间已配置配额 · ` }}
+            <span v-if="overview.namespacesWithoutQuota.length">{{ overview.namespacesWithoutQuota.length }} 个未配置。</span>
+            配额占用只统计配置了对应上限的命名空间。
+          </div>
         </div>
       </section>
 
-      <!-- ===== 需要关注 ===== -->
-      <div v-if="!hasAttention" class="card all-good">✓ 没有需要关注的项目</div>
-      <section v-else class="card">
-        <h3 class="section-title">需要关注</h3>
-
-        <div class="attention">
-          <!-- 配额接近上限（≥ 80%） -->
-          <div v-if="nearLimit.length" class="att-block">
-            <div class="att-k">配额接近上限 <span class="muted">≥ 80%</span></div>
-            <div class="att-tags">
-              <el-tag
-                v-for="n in nearLimit"
-                :key="n.key"
-                :type="n.pct >= 95 ? 'danger' : 'warning'"
-                size="small"
-              >
-                {{ multiCluster ? clusterNameOf(n.row.clusterId) + ' / ' : '' }}{{ n.ns }} {{ n.dim }} {{ n.pct.toFixed(0) }}%
-              </el-tag>
-            </div>
-          </div>
-
-          <!-- 配额 -->
-          <div v-if="overview.namespacesWithoutQuota.length || overview.namespacesPartialQuota.length" class="att-block">
-            <div class="att-k">配额</div>
-            <div class="att-tags">
-              <el-tag v-if="overview.namespacesWithoutQuota.length" type="danger" size="small">
-                ⚠ {{ overview.namespacesWithoutQuota.length }} 个命名空间无配额
-              </el-tag>
-              <el-tag v-if="overview.namespacesPartialQuota.length" type="warning" size="small">
-                ⚠ {{ overview.namespacesPartialQuota.length }} 个命名空间配额未覆盖 requests
-              </el-tag>
-            </div>
-            <div v-if="overview.namespacesWithoutQuota.length" class="chips">
-              <span class="muted">无配额：</span>
-              <span v-for="ns in overview.namespacesWithoutQuota" :key="'w-' + ns" class="chip">{{ ns }}</span>
-            </div>
-            <div v-if="overview.namespacesPartialQuota.length" class="chips">
-              <span class="muted">配额未覆盖 requests：</span>
-              <span v-for="ns in overview.namespacesPartialQuota" :key="'p-' + ns" class="chip">{{ ns }}</span>
-            </div>
-          </div>
-
-          <!-- 异常 Pod：按 reason 分组计数（全量口径），名单可展开 -->
-          <div v-if="overview.abnormalPodTotal > 0" class="att-block">
-            <div class="att-k">异常 Pod <span class="muted">共 {{ overview.abnormalPodTotal }}</span></div>
-            <div class="att-tags">
-              <el-tag v-for="(cnt, reason) in overview.abnormalPodReasonCounts" :key="reason" type="danger" size="small">
-                {{ reason }} {{ cnt }}
-              </el-tag>
-            </div>
-            <el-collapse v-if="overview.abnormalPods.length" class="att-collapse">
-              <el-collapse-item :title="`展开名单（${overview.abnormalPods.length} 条${overview.abnormalPodTotal > overview.abnormalPods.length ? '，已截断' : ''}）`" name="pods">
-                <el-table :data="overview.abnormalPods" size="small" stripe max-height="300">
-                  <el-table-column label="命名空间" min-width="130">
-                    <template #default="{ row }"><span class="muted">{{ row.namespace ?? '—' }}</span></template>
-                  </el-table-column>
-                  <el-table-column label="名称" min-width="200">
-                    <template #default="{ row }"><code class="res-name">{{ row.name }}</code></template>
-                  </el-table-column>
-                  <el-table-column label="原因" min-width="150">
-                    <template #default="{ row }"><span class="mono">{{ row.reason ?? '—' }}</span></template>
-                  </el-table-column>
-                  <el-table-column prop="restarts" label="重启" width="80" />
-                  <el-table-column label="存活时长" width="110">
-                    <template #default="{ row }">{{ ageText((row as K8sAbnormalPod).ageSeconds) }}</template>
-                  </el-table-column>
-                </el-table>
-              </el-collapse-item>
-            </el-collapse>
-          </div>
-
-          <!-- 不健康工作负载 -->
-          <div v-if="overview.unhealthyWorkloadTotal > 0" class="att-block">
-            <div class="att-k">不健康工作负载 <span class="muted">共 {{ overview.unhealthyWorkloadTotal }}</span></div>
-            <div class="att-tags">
-              <el-tag
-                v-for="w in overview.unhealthyWorkloads"
-                :key="`${w.kind}/${w.namespace}/${w.name}`"
-                type="warning"
-                size="small"
-              >
-                {{ w.namespace }}/{{ w.name }} {{ w.readyReplicas }}/{{ w.replicas }}
-              </el-tag>
-              <span v-if="overview.unhealthyWorkloadTotal > overview.unhealthyWorkloads.length" class="muted">
-                …共 {{ overview.unhealthyWorkloadTotal }} 个
-              </span>
-            </div>
-          </div>
-        </div>
-
+      <section class="card">
+        <h2 class="section-title">运行资源</h2>
+        <StatusCards class="resource-summary">
+          <CountCard title="工作负载" kind="workload" :total="workloadCount" :segments="tenantWorkloadSegments" :ns-rows="tenantNsRows" />
+          <CountCard title="Pod" kind="pod" :total="overview.total.podCount" :segments="tenantPodSegments" :ns-rows="tenantNsRows" />
+        </StatusCards>
       </section>
 
-      <!-- ===== 两条曲线（各自独立降级）===== -->
-      <section class="charts">
-        <div v-if="curve.cpu.error" class="chart-fail">
-          租户 CPU 曲线加载失败（Thanos 不可用或查询失败）——不影响上方快照。
-          <el-button link type="primary" :icon="Refresh" @click="loadCurve('cpu')">重试</el-button>
-        </div>
-        <MetricChart
-          v-else
-          title="租户 CPU 用量"
-          :unit="curve.cpu.unit"
-          :series="curve.cpu.series"
-          :loading="curve.cpu.loading"
-          percentable
-          :limit="overview.quotaCpuHard ?? null"
-          :ranges="RANGES"
-          :range="curve.cpu.range"
-          @update:range="(v: number) => onRangeChange('cpu', v)"
-        />
+      <section class="card">
+        <h2 class="section-title">实际用量趋势</h2>
+        <div class="charts">
+          <div v-if="curve.cpu.error" class="chart-fail">
+            租户 CPU 曲线加载失败（Thanos 不可用或查询失败）——不影响上方快照。
+            <el-button link type="primary" :icon="Refresh" @click="loadCurve('cpu')">重试</el-button>
+          </div>
+          <MetricChart
+            v-else
+            title="租户 CPU 用量"
+            :unit="curve.cpu.unit"
+            :series="curve.cpu.series"
+            :loading="curve.cpu.loading"
+            :percentable="quotaCoverage === 'all'"
+            :limit="overview.quotaCpuHard ?? null"
+            :ranges="RANGES"
+            :range="curve.cpu.range"
+            @update:range="(v: number) => onRangeChange('cpu', v)"
+          />
 
-        <div v-if="curve.memory.error" class="chart-fail">
-          租户内存曲线加载失败（Thanos 不可用或查询失败）——不影响上方快照。
-          <el-button link type="primary" :icon="Refresh" @click="loadCurve('memory')">重试</el-button>
+          <div v-if="curve.memory.error" class="chart-fail">
+            租户内存曲线加载失败（Thanos 不可用或查询失败）——不影响上方快照。
+            <el-button link type="primary" :icon="Refresh" @click="loadCurve('memory')">重试</el-button>
+          </div>
+          <MetricChart
+            v-else
+            title="租户内存用量"
+            :unit="curve.memory.unit"
+            :series="curve.memory.series"
+            :loading="curve.memory.loading"
+            :percentable="quotaCoverage === 'all'"
+            :limit="overview.quotaMemHard ?? null"
+            :ranges="RANGES"
+            :range="curve.memory.range"
+            @update:range="(v: number) => onRangeChange('memory', v)"
+          />
         </div>
-        <MetricChart
-          v-else
-          title="租户内存用量"
-          :unit="curve.memory.unit"
-          :series="curve.memory.series"
-          :loading="curve.memory.loading"
-          percentable
-          :limit="overview.quotaMemHard ?? null"
-          :ranges="RANGES"
-          :range="curve.memory.range"
-          @update:range="(v: number) => onRangeChange('memory', v)"
-        />
       </section>
 
       <!-- ===== 明细表 ===== -->
@@ -558,10 +567,8 @@ defineExpose({ reloadAll })
         <el-table v-else :data="sortedBreakdown.map((x) => x.row)" stripe max-height="480">
           <el-table-column label="命名空间" width="200" fixed>
             <template #default="{ row }">
-              <span v-if="canOpen(row)" class="name-link" @click="openNamespace(row)">{{ nsOf(row) }}</span>
-              <el-tooltip v-else content="先切换上下文（顶栏选择该集群 / 命名空间）" placement="top">
-                <span class="muted">{{ nsOf(row) }}</span>
-              </el-tooltip>
+              <router-link v-if="canOpenNamespace" class="name-link" :to="namespaceLocation(row)">{{ nsOf(row) }}</router-link>
+              <span v-else class="muted">{{ nsOf(row) }}</span>
             </template>
           </el-table-column>
           <el-table-column label="集群" min-width="140">
@@ -608,6 +615,7 @@ defineExpose({ reloadAll })
 .tov-skeleton .sk-block { width: 100%; height: 160px; border-radius: 10px; margin-bottom: 14px; }
 .tov {
   padding-bottom: 8px;
+  container-type: inline-size;
 }
 .notice {
   font-size: 12.5px;
@@ -646,51 +654,39 @@ defineExpose({ reloadAll })
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 10px;
 }
 .section-title {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--text-2);
+  color: var(--text-1);
 }
+.card-head .section-title { margin: 0; }
 .sampled {
   font-size: 12px;
 }
 
-.res-kind {
-  width: 44px;
-  font-weight: 700;
-  color: var(--text-2);
-  flex-shrink: 0;
+.tenant-first { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.tenant-first > :only-child { grid-column: 1 / -1; }
+.delivery-cards :deep(.ov-count-wrap) { margin: 0; }
+.delivery-cards :deep(.ov-count-wrap + .ov-count-wrap) { border-top: 1px solid var(--border); }
+.delivery-cards :deep(.ov-count-card) {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center;
+  padding: 9px 0; border: 0; border-radius: 0; background: transparent;
 }
-.cell {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+.delivery-cards :deep(.ov-count-card:hover) { box-shadow: none; transform: none; }
+.delivery-cards :deep(.ov-count-card.clickable:hover .ov-count-title) { color: var(--accent); }
+.delivery-cards :deep(.ov-count-icon), .delivery-cards :deep(.ov-count-bar) { display: none; }
+.delivery-cards :deep(.ov-count-total) { font-size: 18px; margin: 0; }
+.delivery-cards :deep(.ov-count-segs) { grid-column: 1 / -1; }
+.resource-summary { margin-bottom: 0; }
+.resource-summary :deep(.ov-status-cards) { grid-auto-flow: row; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@container (max-width: 760px) {
+  .tenant-first { grid-template-columns: minmax(0, 1fr); gap: 0; }
 }
-.cell .lab {
-  color: var(--text-3);
-}
-.cell.occ {
-  gap: 8px;
-}
-.bar {
-  display: inline-block;
-  width: 120px;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--panel-hover);
-  overflow: hidden;
-}
-.bar-fill {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  border-radius: 4px;
-}
-
 
 .attention {
   display: flex;
@@ -703,10 +699,26 @@ defineExpose({ reloadAll })
   gap: 8px;
 }
 .att-k {
+  margin: 0;
   font-size: 13px;
   font-weight: 600;
   color: var(--text-1);
 }
+.attention-list {
+  display: grid; gap: 2px; margin: 0; padding: 0; list-style: none;
+  max-height: 176px; overflow: auto;
+}
+.attention-list li {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px;
+  padding: 4px 0; font-size: 12px; overflow-wrap: anywhere;
+}
+.attention-list li > :first-child { flex: 1 1 130px; min-width: 0; }
+.att-note, .attention-empty { margin: 0; font-size: 13px; color: var(--text-2); }
+.attention-empty.healthy { color: var(--success); }
+.att-details { font-size: 12px; }
+.att-details summary { cursor: pointer; color: var(--warning); }
+.att-details summary span + span { margin-left: 8px; }
+.att-details .chips { margin-top: 6px; }
 .att-tags {
   display: flex;
   flex-wrap: wrap;
@@ -736,9 +748,8 @@ defineExpose({ reloadAll })
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 14px;
-  margin-bottom: 14px;
 }
-@media (min-width: 1100px) {
+@container (min-width: 850px) {
   .charts {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
@@ -756,21 +767,13 @@ defineExpose({ reloadAll })
   min-height: 120px;
 }
 
-.bar-fill.tone-warning { background: var(--warning); }
-.bar-fill.tone-danger { background: var(--danger); }
-
-.cap-inv { flex: 1; min-width: 0; margin-left: 12px; }
+.cap-inv { flex: 1; min-width: 0; }
 .cap-bullets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 32px; }
 .cap-bullets .cap-note { grid-column: 1 / -1; }
-@media (max-width: 900px) {
+@container (max-width: 560px) {
   .cap-bullets { grid-template-columns: minmax(0, 1fr); }
 }
 .cap-note { font-size: 12px; line-height: 1.6; }
-.all-good {
-  padding: 10px 16px;
-  font-size: 13px;
-  color: var(--success);
-}
 .rc { display: flex; flex-direction: column; gap: 4px; }
 .rc-row { display: grid; grid-template-columns: 58px 84px auto; align-items: center; gap: 8px; white-space: nowrap; }
 .rc-k { font-size: 12px; color: var(--text-3); }

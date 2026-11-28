@@ -21,4 +21,8 @@ public class NamespaceProtectionProperties {
 
     /** 受保护命名空间名（精确匹配，须与集群内真实 ns 名一致）；空 = 不额外保护任何 ns */
     private List<String> protectedNamespaces = new ArrayList<>();
+
+    public boolean isProtected(String namespace) {
+        return namespace != null && protectedNamespaces != null && protectedNamespaces.contains(namespace);
+    }
 }

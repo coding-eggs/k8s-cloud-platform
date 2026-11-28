@@ -13,12 +13,15 @@ import com.coding.data.mapper.system.PlatformApplicationMapper;
 import com.coding.data.models.auth.PlatformTenant;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
+import com.coding.platformapi.configs.NamespaceProtectionProperties;
 import com.coding.platformapi.models.overview.CountBreakdown;
+import com.coding.platformapi.models.overview.AlertBreakdown.NamespaceAlerts;
 import com.coding.platformapi.models.overview.PlatformOverviewView;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Capacity;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Clusters;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Namespaces;
 import com.coding.platformapi.models.overview.PlatformOverviewView.NamespaceCounts;
+import com.coding.platformapi.models.overview.PlatformOverviewView.NodeIssue;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Nodes;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Pods;
 import com.coding.platformapi.models.overview.PlatformOverviewView.Quota;
@@ -64,6 +67,7 @@ public class PlatformOverviewService {
     private final PlatformUserTenantMapper userTenants;
     private final PlatformTenantNamespaceMapper allocations;
     private final PlatformHealthProbe health;
+    private final NamespaceProtectionProperties protection;
 
     public PlatformOverviewView overview() {
         List<K8sCluster> enabled = clusters.list().stream()
@@ -80,8 +84,10 @@ public class PlatformOverviewService {
         int connected = 0;
         List<String> connectedIds = new ArrayList<>();
         List<String> unavailable = new ArrayList<>();
+        List<String> unavailableIds = new ArrayList<>();
         List<NamespaceSnapshotDTO> slices = new ArrayList<>();
         List<NamespaceCounts> byNamespace = new ArrayList<>();
+        List<NodeIssue> nodeIssues = new ArrayList<>();
         List<CountBreakdown> mw = new ArrayList<>();
         long ready = 0, notReady = 0, nsAllocated = 0, nsUnallocated = 0, nsSystem = 0;
         BigDecimal cpuAlloc = null, memAlloc = null;
@@ -92,6 +98,7 @@ public class PlatformOverviewService {
             List<NamespaceSnapshotDTO> clusterSlices = snap == null ? null : slicesOf(c.getClusterId(), snap);
             if (clusterSlices == null) {
                 unavailable.add(c.getClusterName() == null ? c.getClusterId() : c.getClusterName());
+                unavailableIds.add(c.getClusterId());
                 continue;
             }
             connected++;
@@ -99,12 +106,17 @@ public class PlatformOverviewService {
             slices.addAll(clusterSlices);
             List<MiddlewareService.LiveStatus> mwStatuses = liveStatusesOf(c.getClusterId());
             byNamespace.addAll(countsOf(c, clusterSlices, mwStatuses));
+            long clusterNotReady = 0;
             for (NodeHealthDTO n : orEmpty(snap.getNodeHealth())) {
                 if (n.isReady()) {
                     ready++;
                 } else {
-                    notReady++;
+                    clusterNotReady++;
                 }
+            }
+            if (clusterNotReady > 0) {
+                notReady += clusterNotReady;
+                nodeIssues.add(new NodeIssue(c.getClusterId(), c.getClusterName(), clusterNotReady));
             }
             if (snap.getNodeCapacity() != null) {
                 cpuAlloc = add(cpuAlloc, snap.getNodeCapacity().getCpuAllocatable());
@@ -112,7 +124,7 @@ public class PlatformOverviewService {
             }
             Set<String> allocated = allocatedByCluster.getOrDefault(c.getClusterId(), Set.of());
             for (String ns : orEmpty(snap.getNamespaceNames())) {
-                switch (NamespaceCategory.of(ns, allocated)) {
+                switch (NamespaceCategory.of(ns, allocated, protection)) {
                     case SYSTEM -> nsSystem++;
                     case ALLOCATED -> nsAllocated++;
                     case UNALLOCATED -> nsUnallocated++;
@@ -124,10 +136,10 @@ public class PlatformOverviewService {
 
         // 应用 / 告警也只算可用集群（spec：不可用集群不计入任何合计；断开集群的 firing 告警多半已陈旧）
         List<CountBreakdown> appParts = new ArrayList<>();
-        List<CountBreakdown> alertParts = new ArrayList<>();
+        List<NamespaceAlerts> alertParts = new ArrayList<>();
         for (String id : connectedIds) {
             appParts.add(OverviewBuckets.applications(orEmpty(apps.countByStatus(id, null))));
-            alertParts.add(OverviewBuckets.alerts(orEmpty(alerts.countFiringBySeverity(id, null))));
+            alertParts.addAll(OverviewBuckets.namespaceAlerts(id, orEmpty(alerts.countFiringByNamespace(id, null))));
         }
 
         boolean any = connected > 0;   // 没有任何可用集群 → k8s 侧各块 null（前端「—」），不是 0
@@ -136,8 +148,8 @@ public class PlatformOverviewService {
 
         return new PlatformOverviewView(
                 services.join(),
-                new Clusters(connected, unavailable.size(), unavailable),
-                any ? OverviewBuckets.sum(alertParts) : null,
+                new Clusters(connected, unavailable.size(), unavailable, unavailableIds),
+                any ? OverviewBuckets.alertBreakdown(alertParts) : null,
                 any ? OverviewBuckets.sum(appParts) : null,
                 any ? OverviewBuckets.sum(mw) : null,
                 any ? new Workloads(total.getDeploymentCount() + total.getStatefulsetCount() + total.getDaemonsetCount(),
@@ -147,6 +159,7 @@ public class PlatformOverviewService {
                 any ? new Capacity(total.getCpuRequest(), cpuAlloc, total.getMemRequest(), memAlloc,
                         total.getCpuLimit(), total.getMemLimit()) : null,
                 any ? new Nodes(ready, notReady) : null,
+                nodeIssues,
                 any ? new Namespaces(nsAllocated, nsUnallocated, nsSystem) : null,
                 quota(slices),
                 any ? byNamespace : null);
@@ -154,7 +167,7 @@ public class PlatformOverviewService {
 
     /**
      * 一个集群的按 ns 计数行（前端「点异常 → 跳到对应命名空间」用）：Pod 分桶 / 不健康工作负载来自 ns 切片，
-     * 中间件分桶来自实时状态（读不到的 UNKNOWN 不计）。Pod、不健康、中间件全为 0 的 ns 不列出；
+     * 中间件分桶来自实时状态（读不到的 UNKNOWN 不计）。Pod、工作负载、中间件全为 0 的 ns 不列出；
      * 只有中间件、没有切片的 ns 也列出（Pod 各项记 0）。
      */
     private static List<NamespaceCounts> countsOf(K8sCluster c, List<NamespaceSnapshotDTO> slices,
@@ -173,15 +186,16 @@ public class PlatformOverviewService {
         for (NamespaceSnapshotDTO s : slices) {
             NamespaceStatDTO st = s.getStat();
             long[] m = mwByNs.remove(st.getNamespace());
-            if (st.getPodCount() == 0 && s.getUnhealthyWorkloadCount() == 0 && m == null) {
+            long workloads = st.getDeployCount() + st.getStsCount() + st.getDsCount();
+            if (st.getPodCount() == 0 && workloads == 0 && s.getUnhealthyWorkloadCount() == 0 && m == null) {
                 continue;
             }
             m = m == null ? new long[3] : m;
             long abnormal = Math.max(0, st.getPodCount() - st.getPodRunning() - st.getPodPending() - st.getPodSucceeded());
             out.add(new NamespaceCounts(c.getClusterId(), name, st.getNamespace(), st.getPodRunning(), st.getPodPending(),
-                    st.getPodSucceeded(), abnormal, s.getUnhealthyWorkloadCount(), m[0], m[1], m[2]));
+                    st.getPodSucceeded(), abnormal, workloads, s.getUnhealthyWorkloadCount(), m[0], m[1], m[2]));
         }
-        mwByNs.forEach((ns, m) -> out.add(new NamespaceCounts(c.getClusterId(), name, ns, 0, 0, 0, 0, 0, m[0], m[1], m[2])));
+        mwByNs.forEach((ns, m) -> out.add(new NamespaceCounts(c.getClusterId(), name, ns, 0, 0, 0, 0, 0, 0, m[0], m[1], m[2])));
         return out;
     }
 

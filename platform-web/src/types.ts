@@ -260,10 +260,12 @@ export interface K8sTenantOverview {
   quotaLimitMemHard?: number | null
   quotaLimitCpuUsed?: number | null
   quotaLimitMemUsed?: number | null
-  /** 没有任何 ResourceQuota 的命名空间名（QuotaState.MISSING） */
+  /** 未配置 ResourceQuota 且需要提醒的命名空间名（不含受保护命名空间） */
   namespacesWithoutQuota: string[]
   /** 有配额但缺 requests.cpu / requests.memory 任一 key 的命名空间名（QuotaState.PARTIAL） */
   namespacesPartialQuota: string[]
+  /** 任一已采样命名空间缺少 requests 配额时为 true，包含受保护命名空间 */
+  requestsQuotaCoverageIncomplete?: boolean
   /** 异常 Pod 总数（全量，未封顶） */
   abnormalPodTotal: number
   /** reason 分组计数（全量求和，严重度降序） */

@@ -120,16 +120,24 @@ platform:
     # 受保护（系统）命名空间：命中者不可编辑 / 删除 / 设配额 / 设限制范围，读仍开放。
     # 精确匹配，须与集群内真实 ns 名一致；按部署环境增删。
     protected-namespaces:
-      - kube-system
-      - kube-public
-      - kube-node-lease
+      - calico-apiserver
       - calico-system
-      - monitoring
-      - operators
-      - istio-system
-      - ingress-nginx
       - cert-manager
-
+      - default
+      - harbor
+      - istio-system
+      - kube-node-lease
+      - kube-public
+      - kube-system
+      - monitor
+      - opentelemetry-operator-system
+      - operators
+      - platform-middleware-system
+      - platform-storage
+      - platform-system
+      - tekton-operator
+      - tekton-pipelines
+      - tigera-operator
 # MyBatis 配置
 mybatis:
   mapper-locations: classpath*:mapper/**/*.xml

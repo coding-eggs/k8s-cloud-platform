@@ -9,6 +9,10 @@ export interface CountBreakdown {
   byStatus: Record<string, number>
 }
 
+export interface AlertBreakdown extends CountBreakdown {
+  byNamespace?: (CountBreakdown & { clusterId: string; namespace: string | null })[]
+}
+
 export interface ServiceHealth {
   up: number
   total: number
@@ -49,9 +53,9 @@ export interface OverviewQuota {
 
 export interface PlatformOverview {
   services: ServiceHealth
-  clusters: { connected: number; unavailable: number; unavailableNames: string[] }
+  clusters: { connected: number; unavailable: number; unavailableNames: string[]; unavailableIds?: string[] }
   /** 以下 k8s / 计数块：没有任何可用集群（或中间件实时状态读不到）→ null，显示「—」 */
-  alertsFiring: CountBreakdown | null
+  alertsFiring: AlertBreakdown | null
   applications: CountBreakdown | null
   middleware: CountBreakdown | null
   workloads: OverviewWorkloads | null
@@ -59,9 +63,10 @@ export interface PlatformOverview {
   tenants: { total: number; enabled: number; disabled: number; members: number; allocatedNamespaces: number }
   capacity: { cpuRequest: number | null; cpuAllocatable: number | null; memRequest: number | null; memAllocatable: number | null; cpuLimit: number | null; memLimit: number | null } | null
   nodes: OverviewNodes | null
+  nodeIssues?: { clusterId: string; clusterName: string; notReady: number }[]
   namespaces: OverviewNamespaces | null
   quota: OverviewQuota | null
-  /** 按（集群, 命名空间）拆开的 Pod 分桶与不健康工作负载数（只列有 Pod 或有不健康的 ns）；没有可用集群 → null */
+  /** 按（集群, 命名空间）拆开的 Pod、工作负载与中间件计数；没有可用集群 → null */
   byNamespace: NamespaceCounts[] | null
 }
 
@@ -74,6 +79,7 @@ export interface NamespaceCounts {
   pending: number
   succeeded: number
   abnormal: number
+  workloads?: number
   unhealthyWorkloads: number
   /** 中间件实例按总览桶计数（集群 / 租户概览的资源明细里没有这三项，按 0 处理） */
   middlewareNormal?: number
@@ -85,7 +91,7 @@ export interface ScopeSummary {
   applications: CountBreakdown | null
   middleware: CountBreakdown | null
   pipelines: CountBreakdown | null
-  alerts: CountBreakdown | null
+  alerts: AlertBreakdown | null
   /** 仅命名空间范围 */
   pods: OverviewPods | null
   workloads: OverviewWorkloads | null

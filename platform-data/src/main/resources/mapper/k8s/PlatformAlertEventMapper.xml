@@ -102,12 +102,15 @@
       and starts_at = #{startsAt,jdbcType=TIMESTAMP}
   </select>
 
-  <resultMap id="StatusCountMap" type="com.coding.data.models.system.StatusCount">
-    <result column="status" property="status" jdbcType="VARCHAR"/>
-    <result column="cnt" property="count" jdbcType="BIGINT"/>
+  <resultMap id="NamespaceSeverityCountMap" type="com.coding.data.mapper.k8s.PlatformAlertEventMapper$NamespaceSeverityCount">
+    <constructor>
+      <arg column="namespace" javaType="java.lang.String"/>
+      <arg column="severity" javaType="java.lang.String"/>
+      <arg column="cnt" javaType="_long"/>
+    </constructor>
   </resultMap>
-  <select id="countFiringBySeverity" resultMap="StatusCountMap">
-    select severity status, count(*) cnt from platform_alert_event
+  <select id="countFiringByNamespace" resultMap="NamespaceSeverityCountMap">
+    select `namespace`, severity, count(*) cnt from platform_alert_event
     where status = 'firing' and alertname &lt;&gt; 'Watchdog'
     <if test="clusterId != null">and cluster_id = #{clusterId}</if>
     <if test="namespaces != null">
@@ -116,6 +119,6 @@
         <otherwise>and namespace in <foreach collection="namespaces" item="ns" open="(" separator="," close=")">#{ns}</foreach></otherwise>
       </choose>
     </if>
-    group by severity
+    group by `namespace`, severity
   </select>
 </mapper>

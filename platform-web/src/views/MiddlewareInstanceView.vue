@@ -6,7 +6,7 @@
  * 查看 / 编辑 / 连接 / 删除。原先它是商店页里的一个 tab，实例一多就要在两个 tab 之间来回跳。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { middlewareApi } from '@/api'
 import { usePermission } from '@/stores/permission'
@@ -19,6 +19,7 @@ import type { K8sCluster, MiddlewareCatalogItem, MiddlewareInstance } from '@/ty
 
 const perm = usePermission()
 const router = useRouter()
+const route = useRoute()
 // 实例按**租户**跨集群展示（2026-11-14）：顶栏级联已去掉，租户仍取自上下文（token / 代管轨）
 const { tenantId, ensure: ensureTenant } = useMiddlewareTenant()
 
@@ -32,13 +33,26 @@ const code = ref('')
 const loading = ref(false)
 /** 状态筛选（总览桶：normal / abnormal / processing；空 = 全部）；与 URL ?status= 同步，总览卡片点「异常」带过来 */
 const statusFilter = useQueryFilter('status')
+const clusterFilter = computed(() => typeof route.query.clusterId === 'string' ? route.query.clusterId : '')
+const namespaceFilter = computed(() => typeof route.query.namespace === 'string' ? route.query.namespace : '')
+const scopeLabel = computed(() => [
+  clusters.value.find(cluster => cluster.clusterId === clusterFilter.value)?.clusterName ?? clusterFilter.value,
+  namespaceFilter.value,
+].filter(Boolean).join(' / '))
+function clearScopeFilter(): void {
+  const { clusterId: _clusterId, namespace: _namespace, ...query } = route.query
+  void router.replace({ query })
+}
 const STATUS_FILTERS = [
   { value: 'normal', label: '正常（运行中）' },
   { value: 'abnormal', label: '异常（降级 / 失败）' },
   { value: 'processing', label: '处理中（创建 / 删除中）' },
 ]
 const shownInstances = computed(() =>
-  statusFilter.value ? instances.value.filter((i) => middlewareBucket(i.status) === statusFilter.value) : instances.value)
+  instances.value.filter(instance =>
+    (!statusFilter.value || middlewareBucket(instance.status) === statusFilter.value)
+    && (!clusterFilter.value || instance.clusterId === clusterFilter.value)
+    && (!namespaceFilter.value || instance.namespace === namespaceFilter.value)))
 /** 首轮加载完成前不响应租户变化（onMounted 自己会按上下文加载一次） */
 const ready = ref(false)
 
@@ -209,10 +223,11 @@ onBeforeUnmount(() => {
       <el-select v-model="statusFilter" clearable placeholder="全部" style="width: 200px">
         <el-option v-for="o in STATUS_FILTERS" :key="o.value" :label="o.label" :value="o.value" />
       </el-select>
+      <el-tag v-if="scopeLabel" closable @close="clearScopeFilter">{{ scopeLabel }}</el-tag>
     </div>
 
     <el-table :data="shownInstances" class="panel"
-              :empty-text="statusFilter && instances.length ? '没有该状态的实例' : '还没有中间件实例'">
+              :empty-text="(statusFilter || scopeLabel) && instances.length ? '没有符合筛选条件的实例' : '还没有中间件实例'">
       <el-table-column label="类型" width="140">
         <template #default="{ row }">{{ nameOf(row.code) }}</template>
       </el-table-column>

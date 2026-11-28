@@ -1,6 +1,7 @@
 package com.coding.platformapi.services.overview;
 
 import com.coding.data.models.system.StatusCount;
+import com.coding.data.mapper.k8s.PlatformAlertEventMapper.NamespaceSeverityCount;
 import com.coding.platformapi.models.overview.CountBreakdown;
 import org.junit.jupiter.api.Test;
 
@@ -40,10 +41,20 @@ class OverviewBucketsTest {
 
     @Test
     void alertsBucketUnknownSeverityAsOther() {
-        CountBreakdown b = OverviewBuckets.alerts(List.of(sc("Critical", 1), sc("warning", 2), sc(null, 1), sc("info", 3)));
+        var scopes = OverviewBuckets.namespaceAlerts("cluster-a", List.of(
+                new NamespaceSeverityCount("demo", "Critical", 1),
+                new NamespaceSeverityCount("demo", "warning", 2),
+                new NamespaceSeverityCount(null, null, 1),
+                new NamespaceSeverityCount("demo", "info", 3)));
+        var b = OverviewBuckets.alertBreakdown(scopes);
 
         assertThat(b.byStatus()).containsEntry("CRITICAL", 1L).containsEntry("WARNING", 2L).containsEntry("OTHER", 4L);
         assertThat(b.total()).isEqualTo(7);
+        assertThat(b.byNamespace()).hasSize(2);
+        assertThat(b.byNamespace().getFirst().clusterId()).isEqualTo("cluster-a");
+        assertThat(b.byNamespace().getFirst().namespace()).isEqualTo("demo");
+        assertThat(b.byNamespace().getFirst().total()).isEqualTo(6);
+        assertThat(b.byNamespace().getLast().namespace()).isNull();
     }
 
     @Test

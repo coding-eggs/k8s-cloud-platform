@@ -2,8 +2,7 @@
 /**
  * 告警列表页（S2.2，块 3）。
  *
- * - 数据是**平台库里的表**（platform_alert_event），不是 K8s 对象，所以本页没有命名空间上下文依赖，
- *   只需要选好集群；租户身份由后端按 token 自动收窄（零分配 = 空集，不是"不过滤"）。
+ * - 告警按集群和命名空间读取平台库；租户身份由后端按 token 收窄。
  * - 游标分页：告警表持续追加，offset 翻页会漏读/重读 → 用「上一页最后一条的 (startsAt, id)」。
  *   游标语义下没有「上一页」：首查替换、加载更多追加。
  * - labels / annotations 是 **JSON 串**，展示前要 parse —— 脏数据不能让整页崩（try/catch + 原文兜底）。
@@ -46,6 +45,20 @@ const hasMore = ref(false)
 /** 总览「告警触发中」卡带过来的初始筛选（`?status=firing&severity=critical`）；之后由页面上的筛选控件接管 */
 const route = useRoute()
 const initialQuery = (k: string): string => (typeof route.query[k] === 'string' ? (route.query[k] as string) : '')
+// 系统命名空间可能没有租户分配，平台视图可直接打开它的告警列表。
+const explicitScope = computed(() => {
+  const clusterId = initialQuery('clusterId')
+  const namespace = initialQuery('namespace')
+  return canSeeAll.value && !perm.currentTenant && clusterId && namespace ? { clusterId, namespace } : null
+})
+const queryClusterId = computed(() => explicitScope.value?.clusterId ?? state.clusterId)
+const queryNamespace = computed(() => explicitScope.value?.namespace ?? state.namespace)
+const listReady = computed(() => !!explicitScope.value || ready.value)
+
+function clearExplicitScope(): void {
+  const { clusterId: _clusterId, namespace: _namespace, ...query } = route.query
+  void router.replace({ query })
+}
 
 const filters = reactive({
   /**
@@ -91,46 +104,59 @@ function pruned(q: Record<string, unknown>): AlertQuery {
 
 function buildQuery(extra?: Partial<AlertQuery>): AlertQuery {
   return pruned({
-    clusterId: state.clusterId,
+    clusterId: queryClusterId.value,
     limit: PAGE_SIZE,
     showWatchdog: filters.showWatchdog,
     from: filters.range ? filters.range[0] : null,
     to: filters.range ? filters.range[1] : null,
     status: filters.status,
     severity: filters.severity,
-    // 命名空间取**导航栏**的当前选择；管理员可切「全部命名空间」→ 不传该条件（后端按 token 范围给全量）
-    namespace: filters.allNamespaces && canSeeAll.value ? null : state.namespace,
+    // 指定空间优先，其余跟随顶栏；平台管理员也可按当前集群查询全部命名空间。
+    namespace: filters.allNamespaces && canSeeAll.value ? null : queryNamespace.value,
     alertname: filters.alertname,
     ...extra,
   })
 }
 
+let listRequestId = 0
 async function refresh(): Promise<void> {
-  if (!ready.value || !state.clusterId) return
-  loading.value = true
-  try {
-    rows.value = await alertApi.list(buildQuery())
-    hasMore.value = rows.value.length === PAGE_SIZE
-  } catch {
+  const requestId = ++listRequestId
+  if (!listReady.value) {
     rows.value = []
     hasMore.value = false
-  } finally {
     loading.value = false
+    return
+  }
+  loading.value = true
+  try {
+    const result = await alertApi.list(buildQuery())
+    if (requestId !== listRequestId) return
+    rows.value = result
+    hasMore.value = rows.value.length === PAGE_SIZE
+  } catch {
+    if (requestId === listRequestId) {
+      rows.value = []
+      hasMore.value = false
+    }
+  } finally {
+    if (requestId === listRequestId) loading.value = false
   }
 }
 
 async function loadMore(): Promise<void> {
   const last = rows.value[rows.value.length - 1]
   if (!last) return
+  const requestId = listRequestId
   loading.value = true
   try {
     const next = await alertApi.list(buildQuery({ cursorStartsAt: last.startsAt, cursorId: last.id }))
+    if (requestId !== listRequestId) return
     rows.value = [...rows.value, ...next]
     hasMore.value = next.length === PAGE_SIZE
   } catch {
     /* 拦截器已提示 */
   } finally {
-    loading.value = false
+    if (requestId === listRequestId) loading.value = false
   }
 }
 
@@ -275,32 +301,37 @@ const noNamespaceTip = '这条告警没有命名空间标签 —— 规则多半
 // ---------- 上下文联动 ----------
 onMounted(() => {
   void load()
-  void refresh()
 })
 watch(
-  // ⚠️ 必须连 namespace 一起监听：它是查询条件（取自导航栏），切了不刷新会让人看着旧 ns 的数据
-  [() => state.clusterId, () => state.namespace, ready],
-  () => {
-    if (ready.value) void refresh()
+  [queryClusterId, queryNamespace, listReady, () => route.query.status, () => route.query.severity],
+  (next, previous) => {
+    if (next[3] !== previous?.[3]) filters.status = initialQuery('status')
+    if (next[4] !== previous?.[4]) filters.severity = initialQuery('severity')
+    if (explicitScope.value) filters.allNamespaces = false
+    rows.value = []
+    hasMore.value = false
+    void refresh()
   },
+  { immediate: true },
 )
 
 const clusterDesc = computed(() => {
-  if (!ready.value) return '请在顶栏选择集群'
-  const ns = filters.allNamespaces && canSeeAll.value ? '全部命名空间' : (state.namespace ?? '')
-  return `${currentCluster.value?.clusterName ?? state.clusterId ?? ''} / ${ns}`
+  if (!listReady.value) return '请在顶栏选择集群'
+  const ns = filters.allNamespaces && canSeeAll.value ? '全部命名空间' : queryNamespace.value
+  const cluster = explicitScope.value?.clusterId ?? currentCluster.value?.clusterName ?? queryClusterId.value
+  return `${cluster} / ${ns}`
 })
 </script>
 
 <template>
   <div>
     <PageHeader title="告警" :description="clusterDesc">
-      <el-button v-if="canSelfTest" :loading="selfTesting" :disabled="!ready" @click="onSelfTest">自检</el-button>
-      <el-button :disabled="!ready" @click="refresh">刷新</el-button>
+      <el-button v-if="canSelfTest && !explicitScope" :loading="selfTesting" :disabled="!listReady" @click="onSelfTest">自检</el-button>
+      <el-button :disabled="!listReady" @click="refresh">刷新</el-button>
     </PageHeader>
 
     <EmptyState
-      v-if="!ready"
+      v-if="!listReady"
       title="尚未选择集群"
       description="告警是平台库里的数据，按集群查询 —— 请在顶栏选择集群。"
     />
@@ -326,7 +357,8 @@ const clusterDesc = computed(() => {
           <el-button @click="refresh">查询</el-button>
         </div>
         <div class="filter-row">
-          <template v-if="canSeeAll">
+          <el-tag v-if="explicitScope" closable @close="clearExplicitScope">指定命名空间 · {{ explicitScope.namespace }}</el-tag>
+          <template v-else-if="canSeeAll">
             <span class="muted">全部命名空间</span>
             <el-switch v-model="filters.allNamespaces" @change="refresh" />
             <span class="muted tip">跨命名空间的多是集群配置 / 节点类告警，不是业务告警。</span>

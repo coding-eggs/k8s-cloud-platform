@@ -1,6 +1,9 @@
 package com.coding.platformapi.services.overview;
 
 import com.coding.data.models.system.StatusCount;
+import com.coding.data.mapper.k8s.PlatformAlertEventMapper.NamespaceSeverityCount;
+import com.coding.platformapi.models.overview.AlertBreakdown;
+import com.coding.platformapi.models.overview.AlertBreakdown.NamespaceAlerts;
 import com.coding.platformapi.models.overview.CountBreakdown;
 
 import java.util.LinkedHashMap;
@@ -50,16 +53,35 @@ public final class OverviewBuckets {
         });
     }
 
-    /** 触发中告警按级别：critical / warning，其余（含缺省）归 OTHER */
-    public static CountBreakdown alerts(List<StatusCount> rows) {
-        return bucket(rows, List.of("CRITICAL", "WARNING", "OTHER"), s -> {
-            String v = s == null ? "" : s.toLowerCase(Locale.ROOT);
-            return switch (v) {
-                case "critical" -> "CRITICAL";
-                case "warning" -> "WARNING";
-                default -> "OTHER";
-            };
-        });
+    /** 触发中告警按级别：critical / warning，其余（含缺省）归 OTHER。 */
+    private static final List<String> ALERT_SEVERITIES = List.of("CRITICAL", "WARNING", "OTHER");
+
+    private static String alertSeverity(String severity) {
+        return switch (severity == null ? "" : severity.toLowerCase(Locale.ROOT)) {
+            case "critical" -> "CRITICAL";
+            case "warning" -> "WARNING";
+            default -> "OTHER";
+        };
+    }
+
+    static List<NamespaceAlerts> namespaceAlerts(String clusterId, List<NamespaceSeverityCount> counts) {
+        Map<String, Map<String, Long>> namespaces = new LinkedHashMap<>();
+        for (NamespaceSeverityCount count : counts) {
+            namespaces.computeIfAbsent(count.namespace(), ignored -> new LinkedHashMap<>())
+                    .merge(alertSeverity(count.severity()), count.count(), Long::sum);
+        }
+        return namespaces.entrySet().stream()
+                .map(e -> new NamespaceAlerts(clusterId, e.getKey(),
+                        e.getValue().values().stream().mapToLong(Long::longValue).sum(), e.getValue()))
+                .toList();
+    }
+
+    static AlertBreakdown alertBreakdown(List<NamespaceAlerts> scopes) {
+        Map<String, Long> byStatus = keys(ALERT_SEVERITIES);
+        for (NamespaceAlerts scope : scopes) {
+            scope.byStatus().forEach((key, count) -> byStatus.merge(key, count, Long::sum));
+        }
+        return new AlertBreakdown(scopes.stream().mapToLong(NamespaceAlerts::total).sum(), byStatus, scopes);
     }
 
     /** 中间件实时状态：READY→NORMAL、DEGRADED/FAILED→ABNORMAL、CREATING/DELETING→PROCESSING */

@@ -7,6 +7,7 @@ import com.coding.common.models.k8s.dto.TenantOverviewDTO;
 import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
+import com.coding.platformapi.configs.NamespaceProtectionProperties;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -34,7 +35,8 @@ class TenantOverviewServiceTest {
     private final PlatformTenantNamespaceMapper allocationMapper = mock(PlatformTenantNamespaceMapper.class);
     private final K8sClusterMapper clusterMapper = mock(K8sClusterMapper.class);
     private final NamespaceStatService statService = mock(NamespaceStatService.class);
-    private final TenantOverviewService svc = new TenantOverviewService(allocationMapper, clusterMapper, statService);
+    private final NamespaceProtectionProperties protection = new NamespaceProtectionProperties();
+    private final TenantOverviewService svc = new TenantOverviewService(allocationMapper, clusterMapper, statService, protection);
 
     @Test
     void only_the_tenants_namespaces_are_counted() {
@@ -95,6 +97,21 @@ class TenantOverviewServiceTest {
         assertThat(out.getNamespacesWithoutQuota()).containsExactly("team-b");
         assertThat(out.getNamespacesPartialQuota()).isEmpty();
         assertThat(out.getQuotaCpuHard()).isEqualByComparingTo("2");    // 只累加有配额的行
+    }
+
+    @Test
+    void protected_namespace_without_quota_is_not_reported_but_coverage_is_incomplete() {
+        protection.setProtectedNamespaces(List.of("ops-shared"));
+        when(allocationMapper.listByTenant("t1")).thenReturn(List.of(alloc("c1", "ops-shared"), alloc("c1", "team-a")));
+        when(statService.rows("t1", "c1", List.of("ops-shared", "team-a")))
+                .thenReturn(List.of(snapNoQuota("ops-shared"), snapWithQuota("team-a", "2", "4Gi")));
+
+        TenantOverviewDTO out = svc.overview("t1");
+
+        assertThat(out.getNamespacesWithoutQuota()).isEmpty();
+        assertThat(out.isRequestsQuotaCoverageIncomplete()).isTrue();
+        assertThat(out.getTotal().getNamespaceCount()).isEqualTo(2);
+        assertThat(out.getQuotaCpuHard()).isEqualByComparingTo("2");
     }
 
     @Test

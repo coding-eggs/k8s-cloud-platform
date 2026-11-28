@@ -1,4 +1,4 @@
-import type { CountBreakdown, NamespaceCounts, OverviewPods } from '@/types/overview'
+import type { AlertBreakdown, CountBreakdown, NamespaceCounts, OverviewPods } from '@/types/overview'
 import type { K8sNamespaceStatEntry, MiddlewareInstance } from '@/types'
 
 export type Tone = 'success' | 'warning' | 'danger' | 'info'
@@ -156,6 +156,15 @@ export interface NsTarget {
   count: number
 }
 
+export function alertTargetsOf(alerts: AlertBreakdown | null, severity?: string): NsTarget[] {
+  return (alerts?.byNamespace ?? [])
+    .flatMap(({ clusterId, namespace, total, byStatus }) => {
+      const count = severity ? (byStatus[severity.toUpperCase()] ?? 0) : total
+      return namespace && count > 0 ? [{ clusterId, namespace, count }] : []
+    })
+    .sort((a, b) => b.count - a.count)
+}
+
 /** 租户 / 集群概览的按命名空间明细行 → 计数行（口径同后端：abnormal = podCount − running − pending − succeeded） */
 export function nsCountsOf(rows: K8sNamespaceStatEntry[] | null | undefined, clusterName?: (id: string) => string | null | undefined): NamespaceCounts[] {
   return (rows ?? []).map((r) => {
@@ -171,6 +180,7 @@ export function nsCountsOf(rows: K8sNamespaceStatEntry[] | null | undefined, clu
       pending,
       succeeded,
       abnormal: Math.max(0, (st.podCount ?? 0) - running - pending - succeeded),
+      workloads: (st.deployCount ?? 0) + (st.stsCount ?? 0) + (st.dsCount ?? 0),
       unhealthyWorkloads: r.snapshot.unhealthyWorkloadCount ?? 0,
     }
   })
@@ -183,10 +193,16 @@ export function nsCountsOf(rows: K8sNamespaceStatEntry[] | null | undefined, clu
 export function nsTargetsOf(kind: CountKind | undefined, seg: Segment, rows: NamespaceCounts[]): NsTarget[] | null {
   const status = seg.query?.status
   let pick: ((r: NamespaceCounts) => number) | null = null
-  if (kind === 'pod' && status && ['running', 'pending', 'succeeded', 'abnormal'].includes(status)) {
+  if (kind === 'pod' && !status) {
+    pick = (r) => r.running + r.pending + r.succeeded + r.abnormal
+  } else if (kind === 'workload' && !status) {
+    pick = (r) => r.workloads ?? 0
+  } else if (kind === 'pod' && status && ['running', 'pending', 'succeeded', 'abnormal'].includes(status)) {
     pick = (r) => r[status as 'running' | 'pending' | 'succeeded' | 'abnormal']
   } else if (kind === 'workload' && status === 'unhealthy') {
     pick = (r) => r.unhealthyWorkloads
+  } else if (kind === 'middleware' && !status) {
+    pick = (r) => (r.middlewareNormal ?? 0) + (r.middlewareAbnormal ?? 0) + (r.middlewareProcessing ?? 0)
   } else if (kind === 'middleware' && status === 'normal') {
     pick = (r) => r.middlewareNormal ?? 0
   } else if (kind === 'middleware' && status === 'abnormal') {

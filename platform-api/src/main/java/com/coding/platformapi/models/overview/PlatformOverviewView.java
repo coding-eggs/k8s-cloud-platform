@@ -8,13 +8,12 @@ import java.util.List;
 /**
  * 平台总览（{@code POST /overview/platform}）：按资源类型汇总全部<b>可用</b>集群，不按集群拆。
  * <p>null 语义：{@code capacity} = 没有任何可用集群；{@code quota} = 没有任何 ns 配了 hard。前端显示「—」/「未配置」。
- * <p>{@code byNamespace}：按（集群, 命名空间）拆开的 Pod 分桶与不健康工作负载数，供前端「点异常 → 跳到异常所在的命名空间」；
- * 只列有 Pod 或有不健康工作负载的命名空间；没有可用集群 → null。
+ * <p>{@code byNamespace}：Pod、工作负载和中间件的命名空间计数，供资源卡定位；没有可用集群 → null。
  */
 public record PlatformOverviewView(
         ServiceHealth services,
         Clusters clusters,
-        CountBreakdown alertsFiring,
+        AlertBreakdown alertsFiring,
         CountBreakdown applications,
         CountBreakdown middleware,
         Workloads workloads,
@@ -22,12 +21,13 @@ public record PlatformOverviewView(
         Tenants tenants,
         Capacity capacity,
         Nodes nodes,
+        List<NodeIssue> nodeIssues,
         Namespaces namespaces,
         Quota quota,
         List<NamespaceCounts> byNamespace) {
 
     /** 已连接 / 不可用以聚合快照是否取得为准（不是 k8s_cluster.status 字段）。 */
-    public record Clusters(int connected, int unavailable, List<String> unavailableNames) {
+    public record Clusters(int connected, int unavailable, List<String> unavailableNames, List<String> unavailableIds) {
     }
 
     /** total = Deployment + StatefulSet + DaemonSet。 */
@@ -49,12 +49,15 @@ public record PlatformOverviewView(
     public record Nodes(long ready, long notReady) {
     }
 
+    /** 可用集群中 NotReady 节点的分布，只返回有异常节点的集群。 */
+    public record NodeIssue(String clusterId, String clusterName, long notReady) {}
+
     public record Namespaces(long allocated, long unallocated, long system) {
     }
 
     /** 一个（集群, 命名空间）的计数；口径同 {@link Pods}（abnormal = podCount − running − pending − succeeded）。 */
     public record NamespaceCounts(String clusterId, String clusterName, String namespace,
-                                  long running, long pending, long succeeded, long abnormal, long unhealthyWorkloads,
+                                  long running, long pending, long succeeded, long abnormal, long workloads, long unhealthyWorkloads,
                                   long middlewareNormal, long middlewareAbnormal, long middlewareProcessing) {
     }
 

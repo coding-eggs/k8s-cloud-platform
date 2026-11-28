@@ -49,7 +49,7 @@ const tabLoading = ref(false)
 const statLoading = ref(false)
 const loadError = ref(false)
 
-const activeTab = ref('overview')
+const activeTab = ref(route.query.tab === 'quota' ? 'quota' : 'overview')
 const quotaLoaded = ref(false)
 const statLoaded = ref(false)
 const statError = ref(false)

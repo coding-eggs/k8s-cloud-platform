@@ -18,7 +18,7 @@ public record ScopeSummaryView(
         CountBreakdown applications,
         CountBreakdown middleware,
         CountBreakdown pipelines,
-        CountBreakdown alerts,
+        AlertBreakdown alerts,
         Pods pods,
         Workloads workloads,
         Quota quota,

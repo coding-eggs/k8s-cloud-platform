@@ -37,10 +37,12 @@ public class TenantOverviewDTO {
     private BigDecimal quotaLimitCpuUsed;
     private BigDecimal quotaLimitMemUsed;
 
-    /** 没有任何 ResourceQuota 的命名空间名（{@code QuotaState.MISSING}）。 */
+    /** 未配置 ResourceQuota 且需要提醒的命名空间名，排除受保护命名空间。 */
     private List<String> namespacesWithoutQuota;
     /** 有配额但缺 {@code requests.cpu} / {@code requests.memory} 任一 key 的命名空间名（{@code QuotaState.PARTIAL}）。 */
     private List<String> namespacesPartialQuota;
+    /** 已采样的命名空间中是否有 requests 配额未覆盖的行，包含受保护命名空间。 */
+    private boolean requestsQuotaCoverageIncomplete;
 
     /** 异常 Pod 总数（全量，未封顶）。 */
     private int abnormalPodTotal;

@@ -8,16 +8,18 @@
  * - 带 `query` 的状态段（如 Pod「异常 4」）可单独点：去同一个列表页并带上筛选参数（列表页据此预先筛好）；
  * - 跳之前先切顶栏上下文（列表页都按顶栏取数）：
  *   · `scope`（命名空间 / 集群概览页）：整张卡和状态段都切到这个集群[/命名空间]；
- *   · `ns-rows` / `load-ns-rows`（平台 / 集群 / 租户概览的 Pod、工作负载卡）：按状态段算出分布在哪些命名空间，
+ *   · `ns-rows` / `load-ns-rows`：按总数或状态段定位到有匹配资源的命名空间，
  *     只有一个 → 直接切过去；多个 → 卡片下方弹一个小列表，点哪个切哪个（见 labels.nsTargetsOf）；
  * - 比例条：各段按 max(total, Σ段) 等比铺开，剩余部分是轨道底色 —— 工作负载卡只有「不健康」一段，
  *   红色占比就是不健康比例；
  * - total 为 0：数字变淡，并给一句引导（「还没有应用，点击去新建」/「没有触发中的告警」）。
  */
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import { useRouter, type RouteLocationRaw } from 'vue-router'
 import { usePermission } from '@/stores/permission'
 import { jumpWithContext } from '@/composables/useContextJump'
+import FieldHelp from '@/components/workload/FieldHelp.vue'
 import type { NamespaceCounts } from '@/types/overview'
 import {
   COUNT_KIND_ICON, COUNT_KIND_LINK, nsTargetsOf,
@@ -26,6 +28,7 @@ import {
 
 const props = defineProps<{
   title: string
+  help?: string
   total: number | null
   segments?: Segment[]
   /** 总数旁的副标题（如「Pod 数 / 上限」） */
@@ -77,17 +80,29 @@ function plainClick(e: MouseEvent): boolean {
   return e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey
 }
 async function go(to: RouteLocationRaw, where?: CardScope): Promise<void> {
-  if (where) await jumpWithContext(router, where, to)
-  else await router.push(to)
+  if (!where) {
+    await router.push(to)
+    return
+  }
+  const target = router.resolve(to)
+  if (target.name === 'middleware-instances') {
+    to = { path: target.path, query: { ...target.query, clusterId: where.clusterId, namespace: where.namespace } }
+  }
+  await jumpWithContext(router, where, to)
 }
 function onCardClick(e: MouseEvent): void {
   if (!href.value || !plainClick(e)) return
   e.preventDefault()
-  void go(href.value, props.scope)
+  const total = props.total ?? 0
+  if ((props.kind === 'pod' || props.kind === 'workload' || props.kind === 'middleware') && total > 0 && (props.nsRows || props.loadNsRows)) {
+    void openScoped(href.value, { label: props.title, value: total, tone: 'info' })
+  } else {
+    void go(href.value, props.scope)
+  }
 }
 
 /** 多命名空间候选列表（卡片下方的小弹层） */
-const picker = ref<{ seg: Segment; targets: NsTarget[] } | null>(null)
+const picker = ref<{ label: string; to: RouteLocationRaw; targets: NsTarget[] } | null>(null)
 const pickerLoading = ref(false)
 const multiCluster = computed(() => new Set((picker.value?.targets ?? []).map((t) => t.clusterId)).size > 1)
 
@@ -101,7 +116,12 @@ async function openSegment(e: MouseEvent, s: Segment): Promise<void> {
   if (!to) return
   e.preventDefault()
   e.stopPropagation()
+  await openScoped(to, s)
+}
+async function openScoped(to: RouteLocationRaw, s: Segment): Promise<void> {
   if (!props.nsRows && !props.loadNsRows) return go(to, props.scope)
+  if (pickerLoading.value) return
+  picker.value = null
   let rows = props.nsRows ?? null
   if (!rows && props.loadNsRows) {
     pickerLoading.value = true
@@ -114,17 +134,20 @@ async function openSegment(e: MouseEvent, s: Segment): Promise<void> {
     }
   }
   const targets = rows ? nsTargetsOf(props.kind, s, rows) : null
-  if (!targets || targets.length === 0) return go(to, props.scope) // 定位不到命名空间：按 scope / 当前顶栏跳
+  if (!targets?.length) {
+    if (props.scope?.namespace) return go(to, props.scope)
+    ElMessage.info('暂时无法定位匹配的命名空间，请刷新总览后重试')
+    return
+  }
   if (targets.length === 1) {
     const t = targets[0]!
     return go(to, { clusterId: t.clusterId, namespace: t.namespace })
   }
-  picker.value = { seg: s, targets }
+  picker.value = { label: s.label, to, targets }
 }
 function pickTarget(t: NsTarget): void {
-  const s = picker.value?.seg
+  const to = picker.value?.to
   picker.value = null
-  const to = s ? segmentLocation(s) : null
   if (to) void go(to, { clusterId: t.clusterId, namespace: t.namespace })
 }
 
@@ -168,7 +191,10 @@ const bar = computed(() => {
     @click="onCardClick"
   >
     <div class="ov-count-head">
-      <span class="ov-count-title">{{ title }}</span>
+      <span class="ov-count-title">
+        {{ title }}
+        <span v-if="help" @click.stop.prevent><FieldHelp :tip="help" /></span>
+      </span>
       <span v-if="icon" class="ov-count-icon" :class="{ alarming }">
         <el-icon><component :is="icon" /></el-icon>
       </span>
@@ -199,7 +225,7 @@ const bar = computed(() => {
 
   <!-- 多命名空间：点哪个就把顶栏切到哪个再打开列表 -->
   <div v-if="picker" class="ov-ns-picker" role="menu">
-    <div class="ov-ns-picker-head">「{{ picker.seg.label }}」分布在 {{ picker.targets.length }} 个命名空间</div>
+    <div class="ov-ns-picker-head">「{{ picker.label }}」分布在 {{ picker.targets.length }} 个命名空间</div>
     <button
       v-for="t in picker.targets"
       :key="`${t.clusterId}/${t.namespace}`"

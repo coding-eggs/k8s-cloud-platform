@@ -12,6 +12,7 @@ export interface InventoryItem {
   value: number | string | null | undefined
   to?: string
   scope?: JumpTarget
+  scopes?: (JumpTarget & { label: string; count: number })[]
 }
 
 defineProps<{ items: InventoryItem[] }>()
@@ -23,9 +24,10 @@ function permitted(path?: string): boolean {
   const need = router.resolve(path).meta.requiresPerm
   return !need?.length || perm.hasAny(need)
 }
-function open(it: InventoryItem): void {
-  if (it.scope) void jumpWithContext(router, it.scope, it.to!)
-  else void router.push(it.to!)
+function open(it: InventoryItem, scope = it.scope ?? it.scopes?.[0]): void {
+  if (!it.to) return
+  if (scope) void jumpWithContext(router, scope, it.to)
+  else void router.push(it.to)
 }
 </script>
 
@@ -33,8 +35,18 @@ function open(it: InventoryItem): void {
   <div class="inv">
     <template v-for="(it, i) in items" :key="it.label">
       <span v-if="i > 0" class="inv-dot">·</span>
+      <el-popover v-if="permitted(it.to) && (it.scopes?.length ?? 0) > 1" trigger="click" placement="bottom-start" :width="270">
+        <template #reference>
+          <button type="button" class="inv-item link">{{ it.label }} <b>{{ it.value ?? '—' }}</b></button>
+        </template>
+        <div class="scope-list" :aria-label="`选择 ${it.label} 所在命名空间`">
+          <el-button v-for="scope in it.scopes" :key="`${scope.clusterId}/${scope.namespace}`" link type="primary" @click="open(it, scope)">
+            {{ scope.label }} · {{ scope.count }}
+          </el-button>
+        </div>
+      </el-popover>
       <a
-        v-if="permitted(it.to)"
+        v-else-if="permitted(it.to) && (!it.scopes || it.scopes.length === 1)"
         class="inv-item link"
         :href="router.resolve(it.to!).href"
         @click.prevent="open(it)"
@@ -56,5 +68,8 @@ function open(it: InventoryItem): void {
 .inv-item b { color: var(--text-1); font-weight: 600; margin-left: 2px; }
 .inv-item.link { color: var(--text-3); text-decoration: none; }
 .inv-item.link:hover, .inv-item.link:hover b { color: var(--accent); }
+button.inv-item { border: 0; padding: 0; background: transparent; font: inherit; cursor: pointer; }
+.scope-list { display: grid; justify-items: start; gap: 4px; max-height: 240px; overflow: auto; }
+.scope-list :deep(.el-button) { margin: 0; height: auto; white-space: normal; text-align: left; overflow-wrap: anywhere; }
 .inv-dot { color: var(--text-3); opacity: .6; }
 </style>

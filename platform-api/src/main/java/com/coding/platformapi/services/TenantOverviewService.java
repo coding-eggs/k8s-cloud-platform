@@ -10,6 +10,7 @@ import com.coding.data.mapper.auth.PlatformTenantNamespaceMapper;
 import com.coding.data.mapper.k8s.K8sClusterMapper;
 import com.coding.data.models.auth.PlatformTenantNamespace;
 import com.coding.data.models.k8s.K8sCluster;
+import com.coding.platformapi.configs.NamespaceProtectionProperties;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -49,6 +50,7 @@ public class TenantOverviewService {
     private final PlatformTenantNamespaceMapper allocationMapper;
     private final K8sClusterMapper clusterMapper;
     private final NamespaceStatService statService;
+    private final NamespaceProtectionProperties protection;
 
     /**
      * 首屏快照：合计 / 逐集群小计 / 两个名单 / 配额三档，全部由本页拿到的切片现算。
@@ -126,6 +128,7 @@ public class TenantOverviewService {
 
         List<String> withoutQuota = new ArrayList<>();
         List<String> partialQuota = new ArrayList<>();
+        boolean requestsQuotaCoverageIncomplete = false;
         BigDecimal cpuHard = null;
         BigDecimal memHard = null;
         BigDecimal cpuUsed = null;
@@ -135,25 +138,28 @@ public class TenantOverviewService {
         BigDecimal limCpuUsed = null;
         BigDecimal limMemUsed = null;
         for (NamespaceSnapshotDTO s : all) {
-            NamespaceStatDTO st = s == null ? null : s.getStat();
-            QuotaState state = QuotaClassifier.state(st);   // 三档判定只此一处（R7）
-            if (st != null && st.getNamespace() != null) {
-                if (state == QuotaState.MISSING) {
-                    withoutQuota.add(st.getNamespace());
+            NamespaceStatDTO st = s.getStat();
+            if (st == null) {
+                continue;
+            }
+            String namespace = st.getNamespace();
+            if (namespace != null) {
+                QuotaState state = QuotaClassifier.state(st);
+                requestsQuotaCoverageIncomplete |= state != QuotaState.OK;
+                if (state == QuotaState.MISSING && !protection.isProtected(namespace)) {
+                    withoutQuota.add(namespace);
                 } else if (state == QuotaState.PARTIAL) {
-                    partialQuota.add(st.getNamespace());
+                    partialQuota.add(namespace);
                 }
             }
-            if (st != null) {   // 只累加**有值**的配额列：无配额的行贡献 null，合计保持 null（不是 0）
-                cpuHard = add(cpuHard, st.getQuotaCpuHard());
-                memHard = add(memHard, st.getQuotaMemHard());
-                cpuUsed = add(cpuUsed, st.getQuotaCpuUsed());
-                memUsed = add(memUsed, st.getQuotaMemUsed());
-                limCpuHard = add(limCpuHard, st.getQuotaLimitCpuHard());
-                limMemHard = add(limMemHard, st.getQuotaLimitMemHard());
-                limCpuUsed = add(limCpuUsed, st.getQuotaLimitCpuUsed());
-                limMemUsed = add(limMemUsed, st.getQuotaLimitMemUsed());
-            }
+            cpuHard = add(cpuHard, st.getQuotaCpuHard());
+            memHard = add(memHard, st.getQuotaMemHard());
+            cpuUsed = add(cpuUsed, st.getQuotaCpuUsed());
+            memUsed = add(memUsed, st.getQuotaMemUsed());
+            limCpuHard = add(limCpuHard, st.getQuotaLimitCpuHard());
+            limMemHard = add(limMemHard, st.getQuotaLimitMemHard());
+            limCpuUsed = add(limCpuUsed, st.getQuotaLimitCpuUsed());
+            limMemUsed = add(limMemUsed, st.getQuotaLimitMemUsed());
         }
         out.setQuotaCpuHard(cpuHard);
         out.setQuotaMemHard(memHard);
@@ -165,6 +171,7 @@ public class TenantOverviewService {
         out.setQuotaLimitMemUsed(limMemUsed);
         out.setNamespacesWithoutQuota(withoutQuota);
         out.setNamespacesPartialQuota(partialQuota);
+        out.setRequestsQuotaCoverageIncomplete(requestsQuotaCoverageIncomplete);
         return out;
     }
 
